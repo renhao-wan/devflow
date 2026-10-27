@@ -1,0 +1,72 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256 } from '../scripts/lib/common.mjs';
+
+test('parseYaml 解析嵌套 map、块列表与行内列表', () => {
+  const config = parseYaml(`
+version: 1
+requiresPlugin: "^1.0.0"
+stages:
+  - req
+  - plan
+subprojects:
+  api:
+    path: services/api
+    stages: [plan, implement, test]
+    testCommand: "npm test --workspace api"
+defaults:
+  reviewRequired: true
+upstream:
+  blocklist: []
+`);
+  assert.equal(config.version, 1);
+  assert.equal(config.requiresPlugin, '^1.0.0');
+  assert.deepEqual(config.stages, ['req', 'plan']);
+  assert.equal(config.subprojects.api.path, 'services/api');
+  assert.deepEqual(config.subprojects.api.stages, ['plan', 'implement', 'test']);
+  assert.equal(config.subprojects.api.testCommand, 'npm test --workspace api');
+  assert.equal(config.defaults.reviewRequired, true);
+  assert.deepEqual(config.upstream.blocklist, []);
+});
+
+test('parseYaml 忽略注释与空行，支持 inline 空对象', () => {
+  const config = parseYaml(`
+# 顶部注释
+version: 2
+subprojects: {}
+upstream:
+  blocklist: ["内部域名", api]
+`);
+  assert.equal(config.version, 2);
+  assert.deepEqual(config.subprojects, {});
+  assert.deepEqual(config.upstream.blocklist, ['内部域名', 'api']);
+});
+
+test('parseYaml 拒绝无法解析的行', () => {
+  assert.throws(() => parseYaml('version: 1\nthis is not yaml\n'), /无法解析/);
+});
+
+test('parseFrontmatter 处理普通值与折叠符号', () => {
+  const plain = parseFrontmatter('---\nname: devflow-req\ndescription: 一句话描述\n---\nbody');
+  assert.equal(plain.name, 'devflow-req');
+  assert.equal(plain.description, '一句话描述');
+
+  const folded = parseFrontmatter('---\nname: x\ndescription: >-\n  第一行\n  第二行\n---\n');
+  assert.equal(folded.description, '第一行 第二行');
+});
+
+test('satisfies 支持 ^ ~ 比较符与 *', () => {
+  assert.equal(satisfies('1.2.3', '^1.0.0'), true);
+  assert.equal(satisfies('2.0.0', '^1.0.0'), false);
+  assert.equal(satisfies('1.2.5', '~1.2.0'), true);
+  assert.equal(satisfies('1.3.0', '~1.2.0'), false);
+  assert.equal(satisfies('9.9.9', '*'), true);
+  assert.equal(satisfies('1.0.0', '>=1.0.0 <2.0.0'), true);
+  assert.equal(satisfies('2.0.0', '>=1.0.0 <2.0.0'), false);
+});
+
+test('bumpPatch 与 sha256 稳定', () => {
+  assert.equal(bumpPatch('1.2.9'), '1.2.10');
+  assert.equal(sha256('a'), sha256('a'));
+  assert.notEqual(sha256('a'), sha256('b'));
+});
