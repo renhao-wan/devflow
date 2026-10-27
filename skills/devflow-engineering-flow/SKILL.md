@@ -46,6 +46,7 @@ req → plan → implement → test → review → debug
 ## 单一真源
 
 - 项目规则：`.claude/hub/stages/<stage>/SKILL.md`
+- 阶段细则与产出骨架：同目录下的 `references/`、`templates/`，按需读取
 - 生成的投影：`.claude/skills/devflow-<stage>/SKILL.md`（勿手改）
 - 改动源后运行 `node scripts/devflow-gen.mjs`
 

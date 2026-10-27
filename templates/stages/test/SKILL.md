@@ -30,7 +30,8 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 
 ## 产出
 
-- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`）。
+- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`），骨架见 `templates/test-report.template.md`。
+- 记录要求见 `references/evidence.md`：没有实际执行的结果不得写成通过。
 - `.claude/.devflow-state.json` 中的通过记录。
 
 ## 边界

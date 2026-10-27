@@ -68,6 +68,10 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const source = join(root, ...String(s.source).split('/'));
     if (!existsSync(source)) add('error', `${name} 源文件缺失：${s.source}`);
+    const sourceDir = join(root, ...String(s.source).split('/').slice(0, -1));
+    const resources = Array.isArray(s.resources) ? s.resources : [];
+    const lost = resources.filter((rel) => !existsSync(join(sourceDir, ...String(rel).split('/'))));
+    if (lost.length) add('warn', `${name} 阶段资源缺失：${lost.join('、')}`);
   }
 
   const skillsDir = join(root, '.claude', 'skills');

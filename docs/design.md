@@ -29,7 +29,7 @@
         │ init 时复制模板
         ▼
 项目 .claude/hub/（项目真源）
-  hub.yaml + stages/ + _shared/
+  hub.yaml + stages/<stage>/{SKILL.md, references/, templates/} + _shared/
         │ 生成器投影
         ▼
 项目 .claude/skills/devflow-*（薄壳）
@@ -59,12 +59,12 @@
 
 ## 回灌
 
-`hub-upstream` 对比项目 stage 与插件模板，分类为 project-local / reusable；只把 reusable 写入插件模板，手动确认后 bump 版本。
+`hub-upstream` 递归对比项目 stage 目录与插件模板，分类为 project-local / reusable；只把 reusable 写入插件模板，手动确认后 bump 版本。
 
 ## 里程碑
 
 - [x] 插件骨架、命令、技能、agent
 - [x] hub 脚本：init / gen / doctor / upstream / mark-test
 - [x] hooks 脚本
-- [x] 测试与示例工作区验证（22 项测试通过）
+- [x] 测试与示例工作区验证（31 项测试通过）
 - [x] 文档与版本 1.0.0

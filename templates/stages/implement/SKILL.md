@@ -30,7 +30,7 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 ## 产出
 
 - 代码改动。
-- 更新 `docs/devflow/<slug>/plan.md` 的完成状态。
+- 更新 `docs/devflow/<slug>/plan.md` 的完成状态；进度记录可使用 `templates/task-progress.template.md`。
 - 新增/修改的测试文件。
 
 ## 边界

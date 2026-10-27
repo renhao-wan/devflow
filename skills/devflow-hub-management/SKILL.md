@@ -11,6 +11,8 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 | --- | --- | --- |
 | `.claude/hub/hub.yaml` | 阶段、子项目、测试命令、回灌规则 | 可以 |
 | `.claude/hub/stages/<stage>/SKILL.md` | 阶段规则的单一真源 | 可以 |
+| `.claude/hub/stages/<stage>/references/` | 阶段细则，按需读取 | 可以 |
+| `.claude/hub/stages/<stage>/templates/` | 产出骨架 | 可以 |
 | `.claude/hub/overrides/<sub>/<stage>.md` | 子项目级覆盖 | 可以 |
 | `.claude/skills/devflow-<stage>/SKILL.md` | 生成的投影 | 不要 |
 | `.claude/.hub-manifest.json` | 生成账本（哈希） | 不要 |
@@ -18,9 +20,9 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 改规则的正确流程
 
-1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`。
-2. 运行 `node scripts/devflow-gen.mjs`。
-3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移。
+1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`，需要补充细则或产出骨架时，在阶段目录下增删 `references/`、`templates/`。
+2. 运行 `node scripts/devflow-gen.mjs`（资源清单会进入投影与账本）。
+3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、资源未缺失。
 
 ## hub.yaml 要点
 
@@ -47,7 +49,7 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 回灌
 
-`/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写插件模板、bump patch 版本。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
+`/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写插件模板、bump patch 版本。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
 
 ## 版本升级
 

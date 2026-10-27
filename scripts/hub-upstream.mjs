@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, copyFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, copyFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   loadHub, pluginInfo, findPluginRoot, argValue, hasFlag, readText, writeText,
   writeAtomic, bumpPatch, log, posix, isMain, projectRoot, ensureDir,
+  walk, relPosix,
 } from './lib/common.mjs';
 
 const PRIVATE_PATTERNS = [
@@ -54,20 +55,22 @@ export async function main(argv = process.argv.slice(2)) {
   const dstDir = join(pluginRoot, 'templates', 'stages', stage);
   if (!existsSync(srcDir)) throw new Error(`项目里没有该阶段：${posix(srcDir)}`);
 
-  const files = readdirSync(srcDir, { withFileTypes: true }).filter((d) => d.isFile());
+  const files = walk(srcDir)
+    .map((abs) => ({ abs, rel: relPosix(srcDir, abs) }))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
   if (!files.length) throw new Error(`阶段目录为空：${posix(srcDir)}`);
 
   let localCount = 0;
   const reusable = [];
   for (const f of files) {
-    const src = join(srcDir, f.name);
-    const dst = join(dstDir, f.name);
+    const src = f.abs;
+    const dst = join(dstDir, ...f.rel.split('/'));
     const text = readText(src);
     const verdict = classify(text, config);
-    console.log(`${verdict.type === 'reusable' ? '[可回灌]' : '[项目专属]'} ${stage}/${f.name}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}`);
-    if (verdict.type === 'reusable') reusable.push({ src, dst, name: f.name });
+    console.log(`${verdict.type === 'reusable' ? '[可回灌]' : '[项目专属]'} ${stage}/${f.rel}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}`);
+    if (verdict.type === 'reusable') reusable.push({ src, dst, name: f.rel });
     else localCount += 1;
-    if (existsSync(dst)) showDiff(dst, src, `${stage}/${f.name}（插件 → 项目）`);
+    if (existsSync(dst)) showDiff(dst, src, `${stage}/${f.rel}（插件 → 项目）`);
   }
 
   if (!apply) {
@@ -82,7 +85,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   ensureDir(dstDir);
-  for (const f of reusable) copyFileSync(f.src, f.dst);
+  for (const f of reusable) {
+    ensureDir(dirname(f.dst));
+    copyFileSync(f.src, f.dst);
+  }
 
   const logFile = join(pluginRoot, 'templates', 'stages', '_feedback-log.md');
   const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n- 回灌文件：${reusable.map((f) => f.name).join('、')}\n- 项目：${posix(root)}\n- 插件版本：${info.version} → ${bumpPatch(info.version)}\n`;

@@ -32,7 +32,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 ## 产出
 
 - 修复代码与回归测试。
-- 简短记录：现象、根因、修复方式、验证方式（写入 `docs/devflow/<slug>/debug.md` 或对话）。
+- 简短记录：现象、根因、修复方式、验证方式（写入 `docs/devflow/<slug>/debug.md` 或对话），骨架见 `templates/debug-report.template.md`。
 
 ## 边界
 

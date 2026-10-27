@@ -35,7 +35,7 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 
 ## 产出
 
-写入 `docs/devflow/<slug>/review.md`：
+写入 `docs/devflow/<slug>/review.md`，骨架见 `templates/review.template.md`，问题分级见 `references/severity.md`：
 
 ```md
 # 审查记录

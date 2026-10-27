@@ -30,7 +30,7 @@ description: 需求澄清阶段：把模糊诉求变成可验证的需求，明�
 
 ## 产出
 
-写入 `docs/devflow/<slug>/req.md`，结构：
+写入 `docs/devflow/<slug>/req.md`，骨架见 `templates/req.template.md`，结构：
 
 ```md
 # <标题>

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
   ensureDir, readText, writeAtomic, sha256, log, posix, isMain, projectRoot,
+  walk, relPosix,
 } from './lib/common.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
@@ -47,6 +48,14 @@ function overrideList(root, stage) {
     .map((d) => d.name);
 }
 
+function stageResources(root, stage) {
+  const dir = join(root, '.claude', 'hub', 'stages', stage);
+  return walk(dir)
+    .map((file) => relPosix(dir, file))
+    .filter((rel) => rel !== 'SKILL.md')
+    .sort();
+}
+
 function buildSkill(root, stage, config) {
   const source = `.claude/hub/stages/${stage}/SKILL.md`;
   const sourceAbs = join(root, ...source.split('/'));
@@ -55,6 +64,10 @@ function buildSkill(root, stage, config) {
   }
   const description = stageDescription(root, stage);
   const overrides = overrideList(root, stage);
+  const resources = stageResources(root, stage);
+  const resourceBlock = resources.length
+    ? resources.map((rel) => `- \`${rel}\``).join('\n')
+    : '- 当前没有额外资源。';
   const overrideBlock = overrides.length
     ? overrides.map((s) => `- 处理 \`${s}\` 时，优先读取 \`.claude/hub/overrides/${s}/${stage}.md\`。`).join('\n')
     : '- 当前没有子项目级覆盖。';
@@ -74,6 +87,12 @@ ${description}
 执行前必须完整读取 \`${source}\`。
 其中的 \`references/\`、\`templates/\` 等相对引用，以**该文件所在目录**为基准。
 
+## 阶段资源
+
+以下文件随阶段提供，按需读取（相对 \`.claude/hub/stages/${stage}/\`）：
+
+${resourceBlock}
+
 ## 当前工作区
 
 ${subprojectRows(config)}
@@ -88,7 +107,7 @@ ${overrideBlock}
 
 ## 产出
 
-以源文件中的产出约定为准。没有写产出路径时，先向用户确认。
+以源文件中的产出约定为准。存在 \`templates/\` 下的骨架时，以模板为结构，不要自行发明。没有写产出路径时，先向用户确认。
 
 ## 边界
 
@@ -102,6 +121,7 @@ ${overrideBlock}
     target: `.claude/skills/devflow-${stage}/SKILL.md`,
     source,
     description,
+    resources,
     content: `---\nname: devflow-${stage}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`,
   };
 }
@@ -229,6 +249,7 @@ export async function main(argv = process.argv.slice(2)) {
       target: r.target,
       source: r.source,
       hash: sha256(r.content),
+      resources: r.resources,
     })),
   };
   writeAtomic(join(root, '.claude', '.hub-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

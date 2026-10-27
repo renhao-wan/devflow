@@ -30,7 +30,7 @@ description: 方案设计阶段：基于已确认需求给出技术方案、任�
 
 ## 产出
 
-写入 `docs/devflow/<slug>/plan.md`，结构：
+写入 `docs/devflow/<slug>/plan.md`，骨架见 `templates/plan.template.md`，结构：
 
 ```md
 # <标题> 实施方案

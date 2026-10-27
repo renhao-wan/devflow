@@ -15,20 +15,52 @@ function pluginRootFromScript() {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..');
 }
 
-function detectTestCommand(dir) {
+function detectPackageManager(dir, root = dir) {
+  let cur = resolve(dir);
+  const stop = resolve(root);
+  while (true) {
+    const pkg = join(cur, 'package.json');
+    if (existsSync(pkg)) {
+      try {
+        const data = JSON.parse(readText(pkg));
+        const m = /^(npm|pnpm|yarn|bun)@/.exec(String(data.packageManager || ''));
+        if (m) return m[1];
+      } catch { /* ignore */ }
+    }
+    if (existsSync(join(cur, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (existsSync(join(cur, 'yarn.lock'))) return 'yarn';
+    if (existsSync(join(cur, 'bun.lockb')) || existsSync(join(cur, 'bun.lock'))) return 'bun';
+    const parent = dirname(cur);
+    if (cur === stop || parent === cur) break;
+    cur = parent;
+  }
+  return 'npm';
+}
+
+function detectTestCommand(dir, root = dir) {
   const pkg = join(dir, 'package.json');
   if (existsSync(pkg)) {
     try {
       const data = JSON.parse(readText(pkg));
-      if (data.scripts?.test) return 'npm test';
+      if (data.scripts?.test) return `${detectPackageManager(dir, root)} run test`;
     } catch { /* ignore */ }
   }
   if (existsSync(join(dir, 'pom.xml'))) return 'mvn test';
-  if (existsSync(join(dir, 'gradlew')) || existsSync(join(dir, 'gradlew.bat'))) return './gradlew test';
+  if (existsSync(join(dir, 'gradlew'))) return './gradlew test';
+  if (existsSync(join(dir, 'gradlew.bat'))) return 'gradlew.bat test';
   if (existsSync(join(dir, 'go.mod'))) return 'go test ./...';
   if (existsSync(join(dir, 'Cargo.toml'))) return 'cargo test';
   if (existsSync(join(dir, 'pyproject.toml')) || existsSync(join(dir, 'pytest.ini'))) return 'pytest';
   return null;
+}
+
+/** 子项目命令从工作区根执行，避免只跑根项目的测试。 */
+function commandFromRoot(root, dir, command) {
+  if (!command) return null;
+  const rel = relative(root, dir).split(sep).join('/');
+  if (!rel || rel === '.') return command;
+  const arg = /^[A-Za-z0-9_./-]+$/.test(rel) ? rel : JSON.stringify(rel);
+  return `cd ${arg} && ${command}`;
 }
 
 function isProjectDir(dir) {
@@ -54,7 +86,7 @@ function discoverSubprojects(root) {
           name: entry.name,
           path: rel,
           stages: looksDemand ? ['req'] : ['plan', 'implement', 'test', 'review', 'debug'],
-          testCommand: looksDemand ? null : detectTestCommand(child),
+          testCommand: looksDemand ? null : commandFromRoot(root, child, detectTestCommand(child, root)),
         });
       } else if (depth < 2) {
         walk(child, depth + 1);
@@ -62,6 +94,8 @@ function discoverSubprojects(root) {
     }
   };
   walk(root, 1);
+
+  found.sort((a, b) => a.path.localeCompare(b.path));
 
   const seen = new Map();
   for (const s of found) seen.set(s.name, (seen.get(s.name) || 0) + 1);
@@ -71,7 +105,7 @@ function discoverSubprojects(root) {
   return found;
 }
 
-function renderHubYaml(root, subprojects, version) {
+function renderHubYaml(subprojects, version, rootTest) {
   const lines = [
     '# devflow 项目真源配置。可以自由修改，改完运行 node scripts/devflow-gen.mjs。',
     'version: 1',
@@ -82,17 +116,17 @@ function renderHubYaml(root, subprojects, version) {
   if (subprojects.length) {
     lines.push('subprojects:');
     for (const s of subprojects) {
-      lines.push(`  ${s.name}:`);
-      lines.push(`    path: ${s.path}`);
+      const key = /^[A-Za-z0-9_.-]+$/.test(s.name) ? s.name : JSON.stringify(s.name);
+      lines.push(`  ${key}:`);
+      lines.push(`    path: ${JSON.stringify(s.path)}`);
       lines.push(`    stages: [${s.stages.join(', ')}]`);
       if (s.testCommand) lines.push(`    testCommand: ${JSON.stringify(s.testCommand)}`);
     }
   } else {
     lines.push('subprojects: {}');
   }
-  const rootTest = detectTestCommand(root) || 'npm test';
   lines.push('defaults:');
-  lines.push(`  testCommand: ${JSON.stringify(rootTest)}`);
+  lines.push(`  testCommand: ${JSON.stringify(rootTest || 'npm test')}`);
   lines.push('  reviewRequired: true');
   lines.push('');
   lines.push('# 回灌时用于识别项目专属内容的关键词，命中则不回灌到插件模板。');
@@ -115,6 +149,23 @@ await mod.main(process.argv.slice(2));
 `;
 }
 
+function copyTree(src, dst, overwrite) {
+  let copied = 0;
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const from = join(src, entry.name);
+    const to = join(dst, entry.name);
+    if (entry.isDirectory()) {
+      ensureDir(to);
+      copied += copyTree(from, to, overwrite);
+    } else if (entry.isFile()) {
+      if (existsSync(to) && !overwrite) continue;
+      copyFileSync(from, to);
+      copied += 1;
+    }
+  }
+  return copied;
+}
+
 function copyStageTemplates(pluginRoot, root, force) {
   let copied = 0;
   for (const stage of STAGES) {
@@ -122,13 +173,7 @@ function copyStageTemplates(pluginRoot, root, force) {
     const dstDir = join(root, '.claude', 'hub', 'stages', stage);
     if (!existsSync(srcDir)) continue;
     ensureDir(dstDir);
-    for (const file of readdirSync(srcDir, { withFileTypes: true })) {
-      if (!file.isFile()) continue;
-      const dst = join(dstDir, file.name);
-      if (existsSync(dst) && !force) continue;
-      copyFileSync(join(srcDir, file.name), dst);
-      copied += 1;
-    }
+    copied += copyTree(srcDir, dstDir, force);
   }
   return copied;
 }
@@ -164,8 +209,12 @@ export async function main(argv = process.argv.slice(2)) {
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
     const copied = copyStageTemplates(pluginRoot, root, force);
     const subs = discoverSubprojects(root);
-    writeAtomic(hubFile, renderHubYaml(root, subs, info.version));
+    const rootTest = detectTestCommand(root);
+    writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
+    if (!rootTest) log('warn', '未探测到根项目的测试命令，暂写 npm test，请按实际修改 defaults.testCommand');
+    const missing = subs.filter((s) => s.stages.includes('test') && !s.testCommand);
+    if (missing.length) log('warn', `以下子项目没有可探测的测试命令，请手动补充：${missing.map((s) => s.path).join('、')}`);
   }
 
   const metaFile = join(root, '.devflow.json');

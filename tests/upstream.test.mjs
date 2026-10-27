@@ -109,6 +109,29 @@ test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
   }
 });
 
+test('回灌递归处理阶段资源目录', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const refDir = join(root, '.claude', 'hub', 'stages', 'review', 'references');
+    mkdirSync(refDir, { recursive: true });
+    writeFileSync(join(refDir, 'extra.md'), '通用参考：先验证再判断。\n');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /review\/references\/extra\.md/);
+    assert.match(result.stdout, /已回灌 1 个文件/);
+
+    const dst = join(pluginCopy, 'templates', 'stages', 'review', 'references', 'extra.md');
+    assert.equal(readFileSync(dst, 'utf8'), '通用参考：先验证再判断。\n');
+
+    const log = readFileSync(join(pluginCopy, 'templates', 'stages', '_feedback-log.md'), 'utf8');
+    assert.match(log, /references\/extra\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('回灌缺少 --stage 时报错', () => {
   const root = makeProject();
   try {
