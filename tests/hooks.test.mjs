@@ -165,6 +165,31 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 识别带引号的子项目键', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'stages:',
+      '  - req',
+      '  - test',
+      'subprojects:',
+      '  api:',
+      '    path: services/api',
+      '    stages: [test]',
+      '  "web app":',
+      '    path: apps/web',
+      '    stages: [test]',
+      '',
+    ].join('\n'));
+    const r = runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /子项目：api, web app/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 在无 hub 时静默', () => {
   const empty = mkdtempSync(join(tmpdir(), 'devflow-noHub-'));
   try {

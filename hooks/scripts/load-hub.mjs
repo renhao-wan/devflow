@@ -33,7 +33,8 @@ function parseStages(yaml) {
 function parseSubprojects(yaml) {
   const block = /^subprojects:\s*\n((?:[ \t]+.*\n?)*)/m.exec(yaml);
   if (!block) return [];
-  return [...block[1].matchAll(/^ {2}([\w.-]+):\s*$/gm)].map((m) => m[1]);
+  return [...block[1].matchAll(/^ {2}(?:"([^"]+)"|'([^']+)'|([\w.-]+)):\s*$/gm)]
+    .map((m) => m[1] || m[2] || m[3]);
 }
 
 await readStdin();
