@@ -37,42 +37,46 @@ function parseSubprojects(yaml) {
 }
 
 await readStdin();
-const root = findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
-if (!root) process.exit(0);
+try {
+  const root = findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  if (!root) process.exit(0);
 
-const yaml = readFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'utf8');
-const stages = parseStages(yaml);
-const subs = parseSubprojects(yaml);
+  const yaml = readFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'utf8');
+  const stages = parseStages(yaml);
+  const subs = parseSubprojects(yaml);
 
-const drift = [];
-const manifestFile = join(root, '.claude', '.hub-manifest.json');
-if (existsSync(manifestFile)) {
-  try {
-    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-    for (const s of manifest.skills || []) {
-      if (!s.hash || !s.target) continue;
-      const target = join(root, ...String(s.target).split('/'));
-      if (!existsSync(target)) {
-        drift.push(`${s.name}（缺失）`);
-        continue;
+  const drift = [];
+  const manifestFile = join(root, '.claude', '.hub-manifest.json');
+  if (existsSync(manifestFile)) {
+    try {
+      const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+      for (const s of manifest.skills || []) {
+        if (!s.hash || !s.target) continue;
+        const target = join(root, ...String(s.target).split('/'));
+        if (!existsSync(target)) {
+          drift.push(`${s.name}（缺失）`);
+          continue;
+        }
+        const hash = createHash('sha256').update(readFileSync(target, 'utf8')).digest('hex');
+        if (hash !== s.hash) drift.push(`${s.name}（已改）`);
       }
-      const hash = createHash('sha256').update(readFileSync(target, 'utf8')).digest('hex');
-      if (hash !== s.hash) drift.push(`${s.name}（已改）`);
-    }
-  } catch { /* ignore */ }
+    } catch { /* ignore */ }
+  }
+
+  const lines = [
+    'devflow 工作区已加载。',
+    `- 项目根：${root.split('\\').join('/')}`,
+    `- 阶段：${stages.join(', ') || '（未声明）'}`,
+    `- 子项目：${subs.join(', ') || '单项目'}`,
+  ];
+  if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
+  lines.push('- 流程：/devflow:req → plan → implement → test → review → debug');
+  lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');
+
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') },
+  }));
+} catch {
+  // 注入失败时静默，不打断会话启动。
 }
-
-const lines = [
-  'devflow 工作区已加载。',
-  `- 项目根：${root.split('\\').join('/')}`,
-  `- 阶段：${stages.join(', ') || '（未声明）'}`,
-  `- 子项目：${subs.join(', ') || '单项目'}`,
-];
-if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
-lines.push('- 流程：/devflow:req → plan → implement → test → review → debug');
-lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');
-
-process.stdout.write(JSON.stringify({
-  hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') },
-}));
 process.exit(0);
