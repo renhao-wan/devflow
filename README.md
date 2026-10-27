@@ -22,17 +22,19 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ## 安装
 
+从 GitHub 安装：
+
 ```bash
-# 在 Claude Code 中，把仓库目录加入本地 marketplace
-/plugin marketplace add D:/projects/devflow
+# 在 Claude Code 中把仓库加入 marketplace
+/plugin marketplace add renhao-wan/devflow
 
 # 安装插件
 /plugin install devflow
 ```
 
-`D:/projects/devflow` 换成实际路径即可。个人本地使用不需要发布到公开市场，也不需要 npm。
+如果是在本机修改插件本身，也可以把本地仓库路径传给 `/plugin marketplace add`。
 
-安装或修改 hooks 后需要重启 Claude Code 会话生效。
+无需发布到公开市场，也不需要 npm。安装或修改 hooks 后需要重启 Claude Code 会话生效。
 
 ## 快速开始
 
@@ -204,7 +206,7 @@ upstream:
 
 ## 安全门禁与 hooks
 
-hooks 只对包含 `.claude/hub/hub.yaml` 的项目生效，不会打扰其他项目。
+`guard-dangerous` 在安装插件后对所有项目的 Bash 命令生效；`track-changes`、`check-tests`、`load-hub` 只在包含 `.claude/hub/hub.yaml` 的工作区生效，不会向其他项目写入状态或注入上下文。
 
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
@@ -328,7 +330,7 @@ node --test tests/
 
 - 测试使用 `node:test`，无外部依赖。
 - 运行测试需要 Node >= 20.11；插件运行本身 Node >= 18 即可。
-- 改动约定：只编辑项目真源或插件 `templates/`，不要手改 `.claude/skills/devflow-*`。
+- 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
 
 ## 故障排查
@@ -342,7 +344,7 @@ node --test tests/
 | doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
 | hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
 | 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand` |
-| 老项目没有新阶段资源 | 用 `hub-init.mjs --force` 补齐（会覆盖阶段文件），或手动复制 |
+| 老项目没有新阶段资源 | 用 `hub-init.mjs --force` 补齐（会覆盖 `hub.yaml` 与阶段文件，先备份），或手动复制 |
 | 子项目识别错误 | 检查 `hub.yaml` 的 `subprojects`，必要时手动调整 `path` 与 `stages` |
 
 ## 版本与兼容

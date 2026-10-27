@@ -48,7 +48,7 @@
 
 ## hooks
 
-只对含 `.claude/hub/hub.yaml` 的项目生效。
+`guard-dangerous` 对所有项目生效；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
 
 | 事件 | 行为 |
 | --- | --- |
@@ -66,5 +66,5 @@
 - [x] 插件骨架、命令、技能、agent
 - [x] hub 脚本：init / gen / doctor / upstream / mark-test
 - [x] hooks 脚本
-- [x] 测试与示例工作区验证（31 项测试通过）
+- [x] 测试与示例工作区验证（32 项测试通过）
 - [x] 文档与版本 1.0.0
