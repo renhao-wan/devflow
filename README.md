@@ -4,48 +4,287 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 核心思路只有一句：**规范正文只放一份（项目 `.claude/hub/`），Claude Code 看到的只是薄壳投影。**
 
+## 特性
+
+- **六个阶段**：`req → plan → implement → test → review → debug`，每个阶段都有明确产出与硬门禁。
+- **单一真源**：项目规则只维护 `.claude/hub/`；`.claude/skills/devflow-*` 是生成物，不手改。
+- **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
+- **多根工作区**：自动探测 `services/api` 这类两层子项目，测试命令统一从工作区根执行。
+- **安全门禁**：系统级破坏命令直接拒绝，有丢数据风险的操作要求确认，未测试改动只提醒不阻止。
+- **可回灌**：项目里打磨过的阶段规则可以回灌到插件模板，自动识别项目专属内容。
+
+## 前置要求
+
+- Claude Code（支持 `/plugin` 命令）。
+- Node.js：运行插件脚本需 **>= 18**；运行测试需 **>= 20.11**（测试使用了 `import.meta.dirname`）。
+- `node` 可在 `PATH` 中找到（hooks 通过它执行）。
+- 无第三方依赖，无需 npm install。
+
 ## 安装
 
 ```bash
-# 把本目录放到任意位置，然后在 Claude Code 中：
+# 在 Claude Code 中，把仓库目录加入本地 marketplace
 /plugin marketplace add D:/projects/devflow
+
+# 安装插件
 /plugin install devflow
 ```
 
-个人本地使用不需要发布到公开市场，也不需要 npm。
+`D:/projects/devflow` 换成实际路径即可。个人本地使用不需要发布到公开市场，也不需要 npm。
 
-## 初始化一个工作区
+安装或修改 hooks 后需要重启 Claude Code 会话生效。
+
+## 快速开始
+
+### 1. 初始化工作区
+
+在工作区根目录执行：
 
 ```bash
-cd <工作区根>
 /devflow:init
 ```
 
-`/devflow:init` 会：
+会完成：
 
-1. 创建 `.claude/hub/`（六个阶段的模板）
-2. 写入 `hub.yaml`（自动探测子项目和测试命令，支持 `services/api` 这类两层结构）
-3. 在 `scripts/` 放四个薄 loader
-4. 生成 `.claude/skills/devflow-*` 投影
-5. 写入 `.gitignore` 片段
+1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`）。
+2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令。
+3. 在 `scripts/` 放四个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-upstream` / `devflow-test`）。
+4. 生成 `.claude/skills/devflow-*` 投影。
+5. 写入 `.gitignore` 片段，忽略生成物。
 
-然后按需修改 `.claude/hub/hub.yaml` 和各个 `stages/*/SKILL.md`。
+初始化后请检查 `.claude/hub/hub.yaml`，尤其是自动探测的测试命令。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。
+
+### 2. 走一遍流程
+
+以 `add-login` 为例（下文假设 slug 为 `add-login`）：
+
+```bash
+/devflow:req 给登录页增加短信验证码
+/devflow:plan add-login
+/devflow:implement add-login
+/devflow:test add-login
+/devflow:review add-login
+```
+
+产物默认写入 `docs/devflow/add-login/`：
+
+```
+req.md      # 目标、验收标准、边界、影响面
+plan.md     # 方案、任务拆分、测试策略、回滚
+test.md     # 命令、结果、覆盖、未覆盖项
+review.md   # 阻断项、建议项、测试缺口、结论
+debug.md    # 现象、根因、修复、验证（进入 debug 时）
+```
+
+小改动可以合并阶段（如 `req + plan`），但**不能跳门禁**：没有验收标准不实现，没有测试结果不审查。
 
 ## 命令
 
 | 命令 | 作用 |
 | --- | --- |
-| `/devflow:init` | 初始化工作区 hub |
-| `/devflow:req` | 需求澄清，产出 `req.md` |
-| `/devflow:plan` | 计划，产出 `plan.md` |
-| `/devflow:implement` | 按计划实现 |
-| `/devflow:test` | 运行与补充测试 |
-| `/devflow:review` | 代码评审 |
-| `/devflow:debug` | 系统化调试 |
-| `/devflow:doctor` | 体检版本、投影、hooks |
-| `/devflow:upstream` | 把项目经验回灌到插件模板 |
+| `/devflow:init [--force]` | 初始化工作区 hub，探测子项目与测试命令 |
+| `/devflow:req <需求>` | 需求澄清，产出 `req.md` |
+| `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
+| `/devflow:implement <slug>` | 按计划小步实现，测试先行 |
+| `/devflow:test <slug>` | 运行与补充测试，记录真实结果 |
+| `/devflow:review <slug>` | 差异导向审查，输出阻断项与建议项 |
+| `/devflow:debug <问题>` | 系统化排障，先复现后修复 |
+| `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
+| `/devflow:upstream --stage <stage> [--apply]` | 把项目经验回灌到插件模板 |
 
-## 目录
+## 六个阶段
+
+| 阶段 | 职责 | 关键门禁 |
+| --- | --- | --- |
+| req | 把模糊诉求变成可验证需求 | 验收标准可观察；写明本次不做；影响面具体 |
+| plan | 方案、任务拆分、测试策略、回滚 | 引用真实文件；任务可独立验证；有回滚 |
+| implement | 按计划小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步 |
+| test | 真实运行测试并记录证据 | 全量已跑；改动有直接覆盖；未运行不得写通过 |
+| review | 按风险审查差异 | 无未处理阻断项；敏感信息扫描通过 |
+| debug | 复现、定位根因、补回归测试 | 有复现；根因有证据；回归测试修复前失败 |
+
+每个阶段的完整规则在 `.claude/hub/stages/<stage>/SKILL.md`，执行前必须完整读取。
+
+## hub.yaml 配置
+
+```yaml
+version: 1
+requiresPlugin: "^1.0.0"
+
+stages:
+  - req
+  - plan
+  - implement
+  - test
+  - review
+  - debug
+
+subprojects:
+  api:
+    path: services/api
+    stages: [plan, implement, test, review, debug]
+    testCommand: "cd services/api && pnpm run test"
+  worker:
+    path: services/worker
+    stages: [plan, implement, test, review, debug]
+    testCommand: "cd services/worker && npm run test"
+
+defaults:
+  testCommand: "pnpm run test"
+  reviewRequired: true
+
+upstream:
+  blocklist: []
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `version` | 配置格式版本，当前为 `1` |
+| `requiresPlugin` | 插件版本范围，支持 `^` `~` `>=` `<=` `>` `<` `=` 和 `*`；不满足时生成器拒绝写入 |
+| `stages` | 启用的阶段及顺序；为空时回退扫描 `stages/` 目录 |
+| `subprojects.<name>.path` | 子项目相对工作区根的路径 |
+| `subprojects.<name>.stages` | 该子项目适用的阶段 |
+| `subprojects.<name>.testCommand` | 必须能从工作区根执行；init 会生成 `cd <rel> && ...` |
+| `defaults.testCommand` | 没有子项目级命令时使用 |
+| `defaults.reviewRequired` | 流程约定字段，当前不参与脚本校验 |
+| `upstream.blocklist` | 回灌时用于识别项目专属内容的额外关键词 |
+
+## 阶段资源：references/ 与 templates/
+
+项目真源目录结构：
+
+```
+.claude/hub/stages/<stage>/
+├─ SKILL.md          # 阶段规则正文
+├─ references/       # 按需读取的细则（可选）
+└─ templates/        # 产出骨架（可选）
+```
+
+- `SKILL.md` 中的相对引用以该文件所在目录为基准。
+- 生成器会把资源清单写入投影的 `## 阶段资源`，并记录到 `.claude/.hub-manifest.json`。
+- 增删资源后需要重新运行 `node scripts/devflow-gen.mjs`；`--check` 会把它识别为漂移。
+- `/devflow:doctor` 会校验账本中的资源是否仍然存在。
+- 回灌时 `references/`、`templates/` 会被递归处理并保留相对路径。
+
+## 单一真源与投影
+
+```
+插件出厂模板 templates/
+        │ init 复制
+        ▼
+项目 .claude/hub/（唯一可编辑的规则）
+        │ gen 生成
+        ▼
+项目 .claude/skills/devflow-*（薄壳，勿手改）
+```
+
+改规则的流程：
+
+1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`（必要时增删 `references/`、`templates/`）。
+2. 运行 `node scripts/devflow-gen.mjs`。
+3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、无缺失资源。
+
+生成器会：
+
+- 用 SHA-256 账本检测投影漂移；
+- 清理账本中已移除阶段的过期投影；
+- 拒绝在 `requiresPlugin` 不满足时写入；
+- 默认不覆盖不受 devflow 管理的同名技能，`--force` 才覆盖。
+
+常用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--root <path>` | 指定工作区根；默认向上查找 `hub.yaml` |
+| `--check` | 只检查漂移，有漂移时退出码为 1 |
+| `--dry-run` | 显示将写入/删除的内容，不落盘 |
+| `--json` | 输出 JSON 报告 |
+| `--force` | 覆盖非受管或已存在的投影 |
+| `--no-plugin` | 跳过插件版本检查（离线或仅生成时使用） |
+
+## 安全门禁与 hooks
+
+hooks 只对包含 `.claude/hub/hub.yaml` 的项目生效，不会打扰其他项目。
+
+| 事件 | 脚本 | 行为 |
+| --- | --- | --- |
+| `PreToolUse(Bash)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
+| `PostToolUse(Edit/Write/MultiEdit)` | `track-changes.mjs` | 记录改动文件，标记待验证 |
+| `Stop` | `check-tests.mjs` | 有改动但未验证通过时提醒，从不阻止 |
+| `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
+
+### 直接拒绝（deny）
+
+系统级或不可恢复的破坏，例如：
+
+- `rm -rf /`、`rm -rf ~`、`rm -rf *`；
+- `mkfs`、`fdisk`、`dd of=/dev/sda`；
+- `curl ... | bash`、`wget ... | sh`；
+- 强推 `main` / `master` / `release/*`；
+- `DROP DATABASE`、`TRUNCATE TABLE`；
+- Windows 下递归删除盘符根（`rd /s /q C:\`、`del /f C:\`）；
+- `shutdown`、`reboot`。
+
+### 要求确认（ask）
+
+常见但可能丢数据的操作，例如：
+
+- `git push --force`（非保护分支）、`git reset --hard`、`git clean -fdx`；
+- `git checkout .`、`git restore .`、`git branch -D`；
+- 删除远端分支、`npm publish`；
+- `docker rm -f`、`docker system prune`、`kubectl delete`、`helm uninstall`；
+- 删除数据库列、回滚迁移；
+- `rm -rf <路径>`。
+
+hooks 自身异常时一律放行（fail-open），避免把正常操作挡死。修改 hooks 或插件后需要重启会话。
+
+## 多根工作区
+
+- 只从工作区根初始化，子项目不单独初始化 hub。
+- 共享规则放在根 hub；子项目差异放进 `.claude/hub/overrides/<sub>/<stage>.md`（手动创建，生成器会在投影中提示优先读取）。
+- init 会向下探测两层子项目，跳过 `node_modules`、`dist`、`build`、`target`、`.git`、`coverage` 等目录。
+- 名称重复的子项目会用路径生成唯一名（如 `services-api`）。
+- 包管理器按 `packageManager` 字段或 lockfile 向上探测（pnpm / yarn / bun / npm）。
+- 测试命令按项目类型探测：`package.json` 的 `scripts.test`、`mvn test`、`./gradlew test` / `gradlew.bat test`、`go test ./...`、`cargo test`、`pytest`。
+- 探测不到测试命令时 init 会警告，请手动补充 `testCommand`。
+
+## 回灌
+
+```bash
+# 预览：显示分类与 diff，不写文件
+/devflow:upstream --stage plan
+
+# 确认后写入插件模板，自动 bump patch 版本并更新 CHANGELOG
+/devflow:upstream --stage plan --apply
+```
+
+分类规则：
+
+- `[可回灌]`：通用内容，可以进入插件模板。
+- `[项目专属]`：命中绝对路径、`192.168.x.x` / `10.x.x.x` 等内网地址、`.corp` / `.internal`、`upstream.blocklist` 关键词或子项目名，不会回灌。
+
+`--apply` 会：
+
+1. 递归复制可回灌文件到 `templates/stages/<stage>/`，保留相对路径；
+2. 追加 `templates/stages/_feedback-log.md`；
+3. bump `.claude-plugin/plugin.json` 的 patch 版本；
+4. 更新 `CHANGELOG.md`。
+
+回灌会修改插件仓库，建议单独提交并在回灌后运行 `/devflow:doctor`。
+
+## 脚本参考
+
+| 脚本 | 作用 | 常用参数 |
+| --- | --- | --- |
+| `scripts/hub-init.mjs` | 初始化工作区 | `--root` `--force` `--plugin-root` |
+| `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
+| `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks | `--root` `--json` |
+| `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--root` `--plugin-root` |
+| `scripts/mark-test.mjs` | 记录测试通过时间与命令 | `--root` `--command` |
+
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。
+
+## 目录结构
 
 插件自带：
 
@@ -59,6 +298,7 @@ templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / upstream / mark-test
 tests/                 # node:test 测试
+docs/design.md         # 设计文档
 ```
 
 项目内由 init 生成：
@@ -66,51 +306,66 @@ tests/                 # node:test 测试
 ```
 .claude/hub/           # 项目真源
 ├─ hub.yaml            # 子项目、阶段、测试命令
-├─ stages/<stage>/     # 六个阶段的正文
+├─ stages/<stage>/     # 六个阶段的正文与资源
+│  ├─ SKILL.md
+│  ├─ references/      # 按需读取的细则（可选）
+│  └─ templates/       # 产出骨架（可选）
+├─ overrides/          # 子项目级覆盖（可选）
 └─ _shared/            # 跨阶段共用规则
 
 .claude/skills/        # 生成物，勿手改
+.claude/.hub-manifest.json   # 生成账本（哈希与资源清单）
+.claude/.devflow-state.json  # 测试状态
 scripts/               # 薄 loader，指向插件内的真实脚本
+.devflow.json          # 插件位置与版本
 ```
 
-## 门禁
-
-- 系统级破坏命令（`rm -rf /`、`mkfs`、`dd` 写裸设备、强推 `main`、`DROP DATABASE`）直接阻止。
-- 有丢数据风险但常见可恢复的操作（`git reset --hard`、`git clean -fdx`、强推非保护分支、删除远端分支、发布包）要求用户确认。
-- 改了代码但本会话没跑测试：结束前提醒，不阻止。
-- 其余阶段门禁写在各 `stages/<stage>/SKILL.md` 里，靠命令流程约束。
-
-hooks 只对包含 `.claude/hub/hub.yaml` 的项目生效，不会打扰其他项目。安装或修改 hooks 后需要重启 Claude Code 会话生效；运行环境需能在 PATH 中找到 `node`。
-
-## 回灌
+## 开发与测试
 
 ```bash
-# 预览：显示分类与 diff，不写文件
-/devflow:upstream --stage plan
-
-# 确认后写入插件模板，自动 bump patch 版本并更新 CHANGELOG
-/devflow:upstream --stage plan --apply
+node --test tests/
 ```
 
-含项目路径、内网地址、业务名、子项目名的内容会被判定为 project-local，不回灌。
+- 测试使用 `node:test`，无外部依赖。
+- 运行测试需要 Node >= 20.11；插件运行本身 Node >= 18 即可。
+- 改动约定：只编辑项目真源或插件 `templates/`，不要手改 `.claude/skills/devflow-*`。
+- 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
 
-## 版本
+## 故障排查
 
-- 插件版本：`.claude-plugin/plugin.json`
+| 现象 | 处理 |
+| --- | --- |
+| `找不到 devflow 插件目录` | 先运行 `/devflow:init`，或检查 `.devflow.json` 中的 `pluginRoot` |
+| `hub.yaml 解析失败` | 使用 YAML 子集：注释、嵌套 map、块列表、行内 `[a, b]`、标量；检查缩进与冒号 |
+| 投影漂移 / 手改提示 | 改源文件后运行 `node scripts/devflow-gen.mjs`，不要改投影 |
+| 账本中有过期技能 | 运行 `node scripts/devflow-gen.mjs` 自动清理 |
+| doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
+| hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
+| 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand` |
+| 老项目没有新阶段资源 | 用 `hub-init.mjs --force` 补齐（会覆盖阶段文件），或手动复制 |
+| 子项目识别错误 | 检查 `hub.yaml` 的 `subprojects`，必要时手动调整 `path` 与 `stages` |
+
+## 版本与兼容
+
+- 插件版本：`.claude-plugin/plugin.json`（当前 `1.0.0`）
 - 项目要求：`hub.yaml` 的 `requiresPlugin`
 - 生成账本：`.claude/.hub-manifest.json`
 
-版本不兼容时生成器拒绝写入，并提示先升级插件。
+升级插件后先运行 `/devflow:doctor`。版本不满足时，生成器会拒绝写入；此时要么调整 `requiresPlugin`，要么回退插件版本。
 
 ## 卸载
 
 ```bash
 /plugin uninstall devflow
-rm -rf .claude/hub .claude/skills/devflow-* .claude/.hub-manifest.json scripts/devflow-*.mjs .devflow.json
+rm -rf .claude/hub .claude/skills/devflow-* .claude/.hub-manifest.json .claude/.devflow-state.json scripts/devflow-*.mjs .devflow.json
 ```
 
-`.claude/` 下你自己写的其他技能不受影响。
+`.claude/` 下你自己写的其他技能不受影响。`.claude/hub/` 是项目真源，删除前请确认其中的规则已备份或不再需要。
 
 ## 设计文档
 
-见 `docs/design.md`。
+架构取舍与分层说明见 `docs/design.md`。
+
+## 许可
+
+MIT，见 `.claude-plugin/plugin.json`。
