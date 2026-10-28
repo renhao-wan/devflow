@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+- 新增 GitHub Actions：Node 20/22 跨平台运行测试，并执行 init → gen → doctor 冒烟
+- 新增 `/devflow:ship`：回灌后创建分支、提交、推送并生成 PR，支持 `gh`、GitHub API（`GITHUB_TOKEN`）与 compare 链接三种方式
 - 阶段目录支持 `references/` 与 `templates/` 资源：随 init 复制、写入投影与生成账本、doctor 校验、回灌递归处理
 - 子项目测试命令从工作区根生成，支持 `packageManager` 与 lockfile 探测
 - hooks 自身异常时放行；扩展危险命令规则（强推保护分支、Windows 盘符根删除等）
 - 生成器清理账本中已移除阶段的过期投影
 - 修正文档中的安装方式与 hooks 作用域说明
+- 文档补充 init 探测边界：含 `.git`/构建文件的目录会停止下钻，深层子项目（如容器仓库内的模块）需手动修正 `hub.yaml`；根无构建文件时 `defaults.testCommand` 回退为 `npm test`
 
 ## 1.0.0
 

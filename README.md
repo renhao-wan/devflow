@@ -29,7 +29,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 /plugin marketplace add renhao-wan/devflow
 
 # 安装插件
-/plugin install devflow
+/plugin install devflow@devflow-marketplace
 ```
 
 如果是在本机修改插件本身，也可以把本地仓库路径传给 `/plugin marketplace add`。
@@ -93,6 +93,7 @@ debug.md    # 现象、根因、修复、验证（进入 debug 时）
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复 |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:upstream --stage <stage> [--apply]` | 把项目经验回灌到插件模板 |
+| `/devflow:ship --stage <stage> [--dry-run]` | 回灌后提交到分支、推送并生成 PR |
 
 ## 六个阶段
 
@@ -146,8 +147,8 @@ upstream:
 | `stages` | 启用的阶段及顺序；为空时回退扫描 `stages/` 目录 |
 | `subprojects.<name>.path` | 子项目相对工作区根的路径 |
 | `subprojects.<name>.stages` | 该子项目适用的阶段 |
-| `subprojects.<name>.testCommand` | 必须能从工作区根执行；init 会生成 `cd <rel> && ...` |
-| `defaults.testCommand` | 没有子项目级命令时使用 |
+| `subprojects.<name>.testCommand` | 必须能从工作区根执行；init 会生成 `cd <rel> && ...`。探测只是初判，需按实际复核 |
+| `defaults.testCommand` | 没有子项目级命令时使用。根目录无构建文件时 init 会回退为 `npm test`，需要手动修改 |
 | `defaults.reviewRequired` | 流程约定字段，当前不参与脚本校验 |
 | `upstream.blocklist` | 回灌时用于识别项目专属内容的额外关键词 |
 
@@ -244,11 +245,52 @@ hooks 自身异常时一律放行（fail-open），避免把正常操作挡死�
 
 - 只从工作区根初始化，子项目不单独初始化 hub。
 - 共享规则放在根 hub；子项目差异放进 `.claude/hub/overrides/<sub>/<stage>.md`（手动创建，生成器会在投影中提示优先读取）。
-- init 会向下探测两层子项目，跳过 `node_modules`、`dist`、`build`、`target`、`.git`、`coverage` 等目录。
+- init 从工作区根向下探测最多两层，跳过 `node_modules`、`dist`、`build`、`target`、`coverage` 等目录。
+- **探测在第一个"像项目"的目录处停止下钻。** 判定依据：目录含 `.git`、`package.json`、`pom.xml`、`build.gradle`、`go.mod`、`Cargo.toml` 或 `pyproject.toml` 之一。命中后该目录本身就是子项目，其内部不会再被扫描。
 - 名称重复的子项目会用路径生成唯一名（如 `services-api`）。
 - 包管理器按 `packageManager` 字段或 lockfile 向上探测（pnpm / yarn / bun / npm）。
 - 测试命令按项目类型探测：`package.json` 的 `scripts.test`、`mvn test`、`./gradlew test` / `gradlew.bat test`、`go test ./...`、`cargo test`、`pytest`。
 - 探测不到测试命令时 init 会警告，请手动补充 `testCommand`。
+
+### init 只生成骨架，`hub.yaml` 需要人工复核
+
+`hub.yaml` 是项目真源，init 的探测只是一次初判。以下情况必须手动修改：
+
+1. **根目录没有构建文件**：`defaults.testCommand` 会回退成 `npm test`，与实际无关，必须改掉或换成显式占位。
+2. **容器目录自身带 `.git`**：例如工作区根下有 `business-systems/`（独立 Git 仓库），真正的项目是 `business-systems/meeting-booking/`。由于探测在 `business-systems` 处命中 `.git` 并停止下钻，`meeting-booking` 不会被发现，`business-systems` 会得到一条没有 `testCommand` 的条目。
+
+   两种修正方式任选其一：
+
+   ```yaml
+   # 方式 A：保留容器条目，把深层项目的测试命令写进去
+   subprojects:
+     business-systems:
+       path: business-systems
+       stages: [plan, implement, test, review, debug]
+       testCommand: "cd business-systems/meeting-booking && mvn test"
+   ```
+
+   ```yaml
+   # 方式 B：去掉容器条目，直接指向真实子项目
+   subprojects:
+     meeting-booking:
+       path: business-systems/meeting-booking
+       stages: [plan, implement, test, review, debug]
+       testCommand: "cd business-systems/meeting-booking && mvn test"
+   ```
+
+   方式 B 更贴近"一个条目对应一个可构建单元"，推荐优先使用；只有在容器层确实需要统一管理时才用方式 A。
+
+3. **多模块 Maven/Gradle 仓库**：子项目命令从工作区根执行，`cd <rel> && mvn test` 对单模块有效；若 `pom.xml` 有聚合模块，确认测试范围符合预期，必要时改成 `mvn -f <pom> test` 或带 `-pl`。
+
+改完执行：
+
+```bash
+node scripts/devflow-gen.mjs
+node scripts/devflow-doctor.mjs
+```
+
+`doctor` 只校验语法、投影与资源，不会判断测试命令是否符合项目实际，因此 `testCommand` 必须由人确认。
 
 ## 回灌
 
@@ -274,6 +316,42 @@ hooks 自身异常时一律放行（fail-open），避免把正常操作挡死�
 
 回灌会修改插件仓库，建议单独提交并在回灌后运行 `/devflow:doctor`。
 
+## 提交与 PR
+
+`/devflow:upstream --apply` 只写本地文件，不提交。要用 PR 的方式把回灌结果送出去，用 `/devflow:ship`：
+
+```bash
+# 预览：显示分支名、将提交的文件、版本变化，不写文件
+/devflow:ship --stage plan --plugin-root D:/projects/devflow --dry-run
+
+# 执行：回灌 → 建分支 → 提交 → 推送 → 生成 PR
+/devflow:ship --stage plan --plugin-root D:/projects/devflow
+```
+
+回灌目标必须是**插件源码仓库**（含 `.git`）。已安装的插件缓存没有 git 历史，无法提 PR。
+
+PR 创建按优先级降级：
+
+| 方式 | 条件 | 结果 |
+| --- | --- | --- |
+| `gh` CLI | 已安装并登录 | 自动创建 PR，返回链接 |
+| GitHub API | 设置了 `GITHUB_TOKEN` 或 `GH_TOKEN` | 自动创建 PR，token 需有 `repo` 权限 |
+| compare 链接 | 两者都没有 | 输出链接，在浏览器里点一次 |
+
+安装 `gh`（Windows）：
+
+```bash
+winget install --id GitHub.cli
+gh auth login --web
+```
+
+安全约束：
+
+- 只提交白名单文件：`templates/stages/`、`.claude-plugin/plugin.json`、`CHANGELOG.md`。
+- 这些文件在回灌前必须干净，否则脚本拒绝执行，避免把无关改动混进 PR。
+- 工作区其他未提交改动不会进入提交，脚本会列出来。
+- `git push` 失败时保留本地分支和提交，不自动删除。
+
 ## 脚本参考
 
 | 脚本 | 作用 | 常用参数 |
@@ -282,6 +360,7 @@ hooks 自身异常时一律放行（fail-open），避免把正常操作挡死�
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks | `--root` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--root` `--plugin-root` |
+| `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR | `--stage` `--plugin-root` `--base` `--dry-run` `--no-pr` |
 | `scripts/mark-test.mjs` | 记录测试通过时间与命令 | `--root` `--command` |
 
 项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。
@@ -292,7 +371,7 @@ hooks 自身异常时一律放行（fail-open），避免把正常操作挡死�
 
 ```
 .claude-plugin/        # plugin.json + marketplace.json
-commands/              # /devflow:* 九个命令
+commands/              # /devflow:* 十个命令
 skills/                # 五个通用技能（流程、TDD、评审、排障、hub 管理）
 agents/                # 评审、测试、排障三个子代理
 hooks/                 # 四个钩子脚本与 hooks.json
@@ -300,6 +379,7 @@ templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / upstream / mark-test
 tests/                 # node:test 测试
+.github/               # GitHub Actions
 docs/design.md         # 设计文档
 ```
 
@@ -333,6 +413,11 @@ node --test tests/
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
 
+CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运行：
+
+- `test`：Ubuntu + Windows，Node 20 / 22，执行 `node --test tests/`；
+- `smoke`：在临时目录执行 `init → gen --check → doctor`，验证真实链路。
+
 ## 故障排查
 
 | 现象 | 处理 |
@@ -343,9 +428,9 @@ node --test tests/
 | 账本中有过期技能 | 运行 `node scripts/devflow-gen.mjs` 自动清理 |
 | doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
 | hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
-| 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand` |
+| 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand`；root 无构建文件时默认写 `npm test`，必须替换 |
 | 老项目没有新阶段资源 | 用 `hub-init.mjs --force` 补齐（会覆盖 `hub.yaml` 与阶段文件，先备份），或手动复制 |
-| 子项目识别错误 | 检查 `hub.yaml` 的 `subprojects`，必要时手动调整 `path` 与 `stages` |
+| 子项目识别错误 | 检查 `hub.yaml` 的 `subprojects`。含 `.git` 的容器目录会阻止下钻，深层项目需按「多根工作区」小节手动补充或改指向 |
 
 ## 版本与兼容
 
