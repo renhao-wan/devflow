@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync, copyFileSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep } from 'node:path';
+import { join, dirname, resolve, relative, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
-  log, posix, isMain, projectRoot,
+  log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, sha256, walk, relPosix,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -73,8 +73,49 @@ function isProjectDir(dir) {
     || existsSync(join(dir, 'pyproject.toml'));
 }
 
+function readMavenModules(dir) {
+  const pom = join(dir, 'pom.xml');
+  if (!existsSync(pom)) return [];
+  const block = /<modules>([\s\S]*?)<\/modules>/.exec(readText(pom));
+  if (!block) return [];
+  return [...block[1].matchAll(/<module>\s*([^<]+?)\s*<\/module>/g)]
+    .map((m) => m[1].replace(/\\/g, '/').replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+/** 父 pom 聚合的模块单独成为子项目；比父级的 mvn test 粒度更细，也便于逐模块跑测试。 */
+function expandMavenModules(root, dir, depth = 0) {
+  if (depth > 2) return [];
+  const out = [];
+  for (const mod of readMavenModules(dir)) {
+    const modDir = resolve(dir, mod);
+    if (!existsSync(modDir)) continue;
+    const rel = relative(root, modDir).split(sep).join('/');
+    const nested = expandMavenModules(root, modDir, depth + 1);
+    if (nested.length) {
+      out.push(...nested);
+    } else {
+      out.push({
+        name: basename(modDir),
+        path: rel,
+        stages: ['plan', 'implement', 'test', 'review', 'debug'],
+        testCommand: commandFromRoot(root, modDir, detectTestCommand(modDir, root) || 'mvn test'),
+      });
+    }
+  }
+  return out;
+}
+
 function discoverSubprojects(root) {
   const found = [];
+  const seen = new Set();
+  const expanded = [];
+  const push = (item) => {
+    if (seen.has(item.path)) return;
+    seen.add(item.path);
+    found.push(item);
+  };
+
   const walk = (dir, depth) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
@@ -82,12 +123,18 @@ function discoverSubprojects(root) {
       const rel = relative(root, child).split(sep).join('/');
       if (isProjectDir(child)) {
         const looksDemand = /demand|require|design|spec|doc/i.test(entry.name);
-        found.push({
-          name: entry.name,
-          path: rel,
-          stages: looksDemand ? ['req'] : ['plan', 'implement', 'test', 'review', 'debug'],
-          testCommand: looksDemand ? null : commandFromRoot(root, child, detectTestCommand(child, root)),
-        });
+        const modules = looksDemand ? [] : expandMavenModules(root, child);
+        if (modules.length) {
+          expanded.push(`${rel}（${modules.length} 个 Maven 模块）`);
+          for (const mod of modules) push(mod);
+        } else {
+          push({
+            name: entry.name,
+            path: rel,
+            stages: looksDemand ? ['req'] : ['plan', 'implement', 'test', 'review', 'debug'],
+            testCommand: looksDemand ? null : commandFromRoot(root, child, detectTestCommand(child, root)),
+          });
+        }
       } else if (depth < 2) {
         walk(child, depth + 1);
       }
@@ -97,12 +144,12 @@ function discoverSubprojects(root) {
 
   found.sort((a, b) => a.path.localeCompare(b.path));
 
-  const seen = new Map();
-  for (const s of found) seen.set(s.name, (seen.get(s.name) || 0) + 1);
+  const counts = new Map();
+  for (const s of found) counts.set(s.name, (counts.get(s.name) || 0) + 1);
   for (const s of found) {
-    if (seen.get(s.name) > 1) s.name = s.path.replace(/\//g, '-');
+    if (counts.get(s.name) > 1) s.name = s.path.replace(/\//g, '-');
   }
-  return found;
+  return { list: found, expanded };
 }
 
 function renderHubYaml(subprojects, version, rootTest) {
@@ -178,9 +225,25 @@ function copyStageTemplates(pluginRoot, root, force) {
   return copied;
 }
 
+/** 记录阶段源文件哈希，供 /devflow:sync 判断本地是否手改过。 */
+function writeSourceManifest(root, version) {
+  const hubDir = join(root, '.claude', 'hub');
+  const files = {};
+  for (const abs of walk(join(hubDir, 'stages'))) {
+    files[`.claude/hub/${relPosix(hubDir, abs)}`] = sha256(readText(abs));
+  }
+  writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    pluginVersion: version,
+    files,
+  }, null, 2)}\n`);
+}
+
 const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
+.claude/.hub-sources.json
 .claude/.devflow-state.json
 .devflow.json
 # <<< devflow
@@ -201,17 +264,28 @@ export async function main(argv = process.argv.slice(2)) {
   const info = pluginInfo(pluginRoot);
   const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
 
+  const previousMeta = readMeta(root) || {};
+  const sourceArg = argValue(argv, '--source-root', null);
+  const sourceRoot = sourceArg ? resolve(sourceArg) : (previousMeta.pluginSourceRoot || null);
+  if (sourceRoot && !isValidPluginRoot(sourceRoot)) {
+    throw new Error(`--source-root 不是 devflow 插件目录：${posix(sourceRoot)}`);
+  }
+
   if (existsSync(hubFile) && !force) {
-    log('warn', `已经初始化：${posix(hubFile)}。使用 --force 覆盖 hub.yaml 与模板。`);
+    log('warn', `已经初始化：${posix(hubFile)}。使用 --force 覆盖 hub.yaml 与模板；升级模板请用 /devflow:sync。`);
   } else {
     ensureDir(join(root, '.claude', 'hub', 'stages'));
     ensureDir(join(root, '.claude', 'hub', '_shared'));
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
     const copied = copyStageTemplates(pluginRoot, root, force);
-    const subs = discoverSubprojects(root);
+    const { list: subs, expanded } = discoverSubprojects(root);
     const rootTest = detectTestCommand(root);
     writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
+    writeSourceManifest(root, info.version);
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
+    if (expanded.length) {
+      log('ok', `Maven 多模块已展开：${expanded.join('、')}。父 pom 不再单独成项，可按需调整。`);
+    }
     if (!rootTest) log('warn', '未探测到根项目的测试命令，暂写 npm test，请按实际修改 defaults.testCommand');
     const missing = subs.filter((s) => s.stages.includes('test') && !s.testCommand);
     if (missing.length) log('warn', `以下子项目没有可探测的测试命令，请手动补充：${missing.map((s) => s.path).join('、')}`);
@@ -221,6 +295,7 @@ export async function main(argv = process.argv.slice(2)) {
   writeAtomic(metaFile, `${JSON.stringify({
     pluginRoot,
     pluginVersion: info.version,
+    ...(sourceRoot ? { pluginSourceRoot: sourceRoot } : {}),
     initializedAt: new Date().toISOString(),
   }, null, 2)}\n`);
   log('ok', '记录插件位置 .devflow.json');

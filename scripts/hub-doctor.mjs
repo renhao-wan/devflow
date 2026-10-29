@@ -1,10 +1,48 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, delimiter } from 'node:path';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, sha256, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml,
+  readMeta, isPluginCache, isValidPluginRoot,
 } from './lib/common.mjs';
+
+const KNOWN_TOOLS = new Set([
+  'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
+  'mvn', 'gradle', 'go', 'cargo', 'dotnet', 'make',
+  'pytest', 'python', 'python3',
+]);
+
+function samePath(a, b) {
+  const norm = (p) => {
+    const out = resolve(p).replace(/\\/g, '/');
+    return process.platform === 'win32' ? out.toLowerCase() : out;
+  };
+  return norm(a) === norm(b);
+}
+
+function commandTools(command) {
+  return String(command)
+    .split(/&&|\|\||;/)
+    .map((seg) => seg.trim())
+    .filter(Boolean)
+    .map((seg) => seg.split(/\s+/)[0])
+    .filter((tool) => tool && !/^cd$/i.test(tool) && !/[\\/]/.test(tool))
+    .map((tool) => tool.replace(/^["']|["']$/g, ''));
+}
+
+function toolExists(tool) {
+  const exts = process.platform === 'win32'
+    ? String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    : [''];
+  for (const dir of String(process.env.PATH || '').split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      if (existsSync(join(dir, tool + ext))) return true;
+    }
+  }
+  return false;
+}
 
 function readJson(file, fallback = null) {
   try { return JSON.parse(readText(file)); } catch { return fallback; }
@@ -38,6 +76,24 @@ export async function main(argv = process.argv.slice(2)) {
     add('error', err.message);
   }
 
+  const meta = readMeta(root);
+  if (meta?.pluginRoot && pluginRoot && !samePath(meta.pluginRoot, pluginRoot)) {
+    if (isPluginCache(meta.pluginRoot)) {
+      add('ok', '插件路径已更新（升级或缓存变化）；阶段模板可用 /devflow:sync 同步');
+    } else {
+      add('warn', `记录的插件路径与当前不一致：${posix(meta.pluginRoot)} → ${posix(pluginRoot)}，可重跑 /devflow:init 刷新记录`);
+    }
+  } else if (pluginRoot && isPluginCache(pluginRoot)) {
+    add('ok', '运行于安装缓存；回灌需 --plugin-root 或 pluginSourceRoot');
+  }
+  if (meta?.pluginSourceRoot) {
+    if (isValidPluginRoot(meta.pluginSourceRoot)) {
+      add('ok', `回灌源码仓库：${posix(meta.pluginSourceRoot)}`);
+    } else {
+      add('warn', `回灌源码仓库不存在：${posix(meta.pluginSourceRoot)}，请重跑 /devflow:init --source-root <路径>`);
+    }
+  }
+
   if (config && pluginRoot) {
     const version = pluginInfo(pluginRoot).version;
     try {
@@ -49,6 +105,25 @@ export async function main(argv = process.argv.slice(2)) {
     } catch (err) {
       add('error', err.message);
     }
+  }
+
+  if (config) {
+    const commands = [];
+    if (config.defaults?.testCommand) {
+      commands.push({ label: 'defaults', command: config.defaults.testCommand });
+    }
+    for (const [name, sub] of Object.entries(config.subprojects || {})) {
+      if (sub?.testCommand) commands.push({ label: name, command: sub.testCommand });
+    }
+    const missing = [];
+    for (const { label, command } of commands) {
+      for (const tool of commandTools(command)) {
+        if (!KNOWN_TOOLS.has(tool)) continue;
+        if (!toolExists(tool)) missing.push(`${label} 的测试命令依赖 ${tool}，PATH 中找不到：${command}`);
+      }
+    }
+    if (missing.length) for (const m of missing) add('warn', m);
+    else if (commands.length) add('ok', '测试命令依赖的工具均可用');
   }
 
   const manifestFile = join(root, '.claude', '.hub-manifest.json');

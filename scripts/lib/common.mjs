@@ -207,17 +207,59 @@ export function pluginInfo(pluginRoot) {
   return JSON.parse(readText(file));
 }
 
-export function findPluginRoot(start) {
-  const metaFile = join(start, '.devflow.json');
-  if (existsSync(metaFile)) {
-    const meta = JSON.parse(readText(metaFile));
-    if (meta.pluginRoot && existsSync(join(meta.pluginRoot, '.claude-plugin', 'plugin.json'))) {
-      return meta.pluginRoot;
-    }
+export function readMeta(start) {
+  const file = join(start, '.devflow.json');
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readText(file));
+  } catch {
+    return null;
   }
+}
+
+export function isValidPluginRoot(dir) {
+  return !!dir && existsSync(join(dir, '.claude-plugin', 'plugin.json'));
+}
+
+/** Claude Code 把插件安装到 plugins/cache/<marketplace>/<plugin>/<version>，插件升级后旧目录会失效。 */
+export function isPluginCache(dir) {
+  return /[\\/]plugins[\\/]cache[\\/]/i.test(String(dir));
+}
+
+export function findPluginRoot(start) {
+  const meta = readMeta(start);
+  const envRoot = isValidPluginRoot(process.env.CLAUDE_PLUGIN_ROOT)
+    ? process.env.CLAUDE_PLUGIN_ROOT
+    : null;
+
+  if (meta?.pluginRoot && isValidPluginRoot(meta.pluginRoot)) {
+    // 记录的缓存路径可能属于刚被替换掉的旧版本，当前会话的插件根更可信
+    if (isPluginCache(meta.pluginRoot) && envRoot) return envRoot;
+    return meta.pluginRoot;
+  }
+  if (envRoot) return envRoot;
+
   const marker = findUp(start, join('.claude-plugin', 'plugin.json'));
   if (marker) return marker;
   throw new Error('找不到 devflow 插件目录。请先执行 /devflow:init，或在插件目录内运行。');
+}
+
+/** 回灌目标：显式参数 > .devflow.json 的 pluginSourceRoot > 运行时插件根。 */
+export function resolveUpstreamRoot(root, explicit = null) {
+  if (explicit) return explicit;
+  const meta = readMeta(root);
+  if (meta?.pluginSourceRoot && isValidPluginRoot(meta.pluginSourceRoot)) {
+    return meta.pluginSourceRoot;
+  }
+  return findPluginRoot(root);
+}
+
+export function cacheGuardMessage(pluginRoot) {
+  return [
+    `回灌目标落在安装缓存：${posix(pluginRoot)}。`,
+    '缓存会在插件升级时被覆盖，回灌结果不会进入仓库。',
+    '请用 --plugin-root <插件源码仓库> 指定目标，或运行 /devflow:init --source-root <插件源码仓库> 记录一次。',
+  ].join('\n');
 }
 
 /** 简化 semver：支持 ^x.y.z、~x.y.z、>=x.y.z、x.y.z、* */

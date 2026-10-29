@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, copyFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  loadHub, pluginInfo, findPluginRoot, argValue, hasFlag, readText, writeText,
+  loadHub, pluginInfo, argValue, hasFlag, readText, writeText,
   writeAtomic, bumpPatch, log, posix, isMain, projectRoot, ensureDir,
-  walk, relPosix,
+  walk, relPosix, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
 } from './lib/common.mjs';
 
 const PRIVATE_PATTERNS = [
@@ -48,8 +48,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!stage) throw new Error('必须指定 --stage <req|plan|implement|test|review|debug>');
 
   const { config } = loadHub(root);
-  const pluginRoot = argValue(argv, '--plugin-root', null) || findPluginRoot(root);
+  const pluginRoot = resolveUpstreamRoot(root, argValue(argv, '--plugin-root', null));
   const info = pluginInfo(pluginRoot);
+  const cacheTarget = isPluginCache(pluginRoot);
 
   const srcDir = join(root, '.claude', 'hub', 'stages', stage);
   const dstDir = join(pluginRoot, 'templates', 'stages', stage);
@@ -76,8 +77,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (!apply) {
     console.log(`\n预览完成：${reusable.length} 个可回灌，${localCount} 个项目专属。`);
     console.log('加 --apply 才会写入插件模板并 bump 版本。');
+    if (cacheTarget) log('warn', `目标是安装缓存（${posix(pluginRoot)}），--apply 会被拒绝，请用 --plugin-root 指向源码仓库。`);
     return { stage, reusable: reusable.length, local: localCount, applied: false };
   }
+
+  if (cacheTarget) throw new Error(cacheGuardMessage(pluginRoot));
 
   if (!reusable.length) {
     console.log('没有可回灌内容，未修改插件。');
@@ -91,7 +95,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const logFile = join(pluginRoot, 'templates', 'stages', '_feedback-log.md');
-  const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n- 回灌文件：${reusable.map((f) => f.name).join('、')}\n- 项目：${posix(root)}\n- 插件版本：${info.version} → ${bumpPatch(info.version)}\n`;
+  const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n- 回灌文件：${reusable.map((f) => f.name).join('、')}\n- 项目：${basename(root)}（本地路径不记录）\n- 插件版本：${info.version} → ${bumpPatch(info.version)}\n`;
   writeText(logFile, `${existsSync(logFile) ? readText(logFile) : '# 回灌日志\n'}${entry}`);
 
   const nextVersion = bumpPatch(info.version);
