@@ -57,14 +57,16 @@
 | Stop | 有改动但未测试则提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 
-## 回灌
+## 回灌与升级
 
-`hub-upstream` 递归对比项目 stage 目录与插件模板，分类为 project-local / reusable；只把 reusable 写入插件模板，手动确认后 bump 版本。
+`hub-upstream` 递归对比项目 stage 目录与插件模板，分类为 project-local / reusable；只把 reusable 写入插件模板，手动确认后 bump 版本。回灌目标由显式 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。
+
+插件升级后，`hub-sync` 依据 `.claude/.hub-sources.json` 的源文件哈希，区分“未改可更新”与“手改需保留”：未改文件跟随新模板，手改文件默认跳过，`--force` 覆盖前生成 `.bak` 备份。同步只动 `stages/`，不碰 `hub.yaml` 与 `overrides/`。
 
 ## 里程碑
 
 - [x] 插件骨架、命令、技能、agent
-- [x] hub 脚本：init / gen / doctor / upstream / mark-test
+- [x] hub 脚本：init / gen / doctor / upstream / ship / sync / mark-test
 - [x] hooks 脚本
-- [x] 测试与示例工作区验证（32 项测试通过）
-- [x] 文档与版本 1.0.0
+- [x] 测试与示例工作区验证（52 项测试通过）
+- [x] 文档与版本 1.1.0
