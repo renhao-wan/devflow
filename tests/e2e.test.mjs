@@ -206,3 +206,55 @@ test('版本不满足时生成器拒绝', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('init 展开 Maven 多模块并生成模块级测试命令', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-maven-'));
+  try {
+    mkdirSync(join(root, 'service', 'core'), { recursive: true });
+    mkdirSync(join(root, 'service', 'web'), { recursive: true });
+    writeFileSync(join(root, 'service', 'pom.xml'), [
+      '<project>',
+      '  <modules>',
+      '    <module>core</module>',
+      '    <module>web</module>',
+      '  </modules>',
+      '</project>',
+    ].join('\n'));
+    writeFileSync(join(root, 'service', 'core', 'pom.xml'), '<project><artifactId>core</artifactId></project>');
+    writeFileSync(join(root, 'service', 'web', 'pom.xml'), '<project><artifactId>web</artifactId></project>');
+
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    assert.match(init.stdout, /Maven 多模块已展开/);
+
+    const config = parseYaml(readFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'utf8'));
+    assert.deepEqual(Object.keys(config.subprojects).sort(), ['core', 'web']);
+    assert.equal(config.subprojects.core.path, 'service/core');
+    assert.equal(config.subprojects.core.testCommand, 'cd service/core && mvn test');
+    assert.equal(config.subprojects.web.testCommand, 'cd service/web && mvn test');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor 提示 testCommand 依赖的工具不在 PATH', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    writeFileSync(hub, readFileSync(hub, 'utf8').replace(/testCommand: .*/, 'testCommand: "mvn test"'));
+
+    const emptyBin = mkdtempSync(join(tmpdir(), 'devflow-empty-path-'));
+    try {
+      const r = spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', 'hub-doctor.mjs'), '--root', root], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: emptyBin },
+      });
+      assert.match(r.stdout, /测试命令依赖 mvn，PATH 中找不到/);
+    } finally {
+      rmSync(emptyBin, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

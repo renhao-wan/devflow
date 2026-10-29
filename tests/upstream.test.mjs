@@ -52,6 +52,8 @@ function makePluginCopy(base) {
   cpSync(join(PLUGIN_ROOT, '.claude-plugin'), join(copy, '.claude-plugin'), { recursive: true });
   cpSync(join(PLUGIN_ROOT, 'templates'), join(copy, 'templates'), { recursive: true });
   writeFileSync(join(copy, 'CHANGELOG.md'), '# Changelog\n');
+  const manifest = join(copy, '.claude-plugin', 'plugin.json');
+  writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '1.0.0' }, null, 2));
   return copy;
 }
 

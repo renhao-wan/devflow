@@ -3,8 +3,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo,
-  readText, log, posix, isMain,
+  argValue, hasFlag, projectRoot, pluginInfo,
+  readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
 } from './lib/common.mjs';
 import { main as upstream } from './hub-upstream.mjs';
 
@@ -120,14 +120,16 @@ export async function main(argv = process.argv.slice(2)) {
 
   const cwdIsPlugin = existsSync(join(process.cwd(), '.claude-plugin', 'plugin.json'));
   const pluginRoot = argValue(argv, '--plugin-root', null)
-    || (cwdIsPlugin ? process.cwd() : findPluginRoot(root));
+    || (cwdIsPlugin ? process.cwd() : resolveUpstreamRoot(root));
+
+  if (isPluginCache(pluginRoot)) throw new Error(cacheGuardMessage(pluginRoot));
 
   const top = git(pluginRoot, ['rev-parse', '--show-toplevel']);
   if (top.status !== 0) {
     throw new Error(
       `插件目录不是 git 仓库：${posix(pluginRoot)}。\n`
       + '回灌并提交只能在插件源码仓库中执行；已安装的插件缓存无法提 PR。\n'
-      + '请用 --plugin-root 指向源码仓库，或先执行 /devflow:init 时记录该路径。',
+      + '请用 --plugin-root 指向源码仓库，或运行 /devflow:init --source-root <源码仓库> 记录一次。',
     );
   }
   if (!samePath(top.stdout.trim(), pluginRoot)) {
@@ -216,18 +218,22 @@ export async function main(argv = process.argv.slice(2)) {
 
   const url = compareUrl(ghRepo.owner, ghRepo.repo, base, branch);
   const prBody = [
-    '## 回灌来源',
-    `- 项目：${projectName}`,
+    '## 变更内容',
+    `回灌 ${stage} 阶段规则，来源项目：${projectName}。`,
+    '',
+    '## 类型',
+    '- [x] feat',
+    '',
+    '## 关联',
     `- 阶段：${stage}`,
-    '',
-    '## 变更',
-    ...toAdd.map((p) => `- ${p}`),
-    '',
-    `版本：${oldVersion} → ${newVersion}`,
     '',
     '## 验证',
     '- [ ] `node --test`',
     '- [ ] `node scripts/hub-doctor.mjs`',
+    '',
+    '## 影响面',
+    `- 影响范围：${toAdd.join('、')}`,
+    `- 兼容性：版本 ${oldVersion} → ${newVersion}（patch）`,
   ].join('\n');
 
   const ghAvailable = spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;

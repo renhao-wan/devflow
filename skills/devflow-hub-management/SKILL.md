@@ -16,7 +16,8 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 | `.claude/hub/overrides/<sub>/<stage>.md` | 子项目级覆盖 | 可以 |
 | `.claude/skills/devflow-<stage>/SKILL.md` | 生成的投影 | 不要 |
 | `.claude/.hub-manifest.json` | 生成账本（哈希） | 不要 |
-| `.devflow.json` | 插件位置与版本 | 不要 |
+| `.claude/.hub-sources.json` | 阶段源文件账本，供 sync 判断手改 | 不要 |
+| `.devflow.json` | 插件位置、版本与回灌源码根 | 不要 |
 
 ## 改规则的正确流程
 
@@ -51,6 +52,8 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 `/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写插件模板、bump patch 版本。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
 
+回灌目标是插件源码仓库，由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根决定。从 marketplace 安装时运行时根在缓存里，写入会被拒绝；用 `--plugin-root` 或先运行 `/devflow:init --source-root <插件源码仓库>` 记录一次。
+
 ## 版本升级
 
-`hub.yaml` 的 `requiresPlugin` 决定兼容范围。升级插件后先运行 doctor；不满足时要么升级 hub 配置，要么回退插件版本。
+`hub.yaml` 的 `requiresPlugin` 决定兼容范围。升级插件后先运行 `/devflow:sync --dry-run` 查看模板差异，再运行 doctor；`sync` 只更新未手改的阶段文件，手改文件默认保留。不满足版本范围时要么升级 hub 配置，要么回退插件版本。
