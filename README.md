@@ -379,7 +379,7 @@ templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / upstream / mark-test
 tests/                 # node:test 测试
-.github/               # GitHub Actions
+.github/               # GitHub Actions 与 PR 模板
 docs/design.md         # 设计文档
 ```
 
