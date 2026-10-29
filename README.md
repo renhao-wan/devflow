@@ -405,8 +405,10 @@ scripts/               # 薄 loader，指向插件内的真实脚本
 ## 开发与测试
 
 ```bash
-node --test tests/
+node --test
 ```
+
+不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
 - 测试使用 `node:test`，无外部依赖。
 - 运行测试需要 Node >= 20.11；插件运行本身 Node >= 18 即可。
@@ -415,7 +417,7 @@ node --test tests/
 
 CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运行：
 
-- `test`：Ubuntu + Windows，Node 20 / 22，执行 `node --test tests/`；
+- `test`：Ubuntu + Windows，Node 20 / 22，执行 `node --test`；
 - `smoke`：在临时目录执行 `init → gen --check → doctor`，验证真实链路。
 
 ## 故障排查

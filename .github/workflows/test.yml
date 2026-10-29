@@ -29,7 +29,7 @@ jobs:
       - name: 版本
         run: node --version
       - name: 单元与集成测试
-        run: node --test tests/
+        run: node --test
 
   smoke:
     name: init → doctor

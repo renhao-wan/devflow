@@ -215,7 +215,7 @@ export async function main(argv = process.argv.slice(2)) {
     `版本：${oldVersion} → ${newVersion}`,
     '',
     '## 验证',
-    '- [ ] `node --test tests/`',
+    '- [ ] `node --test`',
     '- [ ] `node scripts/hub-doctor.mjs`',
   ].join('\n');
 
