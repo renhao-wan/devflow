@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -48,9 +48,20 @@ function dirty(cwd) {
   return out;
 }
 
+function canonical(p) {
+  let out;
+  try {
+    out = realpathSync.native(p);
+  } catch {
+    out = resolve(p);
+  }
+  // Windows 可能返回 8.3 短路径或 \\?\ 长路径前缀，统一后再比较
+  out = out.replace(/\\/g, '/').replace(/^\/\/\?\/?/, '');
+  return process.platform === 'win32' ? out.toLowerCase() : out;
+}
+
 function samePath(a, b) {
-  const norm = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
-  return norm(a) === norm(b);
+  return canonical(a) === canonical(b);
 }
 
 function githubRemote(url) {
