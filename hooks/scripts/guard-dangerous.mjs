@@ -16,6 +16,10 @@ const DENY = [
   { re: /\b(rd|rmdir)\s+\/s\s+\/q\s+[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
   { re: /\bdel\s+(\/[a-z]+\s+)+[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
   { re: /\bformat\s+[a-zA-Z]:/i, why: '格式化磁盘' },
+  { re: /\bdiskpart\b/i, why: '磁盘分区操作' },
+  { re: /\bcipher\s+\/w\b/i, why: '擦除磁盘空闲空间' },
+  { re: /\bvssadmin\s+delete\s+shadows\b/i, why: '删除卷影副本' },
+  { re: /\b(Format-Volume|Clear-Disk|Initialize-Disk)\b/i, why: '格式化或初始化磁盘' },
   { re: /\bRemove-Item\b[^|;]*-Recurse[^|;]*-Force[^|;]*[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
   { re: /\bshutdown\b|\breboot\b|\bhalt\b/, why: '关机或重启机器' },
   { re: />\s*\/dev\/(sd|hd|nvme)/, why: '重定向覆盖裸设备' },
@@ -37,6 +41,10 @@ const ASK = [
   { re: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/, why: '递归强制删除' },
   { re: /\bALTER\s+TABLE\b[^;]*\bDROP\s+COLUMN\b/i, why: '删除数据库列' },
   { re: /\bmigrate\b[^|;]*\b(down|reset|rollback)\b/i, why: '回滚数据库迁移' },
+  { re: /\bgit\s+update-ref\s+-d\b/, why: '删除 Git 引用' },
+  { re: /\bgit\s+filter-branch\b/, why: '重写 Git 历史' },
+  { re: /\bgit\s+push\s+\S*\s*--mirror\b/, why: '镜像推送，可能覆盖远端所有引用' },
+  { re: /\bgit\s+reflog\s+expire\b/, why: '清空 reflog，丢失恢复线索' },
 ];
 
 function readStdin() {

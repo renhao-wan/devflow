@@ -54,6 +54,32 @@ test('guard 覆盖裸设备、管道执行与 Windows 盘符删除', () => {
   }
 });
 
+test('guard 覆盖 Windows 磁盘与影子副本操作', () => {
+  const cases = [
+    'diskpart',
+    'cipher /w C:',
+    'vssadmin delete shadows /all',
+    'Format-Volume -DriveLetter D',
+  ];
+  for (const command of cases) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+});
+
+test('guard 对 Git 历史重写要求确认', () => {
+  const cases = [
+    'git update-ref -d refs/heads/feature',
+    'git filter-branch --tree-filter true',
+    'git push --mirror origin',
+    'git reflog expire --expire=now --all',
+  ];
+  for (const command of cases) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+  }
+});
+
 test('guard 危险但可恢复的操作要求确认', () => {
   for (const command of ['git push -f origin feature', 'git checkout .', 'git clean -fdx']) {
     const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
