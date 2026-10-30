@@ -3,8 +3,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
-  ensureDir, readText, writeAtomic, sha256, log, posix, isMain, projectRoot,
-  walk, relPosix,
+  readText, writeAtomic, sha256, log, posix, isMain, projectRoot,
+  walk, relPosix, parseFrontmatter, isValidStageName, STAGE_NAME_RE,
+  isGeneratedArtifact,
 } from './lib/common.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
@@ -20,13 +21,8 @@ function stageList(config, root) {
 function stageDescription(root, stage) {
   const file = join(root, '.claude', 'hub', 'stages', stage, 'SKILL.md');
   if (!existsSync(file)) return null;
-  const text = readText(file);
-  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (fm) {
-    const m = /^description:\s*(.+)$/m.exec(fm[1]);
-    if (m) return m[1].replace(/^['"]|['"]$/g, '').replace(/^[>|][-+]?$/, '').trim();
-  }
-  return `${stage} 阶段的工程流程`;
+  const description = parseFrontmatter(readText(file)).description;
+  return description || `${stage} 阶段的工程流程`;
 }
 
 function subprojectRows(config) {
@@ -52,8 +48,17 @@ function stageResources(root, stage) {
   const dir = join(root, '.claude', 'hub', 'stages', stage);
   return walk(dir)
     .map((file) => relPosix(dir, file))
-    .filter((rel) => rel !== 'SKILL.md')
+    .filter((rel) => rel !== 'SKILL.md' && !isGeneratedArtifact(rel))
     .sort();
+}
+
+/** 目标必须落在 .claude/skills/devflow-<stage>/ 内，避免账本或阶段名把文件写到工作区外。 */
+function safeSkillTarget(root, rel) {
+  if (!rel || rel.startsWith('/') || rel.includes('..')) return null;
+  if (!rel.startsWith('.claude/skills/devflow-')) return null;
+  const parts = rel.split('/');
+  if (parts.length !== 4 || parts[3] !== 'SKILL.md') return null;
+  return join(root, ...parts);
 }
 
 function buildSkill(root, stage, config) {
@@ -158,6 +163,10 @@ export async function main(argv = process.argv.slice(2)) {
   const results = [];
   const errors = [];
   for (const stage of stages) {
+    if (!isValidStageName(stage)) {
+      errors.push({ stage, error: `阶段名 "${stage}" 非法：只允许小写字母开头的 [a-z0-9_-]。` });
+      continue;
+    }
     const built = buildSkill(root, stage, config);
     if (built.error) errors.push(built);
     else results.push(built);
@@ -169,7 +178,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   const drift = [];
   for (const r of results) {
-    const target = join(root, ...r.target.split('/'));
+    const target = safeSkillTarget(root, r.target);
+    if (!target) {
+      errors.push({ stage: r.stage, error: `目标路径越界：${r.target}` });
+      continue;
+    }
     if (!existsSync(target)) drift.push({ ...r, reason: 'missing' });
     else if (sha256(readText(target)) !== sha256(r.content)) drift.push({ ...r, reason: 'changed' });
   }
@@ -212,7 +225,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   for (const r of results) {
-    const target = join(root, ...r.target.split('/'));
+    const target = safeSkillTarget(root, r.target);
+    if (!target) {
+      errors.push({ stage: r.stage, error: `目标路径越界，跳过：${r.target}` });
+      continue;
+    }
     if (existsSync(target) && !force) {
       const managed = previous.skills.some((s) => s.name === r.name);
       if (!managed && sha256(readText(target)) !== sha256(r.content)) {
@@ -226,9 +243,14 @@ export async function main(argv = process.argv.slice(2)) {
 
   for (const s of stale) {
     if (!s.target) continue;
-    const target = join(root, ...s.target.split('/'));
+    const target = safeSkillTarget(root, s.target);
+    if (!target) {
+      log('warn', `账本中的过期目标不合法，跳过：${s.target}`);
+      continue;
+    }
     if (existsSync(target)) {
-      const dir = join(root, ...s.target.split('/').slice(0, -1));
+      const parts = s.target.split('/');
+      const dir = join(root, ...parts.slice(0, -1));
       const siblings = readdirSync(dir);
       if (siblings.length === 1 && siblings[0] === 'SKILL.md') {
         const { rmSync } = await import('node:fs');

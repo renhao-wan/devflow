@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { buildPrBody } from '../scripts/hub-ship.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -59,6 +60,11 @@ function makePluginRepo(base) {
     version: '1.0.0',
   }, null, 2));
   writeFileSync(join(repo, 'CHANGELOG.md'), '# Changelog\n');
+  writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'devflow', version: '1.0.0' }, null, 2));
+  writeFileSync(join(repo, '.claude-plugin', 'marketplace.json'), JSON.stringify({
+    name: 'devflow-marketplace',
+    metadata: { version: '1.0.0' },
+  }, null, 2));
   writeFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'), '旧内容\n');
 
   git(repo, ['init']);
@@ -93,6 +99,10 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
 
     const plugin = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8'));
     assert.equal(plugin.version, '1.0.1');
+    const pkg = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+    assert.equal(pkg.version, '1.0.1');
+    const market = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    assert.equal(market.metadata.version, '1.0.1');
 
     const template = readFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
     assert.match(template, /先看正确性/);
@@ -159,7 +169,7 @@ test('ship 在无可回灌内容时不建分支', () => {
 
     const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.match(r.stdout, /没有可回灌内容/);
+    assert.match(r.stdout, /没有可回灌/);
     assert.doesNotMatch(spawnSync('git', ['branch', '--list'], { cwd: bare, encoding: 'utf8' }).stdout, /upstream/);
   } finally {
     rmSync(base, { recursive: true, force: true });
@@ -177,6 +187,67 @@ test('ship --dry-run 在白名单文件已脏时仍可预览', () => {
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.match(r.stdout, /警告/);
     assert.match(r.stdout, /CHANGELOG\.md/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('PR 正文复用仓库模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-body-'));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(join(repo, '.github'), { recursive: true });
+    writeFileSync(join(repo, '.github', 'pull_request_template.md'), [
+      '## 变更内容',
+      '',
+      '<!-- 说明 -->',
+      '',
+      '## 类型',
+      '',
+      '- [ ] feat',
+      '',
+      '## 关联',
+      '',
+      '## 验证',
+      '',
+      '- [ ] node --test',
+      '',
+      '## 影响面',
+      '',
+      '- 影响范围：',
+    ].join('\n'));
+
+    const body = buildPrBody(repo, {
+      stage: 'review',
+      projectName: 'demo',
+      files: ['templates/stages/review/SKILL.md'],
+      oldVersion: '1.0.0',
+      newVersion: '1.1.0',
+      kind: 'minor',
+    });
+    assert.match(body, /回灌 review 阶段规则，来源项目：demo/);
+    assert.match(body, /## 类型[\s\S]*- \[x\] feat/);
+    assert.match(body, /阶段：review/);
+    assert.match(body, /templates\/stages\/review\/SKILL\.md/);
+    assert.match(body, /1\.0\.0 → 1\.1\.0（minor）/);
+    assert.doesNotMatch(body, /<!-- 说明 -->/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('PR 正文在缺少模板时退回内置结构', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-notpl-'));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(repo, { recursive: true });
+    const body = buildPrBody(repo, {
+      stage: 'test', projectName: 'demo', files: ['templates/stages/test/SKILL.md'],
+      oldVersion: '1.0.0', newVersion: '1.0.1', kind: 'patch',
+    });
+    assert.match(body, /## 变更内容/);
+    assert.match(body, /## 影响面/);
+    assert.match(body, /templates\/stages\/test\/SKILL\.md/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

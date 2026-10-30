@@ -117,6 +117,49 @@ test('guard 输入异常时静默放行', () => {
   assert.equal(r.stdout, '');
 });
 
+test('guard 识别乱序与长选项的递归强制删除', () => {
+  for (const command of ['rm -fr *', 'rm -Rf *', 'rm --recursive --force *', 'rm -r -f /']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  for (const command of ['rm -fr build', 'rm --recursive --force build', 'rm -r -f build', 'rm -Rfv dist']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+  }
+});
+
+test('guard 覆盖 git clean/branch/push 的等价写法', () => {
+  for (const command of ['git clean --force', 'git branch --delete --force feature', 'git push origin :feature']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+  }
+  for (const command of ['git push origin +main', 'git push origin :main']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+});
+
+test('guard 放行只读的 rm 与普通 clean', () => {
+  for (const command of ['rm file.txt', 'rm -i file.txt', 'git clean -n', 'git branch feature']) {
+    assert.equal(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout, '', command);
+  }
+});
+
+test('track-changes 忽略账本与生成元数据', () => {
+  const root = makeRoot();
+  try {
+    for (const rel of ['.claude/.hub-manifest.json', '.claude/.hub-sources.json', '.devflow.json']) {
+      runHook('track-changes.mjs', {
+        tool_name: 'Write',
+        tool_input: { file_path: join(root, ...rel.split('/')) },
+      }, { CLAUDE_PROJECT_DIR: root });
+    }
+    assert.equal(existsSync(join(root, '.claude', '.devflow-state.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('track-changes 记录改动并标记待测', () => {
   const root = makeRoot();
   try {

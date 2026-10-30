@@ -1,31 +1,12 @@
 #!/usr/bin/env node
 // Stop：仅提醒，从不阻止。测试未跑或改动晚于测试时提示。
 import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => { data += c; });
-    process.stdin.on('end', () => resolve(data));
-    setTimeout(() => resolve(data), 3000);
-  });
-}
-
-function findRoot(start) {
-  let dir = start;
-  while (true) {
-    if (existsSync(join(dir, '.claude', 'hub', 'hub.yaml'))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
+import { join } from 'node:path';
+import { readStdin, findHubRoot } from './lib.mjs';
 
 await readStdin();
 try {
-  const root = findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  const root = findHubRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
   if (!root) process.exit(0);
 
   const stateFile = join(root, '.claude', '.devflow-state.json');

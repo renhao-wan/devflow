@@ -10,6 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  syntax:
+    name: syntax / node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: 脚本语法
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.mjs' | while IFS= read -r f; do node --check "$f"; done
+      - name: JSON 清单可解析
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.json' | while IFS= read -r f; do
+            node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$f"
+          done
+
   test:
     name: node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -32,8 +57,12 @@ jobs:
         run: node --test
 
   smoke:
-    name: init → doctor
-    runs-on: ubuntu-latest
+    name: init → doctor / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,3 +78,6 @@ jobs:
           node "$GITHUB_WORKSPACE/scripts/hub-init.mjs" --root . --plugin-root "$GITHUB_WORKSPACE"
           node "$GITHUB_WORKSPACE/scripts/gen-claude-skills.mjs" --root . --check
           node "$GITHUB_WORKSPACE/scripts/hub-doctor.mjs" --root .
+          # loaders 应被 .gitignore 忽略，但 init 后仍在本地可用
+          test -f scripts/devflow-gen.mjs
+          grep -q 'scripts/devflow-gen.mjs' .gitignore

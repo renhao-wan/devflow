@@ -12,6 +12,7 @@ export async function main(argv = process.argv.slice(2)) {
     try { state = JSON.parse(readText(file)); } catch { state = {}; }
   }
   state.lastTestPassedAt = new Date().toISOString();
+  state.testsPending = false;
   if (command) state.lastTestCommand = command;
   writeAtomic(file, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`[OK]   已记录测试通过：${state.lastTestPassedAt}${command ? `（${command}）` : ''}`);

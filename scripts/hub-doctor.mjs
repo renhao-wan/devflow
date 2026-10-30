@@ -4,7 +4,7 @@ import { join, resolve, delimiter } from 'node:path';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, sha256, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml,
-  readMeta, isPluginCache, isValidPluginRoot,
+  readMeta, isPluginCache, isValidPluginRoot, samePath, isValidStageName,
 } from './lib/common.mjs';
 
 const KNOWN_TOOLS = new Set([
@@ -12,14 +12,6 @@ const KNOWN_TOOLS = new Set([
   'mvn', 'gradle', 'go', 'cargo', 'dotnet', 'make',
   'pytest', 'python', 'python3',
 ]);
-
-function samePath(a, b) {
-  const norm = (p) => {
-    const out = resolve(p).replace(/\\/g, '/');
-    return process.platform === 'win32' ? out.toLowerCase() : out;
-  };
-  return norm(a) === norm(b);
-}
 
 function commandTools(command) {
   return String(command)
@@ -29,6 +21,27 @@ function commandTools(command) {
     .map((seg) => seg.split(/\s+/)[0])
     .filter((tool) => tool && !/^cd$/i.test(tool) && !/[\\/]/.test(tool))
     .map((tool) => tool.replace(/^["']|["']$/g, ''));
+}
+
+/** cd 目标与本地脚本（./gradlew、gradlew.bat 等）必须真实存在。 */
+function localCommandIssues(root, label, command) {
+  const issues = [];
+  let dir = root;
+  for (const seg of String(command).split(/&&|\|\||;/).map((s) => s.trim()).filter(Boolean)) {
+    const cd = /^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(seg);
+    if (cd) {
+      const target = cd[1] ?? cd[2] ?? cd[3];
+      const abs = resolve(dir, target);
+      if (!existsSync(abs)) issues.push(`${label} 的 cd 目录不存在：${posix(abs)}（${command}）`);
+      else dir = abs;
+      continue;
+    }
+    const tool = seg.split(/\s+/)[0].replace(/^["']|["']$/g, '');
+    if (/^(\.{1,2}[\\/]|[A-Za-z]:[\\/]|.*\.(bat|cmd|sh|ps1)$)/i.test(tool)) {
+      if (!existsSync(resolve(dir, tool))) issues.push(`${label} 的本地命令不存在：${tool}`);
+    }
+  }
+  return issues;
 }
 
 function toolExists(tool) {
@@ -65,6 +78,17 @@ export async function main(argv = process.argv.slice(2)) {
     } catch (err) {
       add('error', `hub.yaml 解析失败：${err.message}`);
     }
+  }
+
+  if (config) {
+    if (Number(config.version) !== 1) add('warn', `hub.yaml version 应为 1，当前为 ${config.version}`);
+    if (Array.isArray(config.stages)) {
+      const bad = config.stages.filter((s) => !isValidStageName(s));
+      if (bad.length) add('error', `hub.yaml stages 含非法阶段名：${bad.join('、')}`);
+      if (new Set(config.stages).size !== config.stages.length) add('warn', 'hub.yaml stages 有重复项');
+    }
+    const blocked = config.upstream?.blocklist;
+    if (blocked != null && !Array.isArray(blocked)) add('warn', 'hub.yaml upstream.blocklist 应为列表');
   }
 
   let pluginRoot = null;
@@ -116,14 +140,34 @@ export async function main(argv = process.argv.slice(2)) {
       if (sub?.testCommand) commands.push({ label: name, command: sub.testCommand });
     }
     const missing = [];
+    const localIssues = [];
     for (const { label, command } of commands) {
       for (const tool of commandTools(command)) {
         if (!KNOWN_TOOLS.has(tool)) continue;
         if (!toolExists(tool)) missing.push(`${label} 的测试命令依赖 ${tool}，PATH 中找不到：${command}`);
       }
+      localIssues.push(...localCommandIssues(root, label, command));
     }
+    for (const issue of localIssues) add('error', issue);
     if (missing.length) for (const m of missing) add('warn', m);
     else if (commands.length) add('ok', '测试命令依赖的工具均可用');
+  }
+
+  const gitignore = join(root, '.gitignore');
+  if (!existsSync(gitignore)) {
+    add('warn', '缺少 .gitignore，运行 /devflow:init 会补上 devflow 片段');
+  } else if (!/# >>> devflow/.test(readText(gitignore))) {
+    add('warn', '.gitignore 缺少 devflow 片段，重新运行 /devflow:init 可补上');
+  } else {
+    add('ok', '.gitignore 含 devflow 片段');
+  }
+
+  const loaders = ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs'];
+  const missingLoaders = loaders.filter((f) => !existsSync(join(root, 'scripts', f)));
+  if (missingLoaders.length) {
+    add('warn', `缺少 loader：${missingLoaders.map((f) => `scripts/${f}`).join('、')}，重新运行 /devflow:init 可重建`);
+  } else {
+    add('ok', 'loader 脚本齐全');
   }
 
   const manifestFile = join(root, '.claude', '.hub-manifest.json');

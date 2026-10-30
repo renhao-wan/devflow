@@ -207,6 +207,79 @@ test('版本不满足时生成器拒绝', () => {
   }
 });
 
+test('init 写入的 .gitignore 忽略 loader 且重复运行不会叠加片段', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    assert.match(gitignore, /scripts\/devflow-gen\.mjs/);
+    assert.match(gitignore, /scripts\/devflow-doctor\.mjs/);
+    assert.match(gitignore, /scripts\/devflow-upstream\.mjs/);
+    assert.match(gitignore, /scripts\/devflow-test\.mjs/);
+
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    assert.equal(run('hub-init.mjs', ['--root', root, '--force'], root).status, 0);
+    const again = readFileSync(join(root, '.gitignore'), 'utf8');
+    assert.equal((again.match(/# >>> devflow/g) || []).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('生成器拒绝越界阶段名，不写到 .claude/skills 之外', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    writeFileSync(hub, readFileSync(hub, 'utf8').replace('  - req', '  - ../evil'));
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1);
+    assert.match(gen.stdout + gen.stderr, /阶段名.*非法/);
+    assert.equal(existsSync(join(root, '.claude', 'evil')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor 检查 cd 目标、本地 gradlew、gitignore 与 loader', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+
+    rmSync(join(root, 'services', 'api'), { recursive: true, force: true });
+    writeFileSync(join(root, 'gradlew.bat'), '@echo off\n');
+    rmSync(join(root, '.gitignore'));
+    rmSync(join(root, 'scripts'), { recursive: true, force: true });
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.match(doctor.stdout, /cd 目录不存在/);
+    assert.match(doctor.stdout, /缺少 \.gitignore/);
+    assert.match(doctor.stdout, /缺少 loader/);
+
+    // gradlew.bat 存在时不应报告本地命令缺失
+    assert.doesNotMatch(doctor.stdout, /本地命令不存在：gradlew\.bat/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('mark-test 清除 testsPending 标记', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      testsPending: true,
+    }));
+    assert.equal(run('mark-test.mjs', ['--root', root, '--command', 'npm test'], root).status, 0);
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.equal(state.testsPending, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('init 展开 Maven 多模块并生成模块级测试命令', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-maven-'));
   try {
