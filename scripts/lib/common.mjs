@@ -95,6 +95,22 @@ export function parseFrontmatter(text) {
   return out;
 }
 
+/** 去掉行内注释：仅当 # 位于引号外且前一字符是空白（或行首）时才算注释起点。 */
+function stripYamlComment(line) {
+  let quote = null;
+  for (let k = 0; k < line.length; k += 1) {
+    const ch = line[k];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '#' && (k === 0 || /\s/.test(line[k - 1]))) {
+      return line.slice(0, k);
+    }
+  }
+  return line;
+}
+
 /**
  * 极简 YAML 子集解析器：支持注释、嵌套 map、块列表、行内 [a, b]、标量。
  * 不追求完整 YAML；doctor 会提示无法解析的行。
@@ -103,11 +119,8 @@ export function parseYaml(text) {
   const raw = text.split(/\r?\n/);
   const lines = [];
   for (let n = 0; n < raw.length; n += 1) {
-    let line = raw[n];
-    if (/^\s*#/.test(line)) continue;
-    if (/^\s*$/.test(line)) continue;
-    const comment = line.search(/\s#/);
-    if (comment >= 0 && !/['"]/.test(line.slice(comment))) line = line.slice(0, comment);
+    const line = stripYamlComment(raw[n]);
+    if (!line.trim()) continue;
     const indent = /^ */.exec(line)[0].length;
     const body = line.slice(indent).replace(/\s+$/, '');
     if (!body) continue;
@@ -279,7 +292,15 @@ export function satisfies(version, range) {
     const r = [Number(major), Number(minor), Number(patch)];
     const c = cmp(v, r);
     if (op === '^') {
-      if (c < 0 || v[0] !== r[0]) return false;
+      if (c < 0) return false;
+      // 按 semver：^1.2.3 允许 <2.0.0；^0.2.3 允许 <0.3.0；^0.0.3 只允许 0.0.3
+      if (r[0] > 0) {
+        if (v[0] !== r[0]) return false;
+      } else if (r[1] > 0) {
+        if (v[0] !== 0 || v[1] !== r[1]) return false;
+      } else if (v[0] !== 0 || v[1] !== 0 || v[2] !== r[2]) {
+        return false;
+      }
     } else if (op === '~') {
       if (c < 0 || v[0] !== r[0] || v[1] !== r[1]) return false;
     } else if (op === '>=' && c < 0) return false;

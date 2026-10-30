@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, rmSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -178,7 +178,22 @@ export async function main(argv = process.argv.slice(2)) {
   const baselinePaths = new Set(baseline.map((f) => f.path));
   const outOfScope = after.filter((f) => !isWhitelisted(f.path) && !baselinePaths.has(f.path));
   if (outOfScope.length) {
-    throw new Error(`回灌改动了白名单外的文件，已停止提交：${outOfScope.map((f) => f.path).join('、')}`);
+    const reverted = [];
+    for (const f of outOfScope) {
+      try {
+        if (f.status === '??' || f.status[0] === 'A') {
+          rmSync(join(pluginRoot, f.path), { force: true });
+          reverted.push(`删除 ${f.path}`);
+        } else {
+          gitOut(pluginRoot, ['checkout', '--', f.path]);
+          reverted.push(`还原 ${f.path}`);
+        }
+      } catch { /* 尽力还原，失败不阻断报错 */ }
+    }
+    throw new Error(
+      `回灌改动了白名单外的文件，已停止提交：${outOfScope.map((f) => f.path).join('、')}`
+      + (reverted.length ? `\n已尝试还原：${reverted.join('、')}` : ''),
+    );
   }
 
   const toAdd = after.filter((f) => isWhitelisted(f.path)).map((f) => f.path);

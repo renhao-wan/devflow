@@ -185,13 +185,27 @@ function renderHubYaml(subprojects, version, rootTest) {
 function loaderSource(name) {
   return `#!/usr/bin/env node
 // devflow 薄 loader：真实实现在插件内，避免项目里出现第二份脚本。
+// 插件升级后 .devflow.json 记录的旧缓存可能失效，此时回退到当前会话的 CLAUDE_PLUGIN_ROOT。
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8'));
-const mod = await import(pathToFileURL(join(meta.pluginRoot, 'scripts', '${name}.mjs')).href);
+let meta = {};
+try { meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8')); } catch { meta = {}; }
+
+const candidates = [meta.pluginRoot, process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean);
+let mod = null;
+for (const dir of candidates) {
+  try {
+    mod = await import(pathToFileURL(join(dir, 'scripts', '${name}.mjs')).href);
+    break;
+  } catch { /* 尝试下一个候选 */ }
+}
+if (!mod) {
+  console.error('[ERR] 找不到可用的 devflow 插件目录。请检查 CLAUDE_PLUGIN_ROOT，或重新运行 /devflow:init。');
+  process.exit(1);
+}
 await mod.main(process.argv.slice(2));
 `;
 }

@@ -9,7 +9,7 @@ import {
 } from './lib/common.mjs';
 
 const PRIVATE_PATTERNS = [
-  /[A-Za-z]:[\\/]/,            // Windows 绝对路径
+  /(?<![A-Za-z])[A-Za-z]:[\\/]/, // Windows 盘符路径（负向后行断言排除 URL 中的 ://）
   /\/Users\/[^/]+/,            // macOS 家目录
   /\/home\/[^/]+/,             // Linux 家目录
   /192\.168\.\d+\.\d+/,        // 内网 IP

@@ -244,11 +244,14 @@ upstream:
 
 hooks 自身异常时一律放行（fail-open），避免把正常操作挡死。修改 hooks 或插件后需要重启会话。
 
+> `guard-dangerous` 是**基于正则的尽力拦截**，不是安全沙箱：引号包裹、变量展开、`--no-preserve-root`、`/bin/rm` 等写法可能绕过。它的作用是减少误操作，不能替代权限控制与备份。
+
 ## 多根工作区
 
 - 只从工作区根初始化，子项目不单独初始化 hub。
 - 共享规则放在根 hub；子项目差异放进 `.claude/hub/overrides/<sub>/<stage>.md`（手动创建，生成器会在投影中提示优先读取）。
-- init 从工作区根向下探测最多两层，跳过 `node_modules`、`dist`、`build`、`target`、`coverage` 等目录。
+- init 从工作区根向下探测最多两层。固定跳过 `.git`、`.claude`、`.idea`、`.vscode`、`node_modules`、`dist`、`build`、`target`、`scripts`、`templates`、`docs`、`coverage` 这些目录名；若真实模块恰好命名为 `scripts`/`templates`/`docs`，它不会被识别为子项目，需要在 `hub.yaml` 手动补充。
+- 目录名命中 `demand`/`require`/`design`/`spec`/`doc`（大小写不敏感）时按“需求文档目录”处理：只赋 `req` 阶段且不探测测试命令，避免把文档目录当成可构建单元。
 - **探测在第一个"像项目"的目录处停止下钻。** 判定依据：目录含 `.git`、`package.json`、`pom.xml`、`build.gradle`、`go.mod`、`Cargo.toml` 或 `pyproject.toml` 之一。命中后该目录本身就是子项目，其内部不会再被扫描。
 - 名称重复的子项目会用路径生成唯一名（如 `services-api`）。
 - 包管理器按 `packageManager` 字段或 lockfile 向上探测（pnpm / yarn / bun / npm）。
@@ -356,6 +359,26 @@ node scripts/devflow-doctor.mjs
 
 确认要用手改内容覆盖冲突文件时加 `--force`，覆盖前会在原文件旁生成 `.bak-<时间戳>` 备份。**不要用 `--force` 重跑 `init`**：那会覆盖 `hub.yaml`，而 `sync` 从不改 `hub.yaml` 与 `overrides/`。
 
+### 启用状态与重启
+
+插件「装好」和「启用」是两件事，分别记录在两个文件里：
+
+| 文件 | 内容 | 谁维护 |
+| --- | --- | --- |
+| `~/.claude/plugins/installed_plugins.json` | 安装记录：路径、版本、commit | 安装器与 `claude plugin update` |
+| `~/.claude/settings.json` 的 `enabledPlugins` | 本会话是否加载该插件 | `/plugin` 界面或手动编辑 |
+
+`claude plugin update` 只更新前者和缓存目录，**不会补写 `enabledPlugins`**。所以安装或升级后：
+
+1. 确认 `enabledPlugins` 里有 `"devflow@devflow-marketplace": true`；
+2. **重启 Claude Code 会话**，命令才会注册。
+
+如果命令突然消失（例如 `/devflow:sync` 报 `Unknown command`），而插件缓存与 `installed_plugins.json` 都正常，先查 `enabledPlugins`。
+
+> **注意**：用 cc-switch 等工具管理模型供应商配置时，切换供应商会用其数据库里的完整 `settings.json` 快照**整体覆盖**该文件。若快照生成于插件安装之前，`enabledPlugins` 里的 devflow 会被抹掉，表现为重启后命令不再存在。
+>
+> 只改 `~/.claude/settings.json` 只能撑到下次切换；要长期保留，需要把 `"devflow@devflow-marketplace": true` 加进 cc-switch 中每个供应商的配置快照。
+
 ## 提交与 PR
 
 `/devflow:upstream --apply` 只写本地文件，不提交。要用 PR 的方式把回灌结果送出去，用 `/devflow:ship`：
@@ -461,7 +484,7 @@ node --test
 
 CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运行：
 
-- `test`：Ubuntu + Windows，Node 20 / 22，执行 `node --test`；
+- `test`：Ubuntu Node 20 / 22、Windows Node 22（matrix 排除了 Windows + Node 20），执行 `node --test`；
 - `smoke`：在临时目录执行 `init → gen --check → doctor`，验证真实链路。
 
 ## 故障排查
@@ -476,6 +499,7 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 | doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
 | doctor 报测试命令依赖缺失 | `testCommand` 用到的工具不在 `PATH`；安装工具或修正命令 |
 | hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
+| 插件已安装但命令报 `Unknown command` | `~/.claude/settings.json` 的 `enabledPlugins` 缺少 `"devflow@devflow-marketplace": true`；补上后重启会话。若使用 cc-switch，切换供应商会整体覆盖 `settings.json`，需把该启用项同步进各供应商快照 |
 | 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand`；root 无构建文件时默认写 `npm test`，必须替换 |
 | 升级后模板还是旧的 | 运行 `/devflow:sync --dry-run` 查看是否有冲突；手改文件需确认后加 `--force` |
 | 老项目没有新阶段资源 | 运行 `/devflow:sync` 补充模板新增的资源；`--force` 重跑 init 会覆盖 `hub.yaml`，不推荐 |

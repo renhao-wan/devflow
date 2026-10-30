@@ -58,6 +58,12 @@ test('parseFrontmatter 处理普通值与折叠符号', () => {
 test('satisfies 支持 ^ ~ 比较符与 *', () => {
   assert.equal(satisfies('1.2.3', '^1.0.0'), true);
   assert.equal(satisfies('2.0.0', '^1.0.0'), false);
+  // ^0.x 按 semver 收紧 minor：^0.2.0 允许 <0.3.0，^0.0.3 只允许 0.0.3
+  assert.equal(satisfies('0.2.4', '^0.2.0'), true);
+  assert.equal(satisfies('0.5.0', '^0.2.0'), false);
+  assert.equal(satisfies('0.9.0', '^0.2.3'), false);
+  assert.equal(satisfies('0.0.3', '^0.0.3'), true);
+  assert.equal(satisfies('0.0.4', '^0.0.3'), false);
   assert.equal(satisfies('1.2.5', '~1.2.0'), true);
   assert.equal(satisfies('1.3.0', '~1.2.0'), false);
   assert.equal(satisfies('9.9.9', '*'), true);
@@ -69,4 +75,15 @@ test('bumpPatch 与 sha256 稳定', () => {
   assert.equal(bumpPatch('1.2.9'), '1.2.10');
   assert.equal(sha256('a'), sha256('a'));
   assert.notEqual(sha256('a'), sha256('b'));
+});
+
+test('parseYaml 行内注释不误伤引号内 # 与词内 #', () => {
+  const config = parseYaml([
+    'testCommand: bar # 注释 "含引号"',
+    'quoted: "a # b"',
+    'hashInWord: a#b',
+  ].join('\n'));
+  assert.equal(config.testCommand, 'bar');
+  assert.equal(config.quoted, 'a # b');
+  assert.equal(config.hashInWord, 'a#b');
 });

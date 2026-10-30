@@ -160,8 +160,11 @@ export async function main(argv = process.argv.slice(2)) {
   const hooks = join(root, '.claude', 'settings.json');
   if (existsSync(hooks)) {
     const settings = readJson(hooks, {});
-    if (settings?.hooks) add('ok', '项目 settings.json 包含 hooks 配置');
-    else add('ok', '项目 settings.json 存在，未覆盖 hooks');
+    if (settings?.hooks) {
+      add('ok', '项目 settings.json 含自定义 hooks（devflow hooks 由插件 hooks/hooks.json 提供）');
+    } else {
+      add('ok', '项目未覆盖 hooks（devflow hooks 由插件 hooks/hooks.json 提供）');
+    }
   }
 
   try {
