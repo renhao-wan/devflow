@@ -139,3 +139,31 @@ test('回灌拒绝写入 marketplace 安装缓存', () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('项目内 loader 在记录的插件根失效时回退到 CLAUDE_PLUGIN_ROOT', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-loader-'));
+  try {
+    const project = join(base, 'project');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'p', scripts: { test: 'node --test' } }));
+
+    const init = spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', 'hub-init.mjs'),
+      '--root', project, '--plugin-root', PLUGIN_ROOT], { encoding: 'utf8' });
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+
+    // 模拟插件升级后旧缓存被清理：记录路径失效
+    const meta = JSON.parse(readFileSync(join(project, '.devflow.json'), 'utf8'));
+    meta.pluginRoot = join(base, 'gone', 'devflow');
+    writeFileSync(join(project, '.devflow.json'), JSON.stringify(meta, null, 2));
+
+    // 新会话通过 CLAUDE_PLUGIN_ROOT 提供有效插件根，loader 应回退成功
+    const loader = spawnSync(NODE, [join(project, 'scripts', 'devflow-gen.mjs'), '--check'], {
+      cwd: project,
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+    });
+    assert.equal(loader.status, 0, loader.stderr + loader.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

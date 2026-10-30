@@ -144,3 +144,30 @@ test('回灌缺少 --stage 时报错', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('回灌把含 URL 的通用内容判为可回灌，不误伤 http(s)://', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const skill = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+    writeFileSync(skill, [
+      '---', 'name: review', 'description: 审查', '---', '',
+      '参考 https://example.com/guide 与 https://github.com/org/repo 的通用做法。',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /\[可回灌\]/);
+    assert.match(result.stdout, /已回灌 1 个文件/);
+
+    const template = readFileSync(join(pluginCopy, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
+    assert.match(template, /https:\/\/example\.com\/guide/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
