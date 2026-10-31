@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 22]
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,6 +34,24 @@ jobs:
           git ls-files '*.json' | while IFS= read -r f; do
             node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$f"
           done
+
+  plugin-manifest:
+    name: 插件清单校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 安装 Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2
+      - name: 清单与版本一致性
+        shell: bash
+        run: |
+          set -euo pipefail
+          claude plugin validate . --strict
+          claude plugin validate .claude-plugin/plugin.json --strict
+          claude plugin tag --dry-run
 
   test:
     name: node ${{ matrix.node }} / ${{ matrix.os }}

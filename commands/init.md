@@ -1,6 +1,6 @@
 ---
 description: 在项目中初始化 devflow：生成 .claude/hub、薄 loader、投影技能，并探测子项目
-argument-hint: [--force] [--source-root <插件源码仓库>]
+argument-hint: [--force] [--plugin-root <插件目录>] [--source-root <插件源码仓库>]
 allowed-tools: Bash(node:*), Read, Write, Edit, Glob, Grep
 ---
 

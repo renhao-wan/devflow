@@ -16,7 +16,22 @@ const PRIVATE_PATTERNS = [
   /\b192\.168(?:\.\d{1,3}){2}\b/, // 内网 IP
   /\b10(?:\.\d{1,3}){3}\b/,
   /\b172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}\b/,
+  /\b127\.0\.0\.1\b/,
+  /\b169\.254(?:\.\d{1,3}){2}\b/,
   /\.corp\b|\.internal\b/i,
+];
+
+// 回灌会把项目内容写进插件仓库并提交，命中即按项目专属处理，避免把凭据带出去。
+const SECRET_PATTERNS = [
+  /\bsk-[A-Za-z0-9_-]{16,}\b/,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /\bBearer\s+[A-Za-z0-9._\-]{20,}/,
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*['"]?[^\s'"]{6,}/i,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, // URL 中 user:pass@
 ];
 
 /**
@@ -32,16 +47,18 @@ function nameHit(text, name) {
 }
 
 function classify(text, config) {
-  const hints = [];
-  for (const p of PRIVATE_PATTERNS) if (p.test(text)) hints.push(String(p));
+  const hints = new Set();
+  for (const p of PRIVATE_PATTERNS) if (p.test(text)) hints.add(String(p));
+  if (SECRET_PATTERNS.some((p) => p.test(text))) hints.add('疑似密钥或凭据');
   const blocked = config?.upstream?.blocklist;
   if (Array.isArray(blocked)) {
-    for (const word of blocked) if (nameHit(text, word)) hints.push(word);
+    for (const word of blocked) if (nameHit(text, word)) hints.add(word);
   }
   for (const name of Object.keys(config?.subprojects || {})) {
-    if (nameHit(text, name)) hints.push(`子项目名 ${name}`);
+    if (nameHit(text, name)) hints.add(`子项目名 ${name}`);
   }
-  return hints.length ? { type: 'project-local', hints } : { type: 'reusable', hints: [] };
+  const list = [...hints];
+  return list.length ? { type: 'project-local', hints: list } : { type: 'reusable', hints: [] };
 }
 
 function showDiff(from, to, label) {
@@ -63,13 +80,18 @@ function bumpKind(argv) {
   return kind;
 }
 
-/** 插件版本有多个落盘点，升级时保持同步。 */
+/** 插件版本有多个落盘点，升级时保持同步。plugin.json 是权威来源，其余是镜像。 */
 function updateVersionFiles(pluginRoot, next) {
   const targets = [
     join(pluginRoot, '.claude-plugin', 'plugin.json'),
     join(pluginRoot, 'package.json'),
     join(pluginRoot, '.claude-plugin', 'marketplace.json'),
   ];
+  let pluginName = null;
+  try {
+    pluginName = JSON.parse(readText(join(pluginRoot, '.claude-plugin', 'plugin.json'))).name;
+  } catch { /* 缺失时按唯一插件处理 */ }
+
   const changed = [];
   for (const file of targets) {
     if (!existsSync(file)) continue;
@@ -81,6 +103,11 @@ function updateVersionFiles(pluginRoot, next) {
     }
     if (file.endsWith('marketplace.json')) {
       data.metadata = { ...(data.metadata || {}), version: next };
+      if (Array.isArray(data.plugins)) {
+        for (const plugin of data.plugins) {
+          if (!pluginName || plugin.name === pluginName) plugin.version = next;
+        }
+      }
     } else {
       data.version = next;
     }
@@ -123,7 +150,8 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`${verdict.type === 'reusable' ? '[可回灌]' : '[项目专属]'} ${stage}/${f.rel}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}${verdict.type === 'reusable' && !changed ? '（与插件一致）' : ''}`);
     if (verdict.type === 'reusable') reusable.push({ src, dst, name: f.rel, changed });
     else localCount += 1;
-    if (existsSync(dst) && changed) showDiff(dst, src, `${stage}/${f.rel}（插件 → 项目）`);
+    // 项目专属内容可能含密钥，不回显 diff，避免把凭据打印到终端或日志
+    if (verdict.type === 'reusable' && existsSync(dst) && changed) showDiff(dst, src, `${stage}/${f.rel}（插件 → 项目）`);
   }
 
   const pending = reusable.filter((f) => f.changed);

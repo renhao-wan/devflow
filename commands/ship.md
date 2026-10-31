@@ -1,6 +1,6 @@
 ---
 description: 回灌并提交：把项目改进写回插件模板，提交到分支并生成 PR 链接
-argument-hint: --stage <stage> [--plugin-root <插件源码仓库>] [--base main] [--dry-run]
+argument-hint: --stage <stage> [--plugin-root <插件源码仓库>] [--base main] [--bump patch|minor|major] [--no-pr] [--dry-run]
 allowed-tools: Bash(node:*), Bash(git:*), Bash(gh:*), Read, Glob, Grep
 ---
 
@@ -20,7 +20,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-ship.mjs" --root "${CLAUDE_PROJECT_DIR:-
 4. 用户确认后去掉 `--dry-run` 执行。脚本会：
    - 复用 `hub-upstream --apply` 写入本地模板；
    - 创建 `devflow/upstream-<stage>-<时间戳>` 分支；
-   - 只提交白名单文件（`templates/stages/`、`.claude-plugin/plugin.json`、`CHANGELOG.md`）；
+   - 只提交白名单文件（`templates/stages/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`）；
    - 推送到 `origin`；
    - 有 `gh` 时自动创建 PR，否则输出 GitHub compare 链接。
 5. 工作区里回灌无关的改动不会进入提交；脚本会提示哪些被跳过。

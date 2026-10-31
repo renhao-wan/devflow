@@ -11,7 +11,10 @@ test('插件版本在 plugin.json、package.json、marketplace.json 中一致', 
   const plugin = JSON.parse(read('.claude-plugin/plugin.json'));
   const pkg = JSON.parse(read('package.json'));
   const market = JSON.parse(read('.claude-plugin/marketplace.json'));
+  const entry = (market.plugins || []).find((p) => p.name === plugin.name);
   assert.equal(pkg.version, plugin.version, 'package.json 版本应与 plugin.json 一致');
+  assert.ok(entry, 'marketplace 应包含同名插件条目');
+  assert.equal(entry.version, plugin.version, 'marketplace 插件条目版本应与 plugin.json 一致');
   assert.equal(market.metadata?.version, plugin.version, 'marketplace metadata 版本应与 plugin.json 一致');
 });
 

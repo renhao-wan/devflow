@@ -113,6 +113,7 @@ test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
     assert.equal(pkg.version, '1.0.1');
     const market = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'marketplace.json'), 'utf8'));
     assert.equal(market.metadata.version, '1.0.1');
+    assert.equal((market.plugins || []).find((p) => p.name === 'devflow')?.version, '1.0.1');
 
     const changelog = readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /1\.0\.1/);
@@ -250,6 +251,36 @@ test('回灌拒绝无法识别的 --bump', () => {
     const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--bump', 'huge'], root);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--bump/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌把疑似密钥或凭据判为项目专属', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const cases = [
+      'token: ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      'api_key = sk-abcdefghijklmnopqrstuvwx',
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345',
+      'DATABASE_URL=postgres://user:secret@db.example.com/app',
+      '-----BEGIN RSA PRIVATE KEY-----',
+    ];
+    for (const line of cases) {
+      writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), [
+        '---', 'name: review', 'description: 审查', '---', '', line, '',
+      ].join('\n'));
+      writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+        'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+        'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+      ].join('\n'));
+
+      const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /\[项目专属\].*疑似密钥或凭据/, line);
+      assert.doesNotMatch(result.stdout, /ghp_|sk-|Bearer |PRIVATE KEY|secret@/, '输出不应回显密钥原文');
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

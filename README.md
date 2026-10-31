@@ -6,7 +6,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ## 特性
 
-- **六个阶段**：`req → plan → implement → test → review → debug`，每个阶段都有明确产出与硬门禁。
+- **六个阶段**：`req → plan → implement → test → review`，测试或实现失败时进入 `debug` 并回到 `test`；每个阶段都有明确产出与硬门禁。
 - **单一真源**：项目规则只维护 `.claude/hub/`；`.claude/skills/devflow-*` 是生成物，不手改。
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
@@ -17,7 +17,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 ## 前置要求
 
 - Claude Code（支持 `/plugin` 命令）。
-- Node.js：运行插件脚本需 **>= 18**；运行测试需 **>= 20.11**（测试使用了 `import.meta.dirname`）。
+- Node.js：**>= 20.11**（测试使用了 `import.meta.dirname`）。
 - `node` 可在 `PATH` 中找到（hooks 通过它执行）。
 - 无第三方依赖，无需 npm install。
 
@@ -332,7 +332,7 @@ node scripts/devflow-doctor.mjs
 
 1. 递归复制有变化的可回灌文件到 `templates/stages/<stage>/`，保留相对路径；与插件一致的文件跳过且不重复 bump 版本；
 2. 追加 `templates/stages/_feedback-log.md`；
-3. 按 `--bump`（`patch` 默认 / `minor` / `major`）同步升级三处版本号：`.claude-plugin/plugin.json`、`package.json`、`.claude-plugin/marketplace.json` 的 `metadata.version`；
+3. 按 `--bump`（`patch` 默认 / `minor` / `major`）同步升级三处版本号：`.claude-plugin/plugin.json`、`package.json`、`.claude-plugin/marketplace.json` 的 `plugins[].version`；`metadata.version` 作为市场自身元数据一并更新；
 4. 更新 `CHANGELOG.md`。
 
 回灌会修改插件仓库，建议单独提交并在回灌后运行 `/devflow:doctor`。
@@ -486,7 +486,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 77 项，覆盖脚本、hooks、清单一致性与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 86 项，覆盖脚本、hooks、清单一致性与端到端链路。
 - 运行测试需要 Node >= 20.11；插件运行本身 Node >= 18 即可。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -520,13 +520,15 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 
 ## 版本与兼容
 
-版本号有**三处单一真源**，必须保持一致（`tests/manifest.test.mjs` 会校验）：
+`plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 插件版本：`.claude-plugin/plugin.json` 的 `version`（当前 `1.2.0`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.2.1`）
 - 包元数据：`package.json` 的 `version`
-- 市场条目：`.claude-plugin/marketplace.json` 的 `metadata.version`
+- 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 
-回灌与 `ship` 的 `--apply` 会同时更新这三处；手工改版本时也要三处同改。
+`marketplace.metadata.version` 是市场自身的元数据，`upstream` / `ship` 会一并同步，但它不决定插件安装版本。
+
+回灌与 `ship` 的 `--apply` 会同时更新以上位置；手工改版本时也要保持同步。
 
 其他记录：
 

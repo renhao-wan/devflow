@@ -92,15 +92,19 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   let pluginRoot = null;
+  let info = null;
   try {
     pluginRoot = findPluginRoot(root);
-    const info = pluginInfo(pluginRoot);
+    info = pluginInfo(pluginRoot);
     add('ok', `插件 ${info.name}@${info.version}（${posix(pluginRoot)}）`);
   } catch (err) {
     add('error', err.message);
   }
 
   const meta = readMeta(root);
+  if (meta?.pluginVersion && info?.version && meta.pluginVersion !== info.version) {
+    add('warn', `.devflow.json 记录的插件版本 ${meta.pluginVersion} 与当前 ${info.version} 不一致，建议运行 /devflow:sync 或重跑 /devflow:init`);
+  }
   if (meta?.pluginRoot && pluginRoot && !samePath(meta.pluginRoot, pluginRoot)) {
     if (isPluginCache(meta.pluginRoot)) {
       add('ok', '插件路径已更新（升级或缓存变化）；阶段模板可用 /devflow:sync 同步');
@@ -174,6 +178,10 @@ export async function main(argv = process.argv.slice(2)) {
   const manifest = readJson(manifestFile);
   if (!manifest) add('warn', '缺少 .claude/.hub-manifest.json，运行 node scripts/devflow-gen.mjs');
   else add('ok', `生成账本包含 ${manifest.skills?.length || 0} 个技能`);
+  if (manifest?.skills?.length) {
+    const withResources = manifest.skills.filter((s) => Array.isArray(s.resources) && s.resources.length).length;
+    add('ok', `阶段资源清单：${manifest.skills.length} 个技能，${withResources} 个含 references/templates`);
+  }
 
   const managed = new Map((manifest?.skills || []).map((s) => [s.name, s]));
   for (const [name, s] of managed) {

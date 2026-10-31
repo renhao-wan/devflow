@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.1
+
+### 修复
+
+- `guard-dangerous` 改为引号感知的分词与命令位置匹配：`git commit -m "fix reboot"`、`grep "shutdown"`、`echo "DROP DATABASE"`、`rg "format C:"`、`rm -rf ./build`、`rm -rf ~/work/tmp` 不再误拦；根目录判断只匹配精确的 `/`、`~`、`.`、`..`
+- `guard-dangerous` 递归检查 `bash/sh/zsh -c`、`pwsh -Command`、`cmd /c`、`eval`、`xargs rm`、`find -exec rm`，补上 `bash -c 'rm -rf /'`、`xargs rm -rf` 等绕过
+- `guard-dangerous` 的 SQL 规则只作用于 `psql` / `mysql` / `sqlcmd` 等客户端通过 `-c` / `-e` / `-Q` 传入的语句
+- `track-changes` 覆盖 `Bash` 与 `NotebookEdit`：Bash 通过 `git status --porcelain` 发现 `sed -i`、格式化器、代码生成等间接改动，并过滤 `node_modules`、`dist`、`build`、`coverage` 等噪声
+- `track-changes` 在 Windows 跨盘符时再次判断绝对路径，避免把项目外文件计入
+- `check-tests` 同一批改动只提醒一次，减少 Stop 时重复刷屏
+
+### 增强
+
+- 版本模型改为 `plugin.json` 权威、`package.json` 与 `marketplace.plugins[].version` 镜像；`metadata.version` 不再作为插件版本来源，`hub-upstream` 同步写入 `plugins[].version`
+- `hub-upstream` 新增密钥/凭据扫描（`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xox*-`、私钥、`Bearer`、URL 凭据、`password=` 等），命中按项目专属处理且不回显原文；补充 `127.0.0.1`、`169.254/16`
+- `hub-doctor` 检查 `.devflow.json` 记录的插件版本，落后时提示 `/devflow:sync`；新增阶段资源清单摘要
+- `review` 阶段增加“验收对照”，逐条核对 `req.md` 验收标准与 `plan.md` 任务；review 模板新增验收对照表
+- `debug` 阶段增加结论字段 `fixed` / `partial` / `unresolved`，非 `fixed` 必须写明残余风险
+- `load-hub` 返回 `reloadSkills`，`/clear`、resume 后重新扫描投影；PostToolUse 增加 `NotebookEdit`，SessionStart 增加 `fork`
+- 命令文档补齐 `--bump`、`--no-pr`、`--no-gen`、`--plugin-root`；`ship` 白名单说明补全 `package.json` 与 `marketplace.json`
+- `engines.node` 与 README 统一为 `>= 20.11`
+- 流程说明把 `debug` 画成 `test` / `implement` 的失败分支，而不是 `review` 之后的必经阶段
+
+### 测试与 CI
+
+- 新增 guard 误伤/嵌套、SQL 客户端、Bash 改动追踪、check-tests 节流、回灌密钥扫描、marketplace 条目版本等用例
+- CI 新增插件清单校验作业：`claude plugin validate . --strict`、`claude plugin validate .claude-plugin/plugin.json --strict`、`claude plugin tag --dry-run`
+
 ## 1.2.0
 
 ### 修复

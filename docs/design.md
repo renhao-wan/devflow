@@ -69,7 +69,7 @@
 
 插件升级后，`hub-sync` 依据 `.claude/.hub-sources.json` 的源文件哈希，区分“未改可更新”与“手改需保留”：未改文件跟随新模板，手改文件默认跳过，`--force` 覆盖前生成 `.bak` 备份。同步只动 `stages/`，不碰 `hub.yaml` 与 `overrides/`。
 
-版本号有 `.claude-plugin/plugin.json`、`package.json`、`.claude-plugin/marketplace.json`（`metadata.version`）三处，必须一致；回灌/`ship` 的 `--apply --bump <patch|minor|major>` 会同时更新，清单测试负责校验漂移。
+插件版本以 `.claude-plugin/plugin.json` 为权威来源，`package.json` 与 `.claude-plugin/marketplace.json` 的 `plugins[].version` 是镜像，必须一致；`metadata.version` 属于市场自身元数据，不决定插件安装版本。回灌/`ship` 的 `--apply --bump <patch|minor|major>` 会同时更新，清单测试负责校验漂移。
 
 ## 安全边界
 

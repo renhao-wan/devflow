@@ -42,11 +42,16 @@ try {
     `- 子项目：${subs.join(', ') || '单项目'}`,
   ];
   if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
-  lines.push('- 流程：/devflow:req → plan → implement → test → review → debug');
+  lines.push('- 流程：req → plan → implement → test → review；test 或 implement 失败时进入 debug，修复后回到 test。');
   lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');
 
   process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') },
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: lines.join('\n'),
+      // /clear、resume 后重新扫描技能目录，确保新生成的投影立即可用
+      reloadSkills: true,
+    },
   }));
 } catch {
   // 注入失败时静默，不打断会话启动。

@@ -5,11 +5,12 @@
   },
   "metadata": {
     "description": "Local marketplace for the devflow plugin",
-    "version": "1.2.0"
+    "version": "1.2.1"
   },
   "plugins": [
     {
       "name": "devflow",
+      "version": "1.2.1",
       "description": "Six-stage engineering workflow with a project-level hub, thin projections and non-destructive template sync",
       "source": "./",
       "strict": false

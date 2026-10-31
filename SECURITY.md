@@ -29,7 +29,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 `PreToolUse(Bash)` 钩子基于**正则与分词**识别危险命令，用于减少误操作，**不是安全边界**：
 
-- 引号包裹、变量展开、`$(...)`、命令别名、`/bin/rm`、`--no-preserve-root`、脚本文件里再执行命令等写法都可能绕过。
+- 已做引号感知的分词，引号内的文本不会触发命令类规则；并递归检查 `sh/bash -c`、`pwsh -Command`、`cmd /c`、`eval`、`xargs rm`、`find -exec rm`。但变量展开、`$(...)`、命令别名、`/bin/rm` 的符号链接、`--no-preserve-root`、脚本文件里再执行命令等写法仍可能绕过。
 - 它无法分析命令的真实语义，也无法阻止通过其他工具（编辑器、`Write`、外部程序）造成的影响。
 - 不要把它当作备份、权限控制或审计的替代品。
 
@@ -42,7 +42,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 ### 凭据处理
 
 - `/devflow:ship` 仅在存在 `GITHUB_TOKEN` / `GH_TOKEN` 或已登录的 `gh` 时才创建 PR；token 只用于 GitHub API 请求，不写入仓库、日志或 `.devflow.json`。
-- 回灌分类会把绝对路径、内网 IP、`.corp` / `.internal`、blocklist 关键词与子项目名标为项目专属，**减少**敏感信息进入插件模板；但这是启发式判断，提交回灌 PR 前仍需人工审阅 diff。
+- 回灌分类会把绝对路径、内网 IP、`.corp` / `.internal`、blocklist 关键词、子项目名以及常见密钥/凭据（`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xox*-`、私钥、`Bearer`、URL 凭据、`password=` 等）标为项目专属，命中时**不回显原文**；但这是启发式判断，提交回灌 PR 前仍需人工审阅 diff。
 
 ### 依赖与供应链
 
