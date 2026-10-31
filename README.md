@@ -495,7 +495,8 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 
 - `syntax`：Node 18 / 22 下对所有受版本控制的 `*.mjs` 执行 `node --check`，并逐个解析 `*.json`；
 - `test`：Ubuntu Node 20 / 22、Windows Node 22（matrix 排除了 Windows + Node 20），执行 `node --test`；
-- `smoke`：在 Linux 与 Windows 的临时目录执行 `init → gen --check → doctor`，并确认 loader 已生成且被 `.gitignore` 忽略。
+- `smoke`：在 Linux 与 Windows 的临时目录执行 `init → gen --check → doctor`，并确认 loader 已生成且被 `.gitignore` 忽略；
+- `smoke-result`：汇总两个平台的冒烟结果，以固定名称 `init → doctor` 上报，供分支保护作为必填检查。
 
 ## 故障排查
 

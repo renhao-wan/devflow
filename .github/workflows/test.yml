@@ -99,3 +99,22 @@ jobs:
           # loaders 应被 .gitignore 忽略，但 init 后仍在本地可用
           test -f scripts/devflow-gen.mjs
           grep -q 'scripts/devflow-gen.mjs' .gitignore
+
+  # 分支保护要求的检查名固定为 init → doctor；矩阵 job 名带平台后缀，
+  # 用聚合 job 把各平台结果汇总成同名检查，避免必填检查永远处于 pending。
+  smoke-result:
+    name: init → doctor
+    needs: smoke
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇总冒烟结果
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="${{ needs.smoke.result }}"
+          if [ "$result" != "success" ]; then
+            echo "冒烟任务结果：$result"
+            exit 1
+          fi
+          echo "所有平台的冒烟任务均通过"
