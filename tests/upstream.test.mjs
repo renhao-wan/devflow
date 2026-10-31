@@ -52,8 +52,13 @@ function makePluginCopy(base) {
   cpSync(join(PLUGIN_ROOT, '.claude-plugin'), join(copy, '.claude-plugin'), { recursive: true });
   cpSync(join(PLUGIN_ROOT, 'templates'), join(copy, 'templates'), { recursive: true });
   writeFileSync(join(copy, 'CHANGELOG.md'), '# Changelog\n');
+  writeFileSync(join(copy, 'package.json'), JSON.stringify({ name: 'devflow', version: '1.0.0' }, null, 2));
   const manifest = join(copy, '.claude-plugin', 'plugin.json');
   writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '1.0.0' }, null, 2));
+  const market = join(copy, '.claude-plugin', 'marketplace.json');
+  const marketData = JSON.parse(readFileSync(market, 'utf8'));
+  marketData.metadata = { ...(marketData.metadata || {}), version: '1.0.0' };
+  writeFileSync(market, JSON.stringify(marketData, null, 2));
   return copy;
 }
 
@@ -103,6 +108,13 @@ test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
     const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
     assert.equal(plugin.version, '1.0.1');
 
+    // 版本升级要同步到 package.json 与 marketplace
+    const pkg = JSON.parse(readFileSync(join(pluginCopy, 'package.json'), 'utf8'));
+    assert.equal(pkg.version, '1.0.1');
+    const market = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    assert.equal(market.metadata.version, '1.0.1');
+    assert.equal((market.plugins || []).find((p) => p.name === 'devflow')?.version, '1.0.1');
+
     const changelog = readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8');
     assert.match(changelog, /1\.0\.1/);
     assert.ok(existsSync(join(pluginCopy, 'templates', 'stages', '_feedback-log.md')));
@@ -140,6 +152,135 @@ test('回灌缺少 --stage 时报错', () => {
     const result = run('hub-upstream.mjs', ['--root', root], root);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--stage/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌不因子项目名是其他单词的子串而误判', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), [
+      '---', 'name: review', 'description: 审查', '---', '',
+      'rapid prototyping 与 capital 的通用做法。',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects:', '  api:', '    path: services/api', '    stages: [review]',
+      'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /\[可回灌\]/);
+    assert.doesNotMatch(result.stdout, /子项目名 api/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌跳过备份与临时文件', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), '---\nname: review\ndescription: 审查\n---\n\n通用内容。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+    const stageDir = join(root, '.claude', 'hub', 'stages', 'review');
+    writeFileSync(join(stageDir, 'SKILL.md.bak-20260101'), '备份内容\n');
+    writeFileSync(join(stageDir, 'SKILL.md.tmp-1234'), '临时内容\n');
+    writeFileSync(join(stageDir, '.DS_Store'), 'x');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /\.bak-|\.tmp-|\.DS_Store/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌重复执行是幂等的，不重复升级版本', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), '---\nname: review\ndescription: 审查\n---\n\n通用内容。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    const first = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(first.status, 0, first.stderr);
+    const second = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stdout, /一致|未修改/);
+
+    const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
+    assert.equal(plugin.version, '1.0.1');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌支持 --bump minor', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), '---\nname: review\ndescription: 审查\n---\n\n通用内容。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply', '--bump', 'minor'], root);
+    assert.equal(result.status, 0, result.stderr);
+    const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
+    assert.equal(plugin.version, '1.1.0');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌拒绝无法识别的 --bump', () => {
+  const root = makeProject();
+  try {
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--bump', 'huge'], root);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--bump/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌把疑似密钥或凭据判为项目专属', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const cases = [
+      'token: ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      'api_key = sk-abcdefghijklmnopqrstuvwx',
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345',
+      'DATABASE_URL=postgres://user:secret@db.example.com/app',
+      '-----BEGIN RSA PRIVATE KEY-----',
+    ];
+    for (const line of cases) {
+      writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), [
+        '---', 'name: review', 'description: 审查', '---', '', line, '',
+      ].join('\n'));
+      writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+        'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+        'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+      ].join('\n'));
+
+      const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /\[项目专属\].*疑似密钥或凭据/, line);
+      assert.doesNotMatch(result.stdout, /ghp_|sk-|Bearer |PRIVATE KEY|secret@/, '输出不应回显密钥原文');
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

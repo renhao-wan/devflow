@@ -13,4 +13,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash(*)
 5. 找到根因后再修复，不吞异常、不加无意义重试。
 6. 补一个修复前失败、修复后通过的回归测试。
 7. 清理临时日志与调试代码。
-8. 报告：现象、根因、修复、验证方式；并说明是否还有未排除的相邻风险。
+8. 报告：现象、根因、修复、验证方式；给出结论（`fixed` / `partial` / `unresolved`）；`partial` 或 `unresolved` 时必须写明未排除的风险与下一步。

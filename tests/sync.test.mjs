@@ -132,6 +132,32 @@ test('sync 在缺少源文件账本时要求 --force 才覆盖', () => {
   }
 });
 
+test('sync 不复制备份/临时文件，并刷新 pluginRoot', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-artifacts-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md.bak-20260101': '备份\n',
+      'templates/stages/review/SKILL.md.tmp-1234': '临时\n',
+      'templates/stages/review/.DS_Store': 'x',
+    });
+    const root = makeProject(base, repo);
+
+    const installed = makePlugin(join(base, 'installed'), {});
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', installed], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+
+    const stageDir = join(root, '.claude', 'hub', 'stages', 'review');
+    assert.equal(existsSync(join(stageDir, 'SKILL.md.bak-20260101')), false);
+    assert.equal(existsSync(join(stageDir, 'SKILL.md.tmp-1234')), false);
+    assert.equal(existsSync(join(stageDir, '.DS_Store')), false);
+
+    const meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8'));
+    assert.equal(meta.pluginRoot, installed);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('sync 以安装的插件版本为准，不读取回灌源码仓库', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-sync-source-'));
   try {

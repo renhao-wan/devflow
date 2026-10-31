@@ -1,31 +1,12 @@
 #!/usr/bin/env node
-// Stop：仅提醒，从不阻止。测试未跑或改动晚于测试时提示。
-import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => { data += c; });
-    process.stdin.on('end', () => resolve(data));
-    setTimeout(() => resolve(data), 3000);
-  });
-}
-
-function findRoot(start) {
-  let dir = start;
-  while (true) {
-    if (existsSync(join(dir, '.claude', 'hub', 'hub.yaml'))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
+// Stop：仅提醒，从不阻止。测试未跑或改动晚于测试时提示；同一批改动只提醒一次。
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { readStdin, findHubRoot } from './lib.mjs';
 
 await readStdin();
 try {
-  const root = findRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  const root = findHubRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
   if (!root) process.exit(0);
 
   const stateFile = join(root, '.claude', '.devflow-state.json');
@@ -38,6 +19,17 @@ try {
   const lastChange = Date.parse(state.lastChangeAt || 0);
   const lastTest = Date.parse(state.lastTestPassedAt || 0);
   if (state.lastTestPassedAt && lastTest >= lastChange) process.exit(0);
+
+  // 同一批改动已提醒过就不再重复，避免每次 Stop 都刷屏
+  const lastReminder = Date.parse(state.lastReminderAt || 0);
+  if (lastReminder >= lastChange) process.exit(0);
+
+  state.lastReminderAt = new Date().toISOString();
+  try {
+    const tmp = `${stateFile}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    renameSync(tmp, stateFile);
+  } catch { /* 写失败不影响提醒 */ }
 
   const files = (state.changedFiles || []).slice(-8);
   const msg = `devflow 提醒：本轮改动尚未验证通过。可运行 /devflow:test 记录结果。` +

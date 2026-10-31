@@ -10,6 +10,49 @@ permissions:
   contents: read
 
 jobs:
+  syntax:
+    name: syntax / node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: 脚本语法
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.mjs' | while IFS= read -r f; do node --check "$f"; done
+      - name: JSON 清单可解析
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.json' | while IFS= read -r f; do
+            node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$f"
+          done
+
+  plugin-manifest:
+    name: 插件清单校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 安装 Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2
+      - name: 清单与版本一致性
+        shell: bash
+        run: |
+          set -euo pipefail
+          claude plugin validate . --strict
+          claude plugin validate .claude-plugin/plugin.json --strict
+          claude plugin tag --dry-run
+
   test:
     name: node ${{ matrix.node }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -32,8 +75,12 @@ jobs:
         run: node --test
 
   smoke:
-    name: init → doctor
-    runs-on: ubuntu-latest
+    name: init → doctor / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,3 +96,25 @@ jobs:
           node "$GITHUB_WORKSPACE/scripts/hub-init.mjs" --root . --plugin-root "$GITHUB_WORKSPACE"
           node "$GITHUB_WORKSPACE/scripts/gen-claude-skills.mjs" --root . --check
           node "$GITHUB_WORKSPACE/scripts/hub-doctor.mjs" --root .
+          # loaders 应被 .gitignore 忽略，但 init 后仍在本地可用
+          test -f scripts/devflow-gen.mjs
+          grep -q 'scripts/devflow-gen.mjs' .gitignore
+
+  # 分支保护要求的检查名固定为 init → doctor；矩阵 job 名带平台后缀，
+  # 用聚合 job 把各平台结果汇总成同名检查，避免必填检查永远处于 pending。
+  smoke-result:
+    name: init → doctor
+    needs: smoke
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇总冒烟结果
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="${{ needs.smoke.result }}"
+          if [ "$result" != "success" ]; then
+            echo "冒烟任务结果：$result"
+            exit 1
+          fi
+          echo "所有平台的冒烟任务均通过"

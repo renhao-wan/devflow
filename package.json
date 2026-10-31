@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "description": "Claude Code 插件：六阶段工程工作流，项目级 hub 单一真源与薄壳投影",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "url": "https://github.com/renhao-wan/devflow.git"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.11"
   },
   "scripts": {
     "test": "node --test",

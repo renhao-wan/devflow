@@ -1,9 +1,38 @@
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, renameSync, rmSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
 export const posix = (p) => p.split(sep).join('/');
+
+/** 归一化路径用于比较：解析符号链接、统一分隔符与 Windows 大小写。 */
+export function canonicalPath(p) {
+  let out;
+  try {
+    out = realpathSync.native(p);
+  } catch {
+    out = resolve(p);
+  }
+  // Windows 可能返回 8.3 短路径或 \\?\ 长路径前缀，统一后再比较
+  out = out.replace(/\\/g, '/').replace(/^\/\/\?\/?/, '');
+  return process.platform === 'win32' ? out.toLowerCase() : out;
+}
+
+export function samePath(a, b) {
+  return canonicalPath(a) === canonicalPath(b);
+}
+
+/** 生成物/备份/临时文件，不应进入阶段资源、回灌或源文件账本。 */
+export function isGeneratedArtifact(rel) {
+  return String(rel).split('/').some((seg) =>
+    seg.startsWith('.') || /\.bak(-|$)/i.test(seg) || /\.tmp(-|$)/i.test(seg));
+}
+
+export const STAGE_NAME_RE = /^[a-z][a-z0-9_-]*$/;
+
+export function isValidStageName(name) {
+  return STAGE_NAME_RE.test(String(name));
+}
 
 export function isMain(metaUrl) {
   if (!process.argv[1]) return false;
@@ -251,6 +280,10 @@ export function findPluginRoot(start) {
     return meta.pluginRoot;
   }
   if (envRoot) return envRoot;
+  // 回灌源码仓库也是有效的插件根；安装缓存失效时可作为运行时回退
+  if (meta?.pluginSourceRoot && isValidPluginRoot(meta.pluginSourceRoot)) {
+    return meta.pluginSourceRoot;
+  }
 
   const marker = findUp(start, join('.claude-plugin', 'plugin.json'));
   if (marker) return marker;
@@ -312,9 +345,15 @@ export function satisfies(version, range) {
   return true;
 }
 
-export function bumpPatch(version) {
-  const [a, b, c] = version.split('.').map(Number);
+export function bumpVersion(version, kind = 'patch') {
+  const [a, b, c] = String(version).split('.').map(Number);
+  if (kind === 'major') return `${a + 1}.0.0`;
+  if (kind === 'minor') return `${a}.${b + 1}.0`;
   return `${a}.${b}.${c + 1}`;
+}
+
+export function bumpPatch(version) {
+  return bumpVersion(version, 'patch');
 }
 
 export function argValue(argv, name, fallback = null) {

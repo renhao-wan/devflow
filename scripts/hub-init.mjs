@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, sha256, walk, relPosix,
+  isGeneratedArtifact,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -185,8 +186,8 @@ function renderHubYaml(subprojects, version, rootTest) {
 function loaderSource(name) {
   return `#!/usr/bin/env node
 // devflow 薄 loader：真实实现在插件内，避免项目里出现第二份脚本。
-// 插件升级后 .devflow.json 记录的旧缓存可能失效，此时回退到当前会话的 CLAUDE_PLUGIN_ROOT。
-import { readFileSync } from 'node:fs';
+// 插件升级后 .devflow.json 记录的旧缓存可能失效，此时回退到源码仓库或当前会话的 CLAUDE_PLUGIN_ROOT。
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -194,16 +195,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let meta = {};
 try { meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8')); } catch { meta = {}; }
 
-const candidates = [meta.pluginRoot, process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean);
+const candidates = [meta.pluginRoot, meta.pluginSourceRoot, process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean);
 let mod = null;
+let lastError = null;
 for (const dir of candidates) {
+  const entry = join(dir, 'scripts', '${name}.mjs');
+  if (!existsSync(entry)) { lastError = new Error('缺少 ' + entry); continue; }
   try {
-    mod = await import(pathToFileURL(join(dir, 'scripts', '${name}.mjs')).href);
+    mod = await import(pathToFileURL(entry).href);
     break;
-  } catch { /* 尝试下一个候选 */ }
+  } catch (err) { lastError = err; }
 }
 if (!mod) {
-  console.error('[ERR] 找不到可用的 devflow 插件目录。请检查 CLAUDE_PLUGIN_ROOT，或重新运行 /devflow:init。');
+  console.error('[ERR] 找不到可用的 devflow 插件目录。请检查 CLAUDE_PLUGIN_ROOT，或重新运行 /devflow:init。'
+    + (lastError ? ' 最后一次错误：' + lastError.message : ''));
   process.exit(1);
 }
 await mod.main(process.argv.slice(2));
@@ -213,6 +218,7 @@ await mod.main(process.argv.slice(2));
 function copyTree(src, dst, overwrite) {
   let copied = 0;
   for (const entry of readdirSync(src, { withFileTypes: true })) {
+    if (isGeneratedArtifact(entry.name)) continue;
     const from = join(src, entry.name);
     const to = join(dst, entry.name);
     if (entry.isDirectory()) {
@@ -244,7 +250,9 @@ function writeSourceManifest(root, version) {
   const hubDir = join(root, '.claude', 'hub');
   const files = {};
   for (const abs of walk(join(hubDir, 'stages'))) {
-    files[`.claude/hub/${relPosix(hubDir, abs)}`] = sha256(readText(abs));
+    const rel = relPosix(hubDir, abs);
+    if (isGeneratedArtifact(rel)) continue;
+    files[`.claude/hub/${rel}`] = sha256(readText(abs));
   }
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
     schemaVersion: 1,
@@ -255,6 +263,10 @@ function writeSourceManifest(root, version) {
 }
 
 const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
+scripts/devflow-gen.mjs
+scripts/devflow-doctor.mjs
+scripts/devflow-upstream.mjs
+scripts/devflow-test.mjs
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
 .claude/.hub-sources.json
@@ -263,11 +275,16 @@ const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
 # <<< devflow
 `;
 
-function appendGitignore(root) {
+/** 用标记块替换而非追加，规则变更时可原地升级。 */
+function upsertGitignore(root) {
   const file = join(root, '.gitignore');
   const current = existsSync(file) ? readText(file) : '';
-  if (current.includes('# >>> devflow')) return false;
-  writeText(file, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${GITIGNORE_BLOCK}`);
+  const pattern = /# >>> devflow[^\n]*\n[\s\S]*?# <<< devflow\n?/;
+  const next = pattern.test(current)
+    ? current.replace(pattern, GITIGNORE_BLOCK)
+    : `${current}${current && !current.endsWith('\n') ? '\n' : ''}${GITIGNORE_BLOCK}`;
+  if (next === current) return false;
+  writeText(file, next);
   return true;
 }
 
@@ -329,7 +346,7 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', `写入 scripts/${file}`);
   }
 
-  if (appendGitignore(root)) log('ok', '更新 .gitignore');
+  if (upsertGitignore(root)) log('ok', '更新 .gitignore');
   else log('ok', '.gitignore 已包含 devflow 片段');
 
   const report = await generate(['--root', root]);

@@ -14,15 +14,17 @@ description: Use when the user asks to build, change, or fix something in a proj
 ## 流程
 
 ```
-req → plan → implement → test → review → debug
+req → plan → implement → test → review
+                 ↑          │
+                 └── debug ←┘
 ```
 
 - **req**：目标、验收标准、边界、影响面。产出 `docs/devflow/<slug>/req.md`。
 - **plan**：现状、方案、任务拆分、测试策略、回滚。产出 `plan.md`。
 - **implement**：按计划小步实现，测试先行。
 - **test**：真实运行测试，记录结果。
-- **review**：缺陷导向审查 diff。
-- **debug**：测试失败或行为异常时进入；修复后补回归测试。
+- **review**：缺陷导向审查 diff，并逐条对照验收标准收敛。
+- **debug**：test 或 implement 失败时进入；修复并补回归测试后回到 test，不是 review 之后的必经阶段。
 
 ## 怎么选阶段
 

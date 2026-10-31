@@ -26,13 +26,14 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 - [ ] 有可重复的复现步骤或失败测试。
 - [ ] 根因有证据支撑，不是“可能是”。
 - [ ] 回归测试在修复前失败、修复后通过。
+- [ ] 结论明确（`fixed` / `partial` / `unresolved`）；非 `fixed` 时写明残余风险与下一步。
 - [ ] 没有引入新的跳过或吞错。
 - [ ] 调试残留已清理。
 
 ## 产出
 
 - 修复代码与回归测试。
-- 简短记录：现象、根因、修复方式、验证方式（写入 `docs/devflow/<slug>/debug.md` 或对话），骨架见 `templates/debug-report.template.md`。
+- 简短记录：现象、根因、修复方式、验证方式、结论（`fixed` / `partial` / `unresolved`），写入 `docs/devflow/<slug>/debug.md` 或对话，骨架见 `templates/debug-report.template.md`。
 
 ## 边界
 

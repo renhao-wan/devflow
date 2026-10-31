@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-import { existsSync, realpathSync, rmSync } from 'node:fs';
-import { join, resolve, basename } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   argValue, hasFlag, projectRoot, pluginInfo,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
+  bumpVersion, samePath,
 } from './lib/common.mjs';
 import { main as upstream } from './hub-upstream.mjs';
 
 const WHITELIST = [
   (p) => p === '.claude-plugin/plugin.json',
+  (p) => p === '.claude-plugin/marketplace.json',
+  (p) => p === 'package.json',
   (p) => p === 'CHANGELOG.md',
   (p) => p === 'templates/stages/_feedback-log.md',
   (p) => p.startsWith('templates/stages/'),
@@ -48,22 +51,6 @@ function dirty(cwd) {
   return out;
 }
 
-function canonical(p) {
-  let out;
-  try {
-    out = realpathSync.native(p);
-  } catch {
-    out = resolve(p);
-  }
-  // Windows 可能返回 8.3 短路径或 \\?\ 长路径前缀，统一后再比较
-  out = out.replace(/\\/g, '/').replace(/^\/\/\?\/?/, '');
-  return process.platform === 'win32' ? out.toLowerCase() : out;
-}
-
-function samePath(a, b) {
-  return canonical(a) === canonical(b);
-}
-
 function githubRemote(url) {
   const m = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
   return m ? { owner: m[1], repo: m[2] } : null;
@@ -72,11 +59,13 @@ function githubRemote(url) {
 function uniqueBranch(cwd, base) {
   let name = base;
   let i = 2;
-  while (git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]).status === 0) {
+  for (;;) {
+    const local = git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]).status === 0;
+    const remote = git(cwd, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`]).status === 0;
+    if (!local && !remote) return name;
     name = `${base}-${i}`;
     i += 1;
   }
-  return name;
 }
 
 function stamp() {
@@ -85,6 +74,38 @@ function stamp() {
 
 function compareUrl(owner, repo, base, branch) {
   return `https://github.com/${owner}/${repo}/compare/${base}...${branch}?expand=1`;
+}
+
+/** 复用仓库 PR 模板，没有模板时退回内置结构。 */
+export function buildPrBody(pluginRoot, { stage, projectName, files, oldVersion, newVersion, kind }) {
+  const tplFile = join(pluginRoot, '.github', 'pull_request_template.md');
+  const sections = {
+    '变更内容': `## 变更内容\n\n回灌 ${stage} 阶段规则，来源项目：${projectName}。`,
+    '类型': '## 类型\n\n- [x] feat',
+    '关联': `## 关联\n\n- 阶段：${stage}`,
+    '验证': [
+      '## 验证',
+      '',
+      '- [ ] `node --test` 全绿',
+      '- [ ] `node scripts/hub-doctor.mjs` 无漂移、无缺失资源',
+      '- [x] 手动验证：项目侧回灌预览已确认',
+    ].join('\n'),
+    '影响面': [
+      '## 影响面',
+      '',
+      `- 影响范围：${files.join('、')}`,
+      `- 兼容性：版本 ${oldVersion} → ${newVersion}（${kind}）`,
+    ].join('\n'),
+  };
+
+  if (existsSync(tplFile)) {
+    let body = readText(tplFile);
+    for (const [title, replacement] of Object.entries(sections)) {
+      body = body.replace(new RegExp(`## ${title}[\\s\\S]*?(?=\\n## |$)`), replacement);
+    }
+    if (body.trim()) return body.trimEnd() + '\n';
+  }
+  return Object.values(sections).join('\n\n') + '\n';
 }
 
 async function createPrViaApi(owner, repo, base, branch, title, body, token) {
@@ -114,9 +135,13 @@ export async function main(argv = process.argv.slice(2)) {
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
   const base = argValue(argv, '--base', 'main');
+  const kind = argValue(argv, '--bump', 'patch');
   const dryRun = hasFlag(argv, '--dry-run');
   const noPr = hasFlag(argv, '--no-pr');
   if (!stage) throw new Error('必须指定 --stage <req|plan|implement|test|review|debug>');
+  if (!['patch', 'minor', 'major'].includes(kind)) {
+    throw new Error(`--bump 只支持 patch|minor|major，收到：${kind}`);
+  }
 
   const cwdIsPlugin = existsSync(join(process.cwd(), '.claude-plugin', 'plugin.json'));
   const pluginRoot = argValue(argv, '--plugin-root', null)
@@ -147,11 +172,11 @@ export async function main(argv = process.argv.slice(2)) {
   const branch = uniqueBranch(pluginRoot, `devflow/upstream-${stage}-${stamp()}`);
 
   if (dryRun) {
-    const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot]);
+    const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--bump', kind]);
     console.log('\n[dry-run] 不会创建分支或提交。');
     console.log(`将创建分支：${branch}（基于 ${base}）`);
-    console.log(`将提交白名单文件：${result.reusable} 个可回灌文件 + 版本与 CHANGELOG`);
-    console.log(`插件版本：${oldVersion} → ${oldVersion.split('.').slice(0, 2).join('.')}.${Number(oldVersion.split('.')[2] || 0) + 1}`);
+    console.log(`将提交白名单文件：${result.pending} 个有变化的可回灌文件 + 版本与 CHANGELOG`);
+    console.log(`插件版本：${oldVersion} → ${bumpVersion(oldVersion, kind)}`);
     if (conflicts.length) {
       console.log(`\n警告：以下回灌相关文件未提交，实际执行会被拒绝：${conflicts.map((f) => f.path).join('、')}`);
     }
@@ -167,9 +192,9 @@ export async function main(argv = process.argv.slice(2)) {
     );
   }
 
-  const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--apply']);
-  if (!result.reusable) {
-    console.log('没有可回灌内容，未创建分支。');
+  const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--apply', '--bump', kind]);
+  if (!result.pending) {
+    console.log('没有可回灌的变化，未创建分支。');
     return { stage, branch: null, applied: false };
   }
 
@@ -199,6 +224,7 @@ export async function main(argv = process.argv.slice(2)) {
   const toAdd = after.filter((f) => isWhitelisted(f.path)).map((f) => f.path);
   if (!toAdd.length) throw new Error('没有可提交的改动');
 
+  const originalBranch = gitOut(pluginRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
   gitOut(pluginRoot, ['checkout', '-b', branch]);
   for (const path of toAdd) gitOut(pluginRoot, ['add', '--', path]);
 
@@ -216,8 +242,12 @@ export async function main(argv = process.argv.slice(2)) {
 
   const pushed = git(pluginRoot, ['push', '-u', 'origin', branch]);
   if (pushed.status !== 0) {
+    // 保留分支与提交，但把工作区切回原分支，避免把用户留在半成品状态
+    if (originalBranch && originalBranch !== 'HEAD') {
+      git(pluginRoot, ['checkout', originalBranch]);
+    }
     throw new Error(
-      `push 失败，分支和提交已保留在本地：${branch}\n${(pushed.stderr || '').trim()}`,
+      `push 失败，分支和提交已保留在本地：${branch}（已切回 ${originalBranch || '原分支'}）\n${(pushed.stderr || '').trim()}`,
     );
   }
   log('ok', `已推送到 origin/${branch}`);
@@ -232,24 +262,9 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const url = compareUrl(ghRepo.owner, ghRepo.repo, base, branch);
-  const prBody = [
-    '## 变更内容',
-    `回灌 ${stage} 阶段规则，来源项目：${projectName}。`,
-    '',
-    '## 类型',
-    '- [x] feat',
-    '',
-    '## 关联',
-    `- 阶段：${stage}`,
-    '',
-    '## 验证',
-    '- [ ] `node --test`',
-    '- [ ] `node scripts/hub-doctor.mjs`',
-    '',
-    '## 影响面',
-    `- 影响范围：${toAdd.join('、')}`,
-    `- 兼容性：版本 ${oldVersion} → ${newVersion}（patch）`,
-  ].join('\n');
+  const prBody = buildPrBody(pluginRoot, {
+    stage, projectName, files: toAdd, oldVersion, newVersion, kind,
+  });
 
   const ghAvailable = spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;
   if (ghAvailable) {

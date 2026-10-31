@@ -140,6 +140,35 @@ test('回灌拒绝写入 marketplace 安装缓存', () => {
   }
 });
 
+test('项目内 loader 在 pluginRoot 失效时回退到 pluginSourceRoot', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-loader-source-'));
+  try {
+    const project = join(base, 'project');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'p', scripts: { test: 'node --test' } }));
+
+    const init = spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', 'hub-init.mjs'),
+      '--root', project, '--plugin-root', PLUGIN_ROOT], { encoding: 'utf8' });
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+
+    const meta = JSON.parse(readFileSync(join(project, '.devflow.json'), 'utf8'));
+    meta.pluginRoot = join(base, 'gone', 'devflow');
+    meta.pluginSourceRoot = PLUGIN_ROOT;
+    writeFileSync(join(project, '.devflow.json'), JSON.stringify(meta, null, 2));
+
+    const env = { ...process.env };
+    delete env.CLAUDE_PLUGIN_ROOT;
+    const loader = spawnSync(NODE, [join(project, 'scripts', 'devflow-gen.mjs'), '--check'], {
+      cwd: project,
+      encoding: 'utf8',
+      env,
+    });
+    assert.equal(loader.status, 0, loader.stderr + loader.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('项目内 loader 在记录的插件根失效时回退到 CLAUDE_PLUGIN_ROOT', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-loader-'));
   try {

@@ -1,7 +1,7 @@
 {
   "name": "devflow",
   "description": "Six-stage engineering workflow for Claude Code: requirement, plan, implement, test, review, debug. Project-level hub with thin projections, hard safety gates, and upstream templates.",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "author": {
     "name": "devflow"
   },

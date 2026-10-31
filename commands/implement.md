@@ -1,7 +1,7 @@
 ---
 description: 实现阶段：按 plan.md 小步实现，测试先行，保持每步可运行
 argument-hint: <slug> [任务编号]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git status:*), Bash(git diff:*), Bash(node:*), Bash(npm:*), Bash(mvn:*), Bash(./gradlew:*), Bash(go:*), Bash(pytest:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(node:*), Bash(npx:*), Bash(npm:*), Bash(pnpm:*), Bash(yarn:*), Bash(bun:*), Bash(mvn:*), Bash(gradle:*), Bash(./gradlew:*), Bash(gradlew.bat:*), Bash(go:*), Bash(cargo:*), Bash(dotnet:*), Bash(make:*), Bash(python:*), Bash(python3:*), Bash(pytest:*)
 ---
 
 执行 devflow 实现阶段：**$ARGUMENTS**

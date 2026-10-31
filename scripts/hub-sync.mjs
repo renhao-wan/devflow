@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub,
   readText, writeAtomic, sha256, log, posix, isMain, ensureDir, walk, relPosix,
-  readMeta,
+  readMeta, isGeneratedArtifact,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -28,7 +28,7 @@ function templateFiles(pluginRoot) {
   if (!existsSync(base)) return [];
   return walk(base)
     .map((abs) => relPosix(base, abs))
-    .filter((rel) => rel.split('/').pop() !== '_feedback-log.md')
+    .filter((rel) => rel.split('/').pop() !== '_feedback-log.md' && !isGeneratedArtifact(rel))
     .sort();
 }
 
@@ -88,7 +88,7 @@ export async function main(argv = process.argv.slice(2)) {
   const removed = Object.keys(sources?.files || {})
     .filter((rel) => rel.startsWith(STAGE_PREFIX))
     .map((rel) => rel.slice(STAGE_PREFIX.length))
-    .filter((rel) => !files.includes(rel));
+    .filter((rel) => !files.includes(rel) && !isGeneratedArtifact(rel));
 
   const counts = { add: 0, update: 0, overwrite: 0, conflict: 0, same: 0 };
   for (const a of actions) counts[a.type] += 1;
@@ -137,10 +137,13 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', `${label(a.type)} ${a.rel}`);
   }
 
+  for (const rel of removed) log('..', `模板已移除，本地保留 ${STAGE_PREFIX}${rel}`);
+
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   if (meta) {
     writeAtomic(join(root, '.devflow.json'), `${JSON.stringify({
       ...meta,
+      pluginRoot,
       pluginVersion: info.version,
     }, null, 2)}\n`);
   }
