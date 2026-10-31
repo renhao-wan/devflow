@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.3.0
+
+### 增强
+
+- plan 阶段新增“先调研已有实现”：按小改动 / 有界 / 架构性 / 可行性探索分级决定调研深度；产出 `## 调研与复用判断`，记录检索记录、候选对比与“采用 / 借鉴 / 自建 / 排除”的理由
+- 新增 `templates/stages/plan/references/prior-art-research.md`：检索方法、候选评估维度（能力、许可证、维护状态、依赖与退出成本、安全合规、迁移成本）与结论分类
+- plan 新增搜索失败降级协议：WebSearch → 官方文档/仓库 → GitHub API → 本地插件/vendor/缓存 → 用户资料；有上限重试，显式标记未验证项，禁止编造来源；高风险改动检索失败时先请用户确认
+- req 新增“技术约束”：是否允许新增依赖、许可证政策、运行时/版本下限、离线或私有部署、数据驻留、必须兼容接口；产出模板新增 `## 技术约束`
+- review 新增“复用与依赖检查”：核对 plan 的复用判断来源、许可证与约束一致性、维护状态与已知漏洞、搜索失败披露；`review-checklist` 新增对应清单
+- debug 新增可选的“查已知问题”：用完整错误、错误码与依赖版本检索官方 issue 与变更日志；外部结论只作线索，须本地复现验证
+- `commands/plan|review|debug` 的 `allowed-tools` 补充 `WebSearch`、`WebFetch`、`Bash(gh:*)`；`devflow-code-reviewer`、`devflow-debug-investigator` 子代理同步获得检索能力
+- `devflow-engineering-flow` 新增“与 superpowers 的协作边界”：devflow 管阶段与门禁，superpowers 管执行技法，冲突以 devflow 为准，已有计划吸收进 `plan.md`
+
+### 文档
+
+- README 新增“方案调研与搜索失败处理”“与 superpowers 的关系”章节，六阶段表更新 plan 门禁
+- `docs/design.md` 新增方案前调研决策、superpowers 边界与 1.3.0 里程碑
+- `SECURITY.md` 新增“外部调研”安全说明：外部内容不可信、不外发敏感信息、许可证以原文为准、网络调用不受 guard 保护；支持范围更新至 1.3.x
+
 ## 1.2.1
 
 ### 修复
