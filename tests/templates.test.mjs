@@ -92,6 +92,43 @@ test('流程技能说明与 superpowers 的协作边界', () => {
   assert.match(skill, /fallback/);
 });
 
+test('命令入口以阶段 SKILL 为准并引用对应技能与子代理', () => {
+  const refs = {
+    req: [],
+    plan: [/brainstorming/, /writing-plans/],
+    implement: [/devflow-tdd/],
+    test: [/devflow-test-runner/],
+    debug: [/devflow-systematic-debugging/, /devflow-debug-investigator/],
+    review: [/devflow-code-review/],
+  };
+  for (const [stage, patterns] of Object.entries(refs)) {
+    const body = read(`commands/${stage}.md`);
+    assert.match(body, /以 SKILL 为准/, `${stage} 缺少“以 SKILL 为准”说明`);
+    for (const re of patterns) assert.match(body, re, `${stage} 缺少 ${re}`);
+  }
+});
+
+test('阶段技能引用对应技能与子代理', () => {
+  assert.match(read('templates/stages/implement/SKILL.md'), /devflow-tdd/);
+  assert.match(read('templates/stages/test/SKILL.md'), /devflow-test-runner/);
+  const debug = read('templates/stages/debug/SKILL.md');
+  assert.match(debug, /devflow-systematic-debugging/);
+  assert.match(debug, /devflow-debug-investigator/);
+  assert.match(read('templates/stages/review/SKILL.md'), /devflow-code-review/);
+});
+
+test('fallback 技能说明与 superpowers 的关系', () => {
+  for (const rel of [
+    'skills/devflow-tdd/SKILL.md',
+    'skills/devflow-systematic-debugging/SKILL.md',
+    'skills/devflow-code-review/SKILL.md',
+  ]) {
+    const body = read(rel);
+    assert.match(body, /## 与 superpowers 的关系/, `${rel} 缺少关系说明`);
+    assert.match(body, /fallback/, `${rel} 未说明 fallback`);
+  }
+});
+
 test('安全文档说明外部调研边界', () => {
   const security = read('SECURITY.md');
   assert.match(security, /### 外部调研/);

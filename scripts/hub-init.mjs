@@ -350,7 +350,11 @@ export async function main(argv = process.argv.slice(2)) {
   else log('ok', '.gitignore 已包含 devflow 片段');
 
   const report = await generate(['--root', root]);
-  log('ok', '初始化完成');
+  if (report.errors?.length) {
+    log('warn', `初始化完成，但生成阶段有 ${report.errors.length} 个错误，请按上方提示处理。`);
+  } else {
+    log('ok', '初始化完成');
+  }
   console.log('\n下一步：');
   console.log('  1. 编辑 .claude/hub/hub.yaml（子项目、测试命令）');
   console.log('  2. 编辑 .claude/hub/stages/*/SKILL.md（项目规范）');

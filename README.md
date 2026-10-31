@@ -246,7 +246,7 @@ upstream:
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
 | `PreToolUse(Bash)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
-| `PostToolUse(Edit/Write/MultiEdit)` | `track-changes.mjs` | 记录改动文件，标记待验证 |
+| `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash)` | `track-changes.mjs` | 记录改动文件，标记待验证 |
 | `Stop` | `check-tests.mjs` | 有改动但未验证通过时提醒，从不阻止 |
 | `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
 
@@ -259,7 +259,7 @@ upstream:
 - `curl ... | bash`、`wget ... | sh`；
 - 强推 `main` / `master` / `release/*`，以及 `git push origin +main`、`git push origin :main` 这类等价的强推/删远端分支写法；
 - `DROP DATABASE`、`TRUNCATE TABLE`；
-- Windows 下递归删除盘符根（`rd /s /q C:\`、`del /f C:\`）、`diskpart`、`cipher /w`、`vssadmin delete shadows`、`Format-Volume`；
+- Windows 下递归删除盘符根（`rd /s /q C:\`、`del /s C:\*`）、`diskpart`、`cipher /w`、`vssadmin delete shadows`、`Format-Volume`；
 - `shutdown`、`reboot`。
 
 ### 要求确认（ask）
@@ -272,7 +272,8 @@ upstream:
 - 删除远端分支（`git push origin :feature`）、`npm publish`；
 - `docker rm -f`、`docker system prune`、`kubectl delete`、`helm uninstall`；
 - 删除数据库列、回滚迁移；
-- `rm -rf <路径>`（含 `rm -fr <路径>`、`rm --recursive --force <路径>`）。
+- `rm -rf <路径>`（含 `rm -fr <路径>`、`rm --recursive --force <路径>`）；
+- Windows 下非盘符根的递归删除（`rd /s`、`del /s`、`Remove-Item -Recurse`）。
 
 hooks 自身异常时一律放行（fail-open），避免把正常操作挡死。修改 hooks 或插件后需要重启会话。
 
@@ -451,6 +452,7 @@ gh auth login --web
 - 只提交白名单文件：`templates/stages/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`。
 - 这些文件在回灌前必须干净，否则脚本拒绝执行，避免把无关改动混进 PR。
 - 工作区其他未提交改动不会进入提交，脚本会列出来。
+- 分支从 `--base`（默认 `main`）的本地分支或 `origin/<base>` 创建，不携带当前分支上的无关提交。
 - 分支名重名时自动加 `-2`、`-3` 后缀，同时检查本地与 `origin` 上的同名分支。
 - `git push` 失败时保留本地分支和提交，并切回执行前的分支，不自动删除。
 
@@ -518,7 +520,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 95 项，覆盖脚本、hooks、清单一致性、模板约定与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 107 项，覆盖脚本、hooks、清单一致性、模板约定与端到端链路。
 - 运行测试需要 Node >= 20.11；插件运行本身 Node >= 18 即可。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -555,7 +557,7 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 
 `plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.3.0`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.3.1`）
 - 包元数据：`package.json` 的 `version`
 - 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 

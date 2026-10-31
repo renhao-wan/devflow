@@ -149,6 +149,10 @@ export async function main(argv = process.argv.slice(2)) {
   const dryRun = hasFlag(argv, '--dry-run');
   const json = hasFlag(argv, '--json');
   const force = hasFlag(argv, '--force');
+  // JSON 模式下 stdout 只输出报告，过程日志走 stderr，避免把输出流混在一起。
+  const emit = json
+    ? (status, message) => process.stderr.write(`[${status}] ${message}\n`)
+    : log;
 
   const { config, file: hubFile } = loadHub(root);
   const pluginRoot = hasFlag(argv, '--no-plugin') ? null : findPluginRoot(root);
@@ -173,8 +177,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const previous = readManifest(root);
+  const erroredStages = new Set(errors.map((e) => e.stage));
   const currentNames = new Set(results.map((r) => r.name));
-  const stale = previous.skills.filter((s) => s.name && !currentNames.has(s.name));
+  const stale = previous.skills.filter((s) => s.name
+    && !currentNames.has(s.name)
+    && !erroredStages.has(s.name.replace(/^devflow-/, '')));
 
   const drift = [];
   for (const r of results) {
@@ -195,7 +202,9 @@ export async function main(argv = process.argv.slice(2)) {
     requiresPlugin: requires,
     stages: results.map((r) => ({ name: r.name, target: r.target, source: r.source })),
     drift,
-    errors: errors.map((e) => e.detail),
+    errors: errors.map((e) => e.error ?? e.detail ?? String(e)),
+    written: [],
+    skipped: [],
     check,
     dryRun,
   };
@@ -224,28 +233,33 @@ export async function main(argv = process.argv.slice(2)) {
     return report;
   }
 
+  const written = [];
+  const skipped = [];
   for (const r of results) {
     const target = safeSkillTarget(root, r.target);
     if (!target) {
       errors.push({ stage: r.stage, error: `目标路径越界，跳过：${r.target}` });
+      skipped.push(r.target);
       continue;
     }
     if (existsSync(target) && !force) {
       const managed = previous.skills.some((s) => s.name === r.name);
       if (!managed && sha256(readText(target)) !== sha256(r.content)) {
         errors.push({ stage: r.stage, error: `${r.target} 已存在且不受 devflow 管理，跳过。使用 --force 覆盖。` });
+        skipped.push(r.target);
         continue;
       }
     }
     writeAtomic(target, r.content);
-    log('ok', `写入 ${r.target}`);
+    written.push(r);
+    emit('ok', `写入 ${r.target}`);
   }
 
   for (const s of stale) {
     if (!s.target) continue;
     const target = safeSkillTarget(root, s.target);
     if (!target) {
-      log('warn', `账本中的过期目标不合法，跳过：${s.target}`);
+      emit('warn', `账本中的过期目标不合法，跳过：${s.target}`);
       continue;
     }
     if (existsSync(target)) {
@@ -255,10 +269,16 @@ export async function main(argv = process.argv.slice(2)) {
       if (siblings.length === 1 && siblings[0] === 'SKILL.md') {
         const { rmSync } = await import('node:fs');
         rmSync(dir, { recursive: true, force: true });
-        log('ok', `清理过期技能 ${s.name}`);
+        emit('ok', `清理过期技能 ${s.name}`);
       }
     }
   }
+
+  // 源文件出错的阶段可能暂时无法生成：保留账本中的旧条目，避免投影失去归属。
+  const writtenNames = new Set(written.map((r) => r.name));
+  const erroredNames = new Set(errors.map((e) => `devflow-${e.stage}`));
+  const preserved = previous.skills.filter((s) => s.name && s.target
+    && erroredNames.has(s.name) && !writtenNames.has(s.name));
 
   const manifest = {
     schemaVersion: 1,
@@ -266,18 +286,26 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion: version,
     requiresPlugin: requires,
     source: '.claude/hub',
-    skills: results.map((r) => ({
-      name: r.name,
-      target: r.target,
-      source: r.source,
-      hash: sha256(r.content),
-      resources: r.resources,
-    })),
+    skills: [
+      ...written.map((r) => ({
+        name: r.name,
+        target: r.target,
+        source: r.source,
+        hash: sha256(r.content),
+        resources: r.resources,
+      })),
+      ...preserved,
+    ],
   };
   writeAtomic(join(root, '.claude', '.hub-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  log('ok', `生成 ${results.length} 个技能 → .claude/skills/`);
-  for (const e of errors) log('error', e.error);
+  emit('ok', `生成 ${written.length} 个技能 → .claude/skills/`);
+  for (const e of errors) emit('error', e.error);
   if (errors.length) process.exitCode = 1;
+
+  report.written = written.map((r) => r.target);
+  report.skipped = skipped;
+  report.errors = errors.map((e) => e.error ?? e.detail ?? String(e));
+  if (json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   return report;
 }
 

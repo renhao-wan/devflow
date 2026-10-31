@@ -46,7 +46,7 @@
 | 阶段 | 产出 | 硬门禁 |
 | --- | --- | --- |
 | req | req.md | 验收标准非空，未知项列明 |
-| plan | plan.md | 每个改动点有验证方式 |
+| plan | plan.md | 调研结论有来源；每个改动点有验证方式 |
 | implement | 代码 | 小步，可编译，优先 TDD |
 | test | 测试证据 | 通过要有命令与输出 |
 | review | 评审结论 | 高危未修不得通过 |
@@ -101,3 +101,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 测试与示例工作区验证（`node --test` 全绿，覆盖脚本、hooks、清单一致性与端到端链路）
 - [x] 文档与版本 1.2.0
 - [x] 1.3.0：plan 方案前调研与搜索失败降级、req 技术约束、review 依赖核对、debug 已知问题检索、superpowers 边界
+- [x] 1.3.1：修复生成器账本与 `--json`、ship 基分支、track-changes 误报、Windows 递归删除拦截，统一命令与阶段技能引用

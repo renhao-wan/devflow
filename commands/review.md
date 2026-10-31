@@ -6,7 +6,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Bash(git stat
 
 执行 devflow 审查阶段：**$ARGUMENTS**
 
-1. 读取 `.claude/hub/stages/review/SKILL.md`。
+> 以下为入口摘要；与 `.claude/hub/stages/review/SKILL.md` 冲突时，以 SKILL 为准。
+
+1. 读取 `.claude/hub/stages/review/SKILL.md`；方法可用 `devflow-code-review` 技能，已安装 superpowers 时也可用其 code-review，门禁与产物仍以本阶段为准。
 2. 查看全量 diff（`git status`、`git diff`、必要时 `git diff --staged`），确认改动范围。
 3. 读取 `docs/devflow/<slug>/req.md` 与 `plan.md`，逐条对照验收标准与任务清单：每条验收标准是否有实现或测试支撑，未覆盖项是否已明确接受。结果写入 review 的「验收对照」表。
 4. 核对 `plan.md` 的「调研与复用判断」：来源是否可核对、许可证与 `req.md` 技术约束是否冲突、依赖维护状态与已知漏洞、搜索失败或未验证项是否已披露。结果写入「复用与依赖检查」表。

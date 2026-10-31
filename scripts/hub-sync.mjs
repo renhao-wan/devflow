@@ -148,7 +148,12 @@ export async function main(argv = process.argv.slice(2)) {
     }, null, 2)}\n`);
   }
 
-  if (!noGen) await generate(['--root', root]);
+  if (!noGen) {
+    const report = await generate(['--root', root]);
+    if (report.errors?.length) {
+      log('warn', `同步完成，但生成阶段有 ${report.errors.length} 个错误，请按上方提示处理。`);
+    }
+  }
 
   console.log(`\n完成：新增 ${counts.add}，更新 ${counts.update}，覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，一致 ${counts.same}。`);
   if (counts.conflict) console.log('冲突文件保留本地版本；确认覆盖时加 --force。');

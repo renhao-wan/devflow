@@ -14,15 +14,12 @@ const DENY = [
   { re: /\bgit\s+push\b[^|;]*\s\+[^\s:]*(main|master)\b/, why: '强推受保护分支' },
   { re: /\bgit\s+push\b[^|;]*\s:(main|master)\b/, why: '删除远端受保护分支' },
   { re: /\bgit\s+push\b[^|;]*\s(-f|--force)\s*$/, why: '强推（未指定分支）' },
-  { re: /\b(rd|rmdir)\s+\/s\s+\/q\s+[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
-  { re: /\bdel\s+(\/[a-z]+\s+)+[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
+  { re: /\b(Restart-Computer|Stop-Computer)\b/i, why: '关机或重启机器' },
   { re: /\bformat\s+[a-zA-Z]:/i, why: '格式化磁盘' },
   { re: /\bdiskpart\b/i, why: '磁盘分区操作' },
   { re: /\bcipher\s+\/w\b/i, why: '擦除磁盘空闲空间' },
   { re: /\bvssadmin\s+delete\s+shadows\b/i, why: '删除卷影副本' },
   { re: /\b(Format-Volume|Clear-Disk|Initialize-Disk)\b/i, why: '格式化或初始化磁盘' },
-  { re: /\bRemove-Item\b[^|;]*-Recurse[^|;]*-Force[^|;]*[a-zA-Z]:\\?\s*$/i, why: '递归删除盘符根' },
-  { re: /\b(Restart-Computer|Stop-Computer)\b/i, why: '关机或重启机器' },
   { re: />\s*\/dev\/(sd|hd|nvme)/, why: '重定向覆盖裸设备' },
 ];
 
@@ -234,6 +231,32 @@ function rmDecision(args) {
   return [];
 }
 
+const WIN_ROOT = /^[a-zA-Z]:\\?\*?$/;
+
+/** Windows 的 rd/del/Remove-Item 递归删除不在全局正则里逐条覆盖，按命令位置判断。 */
+function winDeleteDecision(cmd, args) {
+  const name = cmd.replace(/\.exe$/i, '').toLowerCase();
+  const values = args.map((t) => t.value);
+  const hasSwitch = (re) => values.some((v) => re.test(v));
+  const target = values.find((v) => !v.startsWith('/') && !v.startsWith('-'));
+  if (name === 'rd' || name === 'rmdir') {
+    if (!hasSwitch(/^\/[a-z]*s[a-z]*$/i)) return [];
+    if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
+    return [{ decision: 'ask', why: '递归删除目录，可能丢数据' }];
+  }
+  if (name === 'del' || name === 'erase') {
+    if (!hasSwitch(/^\/[a-z]*s[a-z]*$/i)) return [];
+    if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
+    return [{ decision: 'ask', why: '递归删除文件，可能丢数据' }];
+  }
+  if (name === 'remove-item' || name === 'ri') {
+    if (!hasSwitch(/^(?:-recurse|\/recurse)$/i)) return [];
+    if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
+    return [{ decision: 'ask', why: '递归删除文件或目录，可能丢数据' }];
+  }
+  return [];
+}
+
 function xargsDecision(args) {
   const target = args.find((t) => !t.value.startsWith('-'));
   if (target && baseName(target.value) === 'rm') {
@@ -252,19 +275,26 @@ function findDecision(args) {
   return [];
 }
 
+function commandAfter(tokens, i) {
+  const rest = tokens.slice(i + 1);
+  if (!rest.length) return null;
+  // 单个 token 可能是整段带引号的脚本，原样返回；多个 token 说明是未加引号的命令，拼回去再递归检查。
+  return rest.length === 1 ? rest[0].value : rest.map((t) => t.value).join(' ');
+}
+
 function nestedCommand(tokens) {
   const cmd = baseName(tokens[0].value);
   if (SHELLS.has(cmd)) {
     for (let i = 1; i < tokens.length; i += 1) {
       if (['-c', '-Command', '-command', '/c'].includes(tokens[i].value)) {
-        return tokens[i + 1]?.value ?? null;
+        return commandAfter(tokens, i);
       }
     }
     return null;
   }
   if (cmd === 'cmd') {
     const i = tokens.findIndex((t, idx) => idx > 0 && /^\/c$/i.test(t.value));
-    return i >= 0 ? tokens[i + 1]?.value ?? null : null;
+    return i >= 0 ? commandAfter(tokens, i) : null;
   }
   if (cmd === 'eval') return tokens.slice(1).map((t) => t.value).join(' ');
   return null;
@@ -295,9 +325,16 @@ function evaluate(command, depth = 0) {
     if (HALT_COMMANDS.has(cmd)) findings.push({ decision: 'deny', why: '关机或重启机器' });
     else if (cmd === 'systemctl' && group.slice(1).some((t) => /^(reboot|poweroff|halt)$/.test(t.value))) {
       findings.push({ decision: 'deny', why: '关机或重启机器' });
-    } else if (cmd === 'rm') findings.push(...rmDecision(group.slice(1)));
-    else if (cmd === 'xargs') findings.push(...xargsDecision(group.slice(1)));
-    else if (cmd === 'find') findings.push(...findDecision(group.slice(1)));
+    } else if (cmd === 'rm') {
+      findings.push(...rmDecision(group.slice(1)));
+    } else if (['rd', 'rmdir', 'del', 'erase', 'remove-item', 'ri']
+      .includes(cmd.replace(/\.exe$/i, '').toLowerCase())) {
+      findings.push(...winDeleteDecision(cmd, group.slice(1)));
+    } else if (cmd === 'xargs') {
+      findings.push(...xargsDecision(group.slice(1)));
+    } else if (cmd === 'find') {
+      findings.push(...findDecision(group.slice(1)));
+    }
     const inner = nestedCommand(group);
     if (inner) findings.push(...evaluate(inner, depth + 1));
   }

@@ -6,6 +6,8 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash(ls:*), Bash(git status:*), Ba
 
 对以下诉求执行 devflow 需求阶段：**$ARGUMENTS**
 
+> 以下为入口摘要；与 `.claude/hub/stages/req/SKILL.md` 冲突时，以 SKILL 为准。
+
 1. 读取 `.claude/hub/stages/req/SKILL.md`；文件不存在时提示先运行 `/devflow:init`，然后停止。
 2. 读取 `.claude/hub/hub.yaml` 了解子项目与阶段划分。
 3. 按 SKILL 中的执行步骤工作：

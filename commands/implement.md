@@ -6,10 +6,12 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash(git status:*), Bash(git diff:
 
 执行 devflow 实现阶段：**$ARGUMENTS**
 
+> 以下为入口摘要；与 `.claude/hub/stages/implement/SKILL.md` 冲突时，以 SKILL 为准。
+
 1. 读取 `.claude/hub/stages/implement/SKILL.md`；不存在时提示先运行 `/devflow:init`。
 2. 完整读取 `docs/devflow/<slug>/plan.md` 与 `req.md`。计划缺失时先回到 `/devflow:plan`。
 3. 按任务顺序推进，一次一个任务：
-   - 能写测试的，先写失败测试并确认失败原因，再写最小实现。
+   - 能写测试的，先写失败测试并确认失败原因，再写最小实现；方法可用 `devflow-tdd` 技能，已安装 superpowers 时也可用其 TDD 技能，门禁仍以本阶段为准。
    - 不夹带无关改动，不顺手重构。
 4. 每个任务完成后运行该子项目的测试命令（`hub.yaml` 中的 `testCommand`，否则 `defaults.testCommand`）。
 5. 计划与实际偏离时，先更新 `plan.md` 再继续。

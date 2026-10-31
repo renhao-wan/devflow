@@ -33,6 +33,7 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'req', 'SKILL.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'references', 'severity.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'templates', 'review.template.md')));
+    assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'prior-art-research.md')));
     assert.ok(existsSync(join(root, '.devflow.json')));
     for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs']) {
       assert.ok(existsSync(join(root, 'scripts', file)), `缺少 loader ${file}`);
@@ -50,6 +51,8 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.equal(manifest.skills.length, 6);
     const reviewEntry = manifest.skills.find((s) => s.name === 'devflow-review');
     assert.deepEqual(reviewEntry.resources, ['references/severity.md', 'templates/review.template.md']);
+    const planEntry = manifest.skills.find((s) => s.name === 'devflow-plan');
+    assert.ok(planEntry.resources.includes('references/prior-art-research.md'));
 
     const reviewProjection = readFileSync(join(root, '.claude', 'skills', 'devflow-review', 'SKILL.md'), 'utf8');
     assert.match(reviewProjection, /## 阶段资源/);
@@ -118,6 +121,65 @@ test('子项目测试命令可从根执行，并识别包管理器', () => {
     assert.equal(config.defaults.testCommand, 'pnpm run test');
     assert.deepEqual(Object.keys(config.subprojects), ['api', 'worker']);
     assert.match(init.stdout, /services\/worker/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gen 跳过不受管理的同名投影，不接管也不覆盖', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const manifestFile = join(root, '.claude', '.hub-manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.skills = manifest.skills.filter((s) => s.name !== 'devflow-req');
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+    const target = join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md');
+    writeFileSync(target, '手写内容\n');
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1, gen.stderr + gen.stdout);
+    assert.match(gen.stdout + gen.stderr, /不受 devflow 管理/);
+    assert.equal(readFileSync(target, 'utf8'), '手写内容\n');
+    const after = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    assert.equal(after.skills.some((s) => s.name === 'devflow-req'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('源文件缺失时保留旧投影与账本条目', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const source = join(root, '.claude', 'hub', 'stages', 'test', 'SKILL.md');
+    const projection = join(root, '.claude', 'skills', 'devflow-test', 'SKILL.md');
+    const before = readFileSync(projection, 'utf8');
+    rmSync(source);
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1);
+    assert.match(gen.stdout + gen.stderr, /缺少源文件/);
+    assert.equal(existsSync(projection), true);
+    assert.equal(readFileSync(projection, 'utf8'), before);
+    const manifest = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    assert.ok(manifest.skills.some((s) => s.name === 'devflow-test'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gen --json 普通执行时 stdout 只输出可解析的 JSON', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const gen = run('gen-claude-skills.mjs', ['--root', root, '--json'], root);
+    assert.equal(gen.status, 0, gen.stderr);
+    const report = JSON.parse(gen.stdout);
+    assert.equal(report.written.length, 6);
+    assert.equal(report.errors.length, 0);
+    assert.doesNotMatch(gen.stdout, /\[OK\]/);
+    assert.match(gen.stderr, /\[ok\]/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

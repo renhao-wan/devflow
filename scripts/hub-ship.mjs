@@ -23,6 +23,11 @@ function isWhitelisted(path) {
   return WHITELIST.some((match) => match(p));
 }
 
+/** 日志里去掉 URL 中可能存在的用户名/token。 */
+function redactUrl(url) {
+  return String(url).replace(/\/\/([^/@]+)@/, '//***@');
+}
+
 function git(cwd, args, extra = []) {
   return spawnSync('git', [...args, ...extra], { cwd, encoding: 'utf8' });
 }
@@ -192,6 +197,13 @@ export async function main(argv = process.argv.slice(2)) {
     );
   }
 
+  // 先确认基分支存在，避免回灌写入后才发现无法建分支，留下脏工作区。
+  const baseRef = [base, `origin/${base}`].find((ref) =>
+    git(pluginRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).status === 0);
+  if (!baseRef) {
+    throw new Error(`找不到 --base ${base} 的本地或 origin 分支；请先 fetch，或改用正确的基础分支。`);
+  }
+
   const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--apply', '--bump', kind]);
   if (!result.pending) {
     console.log('没有可回灌的变化，未创建分支。');
@@ -225,7 +237,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (!toAdd.length) throw new Error('没有可提交的改动');
 
   const originalBranch = gitOut(pluginRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  gitOut(pluginRoot, ['checkout', '-b', branch]);
+  gitOut(pluginRoot, ['checkout', '-b', branch, baseRef]);
   for (const path of toAdd) gitOut(pluginRoot, ['add', '--', path]);
 
   const projectName = basename(root);
@@ -257,7 +269,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (noPr || !ghRepo) {
-    if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${remoteUrl}`);
+    if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactUrl(remoteUrl)}`);
     return { stage, branch, applied: true, version: newVersion, prUrl: null };
   }
 

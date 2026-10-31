@@ -6,7 +6,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Bash(*)
 
 执行 devflow 排障阶段：**$ARGUMENTS**
 
-1. 读取 `.claude/hub/stages/debug/SKILL.md`。
+> 以下为入口摘要；与 `.claude/hub/stages/debug/SKILL.md` 冲突时，以 SKILL 为准。
+
+1. 读取 `.claude/hub/stages/debug/SKILL.md`；方法可用 `devflow-systematic-debugging` 技能，需要并行验证假设时用 `devflow-debug-investigator` 子代理。
 2. 先复现：拿到最小、稳定、可重复的命令或步骤。不能复现时说明缺什么，不要盲改。
 3. 收集证据：完整错误、日志、相关输入、最近改动。
 4. 需要时检索已知问题：用完整错误、错误码、依赖版本查官方 issue、变更日志与社区讨论；外部结论只作线索，必须本地复现验证。搜索失败时记录未验证项与盲区，不得把“没搜到”写成“没有已知问题”。

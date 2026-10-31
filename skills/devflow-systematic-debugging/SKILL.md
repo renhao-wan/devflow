@@ -34,6 +34,11 @@ description: Use when something fails, errors, or behaves unexpectedly. Enforces
 
 修复后写清四件事：现象、根因、修复、验证方式。根因不确定时明确写“未确认根因，仅规避”，并列出剩余风险。
 
+## 与 superpowers 的关系
+
+- 已安装 superpowers 时，排障技法可优先用其 `systematic-debugging`；本技能是未安装时的 fallback。
+- 阶段顺序、产物路径与门禁以 devflow 为准；外部或 superpowers 的结论仍须本地复现验证。
+
 ## 与 devflow 阶段配合
 
 - 在 debug 阶段使用；修复后回到 test 验证，再到 review。

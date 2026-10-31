@@ -184,9 +184,17 @@ export async function main(argv = process.argv.slice(2)) {
   updateVersionFiles(pluginRoot, nextVersion);
 
   const changelog = join(pluginRoot, 'CHANGELOG.md');
-  const old = existsSync(changelog) ? readText(changelog) : '# Changelog\n';
+  const old = existsSync(changelog) ? readText(changelog) : '';
   const block = `\n## ${nextVersion}\n\n- 从项目回灌 ${stage} 阶段模板（${pending.map((f) => f.name).join('、')}）\n`;
-  const updated = old.replace(/^# Changelog\n?/, `# Changelog\n${block}`);
+  // 标题缺失时补上再插入，避免 replace 不匹配导致版本条目被静默丢弃。
+  const withTitle = /^# Changelog\b/m.test(old) ? old : `# Changelog\n${old}`;
+  const heading = /^# Changelog[^\n]*\n?/m.exec(withTitle);
+  const versionRe = new RegExp(`^##\\s+${nextVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm');
+  const updated = versionRe.test(withTitle)
+    ? withTitle
+    : heading
+      ? `${withTitle.slice(0, heading.index + heading[0].length)}${block}${withTitle.slice(heading.index + heading[0].length)}`
+      : `${withTitle}${block}`;
   writeAtomic(changelog, updated);
 
   log('ok', `已回灌 ${pending.length} 个文件，插件版本 ${info.version} → ${nextVersion}`);

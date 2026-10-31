@@ -67,6 +67,26 @@ test('guard 覆盖 Windows 磁盘与影子副本操作', () => {
   }
 });
 
+test('guard 按命令位置覆盖 Windows 递归删除', () => {
+  for (const command of [
+    'rd /s /q C:\\',
+    'rmdir /s /q D:\\*',
+    'del /s /q C:\\*',
+    'Remove-Item -Recurse -Force C:\\',
+    'cmd /c rd /s /q C:\\',
+  ]) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  for (const command of ['rd /s /q D:\\data', 'del /s /q build', 'Remove-Item -Recurse -Force .\\build']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+  }
+  for (const command of ['echo del /s /q C:\\*', 'grep -rn "rd /s /q" docs']) {
+    assert.equal(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout, '', command);
+  }
+});
+
 test('guard 对 Git 历史重写要求确认', () => {
   const cases = [
     'git update-ref -d refs/heads/feature',
@@ -251,6 +271,69 @@ test('track-changes 通过 git status 记录 Bash 间接改动', (t) => {
       tool_input: { command: 'sed -i s/x/y/ src/a.js' },
     }, { CLAUDE_PROJECT_DIR: root });
     assert.equal(r.status, 0, r.stderr);
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.ok(state.changedFiles.includes('src/a.js'), JSON.stringify(state.changedFiles));
+    assert.equal(state.testsPending, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 不把 Bash 前就存在的脏文件算成本次改动', (t) => {
+  if (spawnSync('git', ['--version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('git 不可用');
+    return;
+  }
+  const root = makeRoot();
+  try {
+    if (spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' }).status !== 0) {
+      t.skip('git init 失败');
+      return;
+    }
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'a.js'), 'x');
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: [],
+      lastTrackAt: '2999-01-01T00:00:00.000Z',
+      testsPending: false,
+    }));
+    runHook('track-changes.mjs', {
+      tool_name: 'Bash',
+      tool_input: { command: 'git status' },
+    }, { CLAUDE_PROJECT_DIR: root });
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.deepEqual(state.changedFiles, []);
+    assert.equal(state.testsPending, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 记录 Bash 删除的文件', (t) => {
+  if (spawnSync('git', ['--version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('git 不可用');
+    return;
+  }
+  const root = makeRoot();
+  try {
+    if (spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' }).status !== 0) {
+      t.skip('git init 失败');
+      return;
+    }
+    mkdirSync(join(root, 'src'), { recursive: true });
+    const file = join(root, 'src', 'a.js');
+    writeFileSync(file, 'x');
+    spawnSync('git', ['add', 'src/a.js'], { cwd: root, encoding: 'utf8' });
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: [],
+      lastTrackAt: '2000-01-01T00:00:00.000Z',
+      testsPending: false,
+    }));
+    rmSync(file);
+    runHook('track-changes.mjs', {
+      tool_name: 'Bash',
+      tool_input: { command: 'rm src/a.js' },
+    }, { CLAUDE_PROJECT_DIR: root });
     const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
     assert.ok(state.changedFiles.includes('src/a.js'), JSON.stringify(state.changedFiles));
     assert.equal(state.testsPending, true);

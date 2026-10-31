@@ -6,8 +6,10 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash(*)
 
 执行 devflow 测试阶段：**$ARGUMENTS**
 
+> 以下为入口摘要；与 `.claude/hub/stages/test/SKILL.md` 冲突时，以 SKILL 为准。
+
 1. 读取 `.claude/hub/stages/test/SKILL.md` 与 `.claude/hub/hub.yaml`，确定测试命令（子项目优先，其次默认）。
-2. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）。
+2. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）；可用 `devflow-test-runner` 子代理执行并汇总，但报告需自己核对。
 3. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。
 4. 测试失败时不要改断言迁就实现，转入 `/devflow:debug`。
 5. 全部通过后运行：

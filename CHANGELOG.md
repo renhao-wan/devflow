@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.1
+
+### 修复
+
+- 生成器只把实际写入的投影记入账本；源文件出错时保留旧账本条目，过期清理跳过出错阶段，避免投影失去归属后被误删
+- 非受管投影内容与生成结果一致时正常采用；内容不同时跳过并提示 `--force`，不再静默覆盖或写入账本
+- `--json` 普通执行时 stdout 只输出报告，过程日志改走 stderr，便于脚本解析
+- `init` / `sync` 在生成阶段出错时明确提示错误数量，不再把失败包装成“初始化/同步完成”
+- `ship` 从 `--base`（本地或 `origin/<base>`）创建分支，避免把当前分支的无关提交带进 PR；远端 URL 日志做脱敏
+- `track-changes` 用修改时间筛选 Bash 后的 `git status`，已有脏文件或只读命令不再误触发“测试待验证”
+- `guard-dangerous` 覆盖 Windows 非根递归删除（`rd /s`、`del /s`、`Remove-Item -Recurse`），按命令位置判断避免误伤 `echo` / `grep` 文本；盘符根仍直接拒绝
+- `hub-upstream` 在 CHANGELOG 标题缺失时补标题再插入；已有同版本条目时不重复写入
+
+### 文档
+
+- 命令入口标注“以下为入口摘要，与阶段 SKILL 冲突时以 SKILL 为准”，并补齐 TDD、测试执行、系统排障、代码审查技能与子代理引用
+- plan 阶段明确吸收 superpowers 的 `brainstorming` / `writing-plans` 结论，不并存两份设计或计划
+- 三个 fallback 技能补充与 superpowers 的关系说明
+- README 更新 hooks 事件、Windows 递归删除的 deny/ask 说明与版本号
+
 ## 1.3.0
 
 ### 增强
@@ -10,7 +30,7 @@
 - req 新增“技术约束”：是否允许新增依赖、许可证政策、运行时/版本下限、离线或私有部署、数据驻留、必须兼容接口；产出模板新增 `## 技术约束`
 - review 新增“复用与依赖检查”：核对 plan 的复用判断来源、许可证与约束一致性、维护状态与已知漏洞、搜索失败披露；`review-checklist` 新增对应清单
 - debug 新增可选的“查已知问题”：用完整错误、错误码与依赖版本检索官方 issue 与变更日志；外部结论只作线索，须本地复现验证
-- `commands/plan|review|debug` 的 `allowed-tools` 补充 `WebSearch`、`WebFetch`、`Bash(gh:*)`；`devflow-code-reviewer`、`devflow-debug-investigator` 子代理同步获得检索能力
+- `commands/plan|review|debug` 的 `allowed-tools` 补充 `WebSearch`、`WebFetch`；plan 额外补充 `Bash(gh:*)`；`devflow-code-reviewer`、`devflow-debug-investigator` 子代理同步获得检索能力
 - `devflow-engineering-flow` 新增“与 superpowers 的协作边界”：devflow 管阶段与门禁，superpowers 管执行技法，冲突以 devflow 为准，已有计划吸收进 `plan.md`
 
 ### 文档

@@ -47,6 +47,11 @@ description: Use when reviewing a diff, a pull request, or freshly written code 
 
 自己的代码自己审容易漏。需要第二视角时，用 `devflow-code-reviewer` 子代理，但子代理的结论必须自己核实后再采纳。
 
+## 与 superpowers 的关系
+
+- 已安装 superpowers 时，审查技法可优先用其 `code-review`；本技能是未安装时的 fallback。
+- 阶段门禁、问题分级与产物路径以 devflow 为准；两者结论冲突时以 devflow 为准。
+
 ## 边界
 
 - 不在审查阶段做大规模重构；发现问题交回实现阶段。
