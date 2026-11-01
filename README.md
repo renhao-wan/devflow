@@ -75,24 +75,33 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 ```
 req.md      # 目标、验收标准、边界、影响面
 plan.md     # 方案、任务拆分、测试策略、回滚
+brief.md    # 轻量功能：目标、验收标准、改动范围与测试计划（req --light）
 test.md     # 命令、结果、覆盖、未覆盖项
 review.md   # 阻断项、建议项、测试缺口、结论
-debug.md    # 现象、根因、修复、验证（进入 debug 时）
+debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一份）
 ```
 
-小改动可以合并阶段（如 `req + plan`），但**不能跳门禁**：没有验收标准不实现，没有测试结果不审查。
+流程按风险缩放，小功能与小 bug 走不同入口：
+
+| 类型 | 入口 | 产物 | 何时结束 |
+| --- | --- | --- | --- |
+| 完整任务 | `/devflow:req <需求>` | `req.md → plan.md → test.md → review.md` | review 无阻断项 |
+| 小功能 | `/devflow:req --light <需求>` | `brief.md → test.md → review.md` | review 无阻断项 |
+| 小 bug | `/devflow:debug <问题>` | `debug.md → test.md` | 普通测试通过即结束；`review: required` 时补 review |
+
+轻量只减少文档，不减测试与审查。命中依赖、公共接口、数据迁移、安全、不可逆操作，或非测试改动超过 200 行 / 10 个文件 / 2 个子项目时，必须升级完整流程并写 `## 升级判断`。
 
 ## 命令
 
 | 命令 | 作用 |
 | --- | --- |
 | `/devflow:init [--force] [--source-root <插件源码仓库>]` | 初始化工作区 hub，探测子项目与测试命令 |
-| `/devflow:req <需求>` | 需求澄清，产出 `req.md` |
+| `/devflow:req <需求> [--light]` | 需求澄清，产出 `req.md`；`--light` 时合并为 `brief.md` |
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
-| `/devflow:implement <slug>` | 按计划小步实现，测试先行 |
+| `/devflow:implement <slug>` | 按计划或 `brief.md` 小步实现，测试先行 |
 | `/devflow:test <slug>` | 运行与补充测试，记录真实结果 |
 | `/devflow:review <slug>` | 差异导向审查，输出阻断项与建议项 |
-| `/devflow:debug <问题>` | 系统化排障，先复现后修复 |
+| `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
 | `/devflow:upstream --stage <stage> [--apply] [--bump patch\|minor\|major]` | 把项目经验回灌到插件模板 |
@@ -101,7 +110,7 @@ debug.md    # 现象、根因、修复、验证（进入 debug 时）
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
-已产出的阶段文件就是进度记录：`req.md → plan.md → test.md → review.md`。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
+已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
 插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
 
@@ -124,12 +133,19 @@ devflow ship --stage review --dry-run
 | --- | --- | --- |
 | req | 把模糊诉求变成可验证需求 | 验收标准可观察；写明本次不做；影响面具体 |
 | plan | 调研已有实现，给出方案、任务拆分、测试策略与回滚 | 引用真实文件；任务可独立验证；复用结论有来源；有回滚 |
-| implement | 按计划小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步 |
+| implement | 按计划或 `brief.md` 小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步 |
 | test | 真实运行测试并记录证据 | 全量已跑；改动有直接覆盖；未运行不得写通过 |
 | review | 按风险审查差异 | 无未处理阻断项；敏感信息扫描通过 |
 | debug | 复现、定位根因、补回归测试 | 有复现；根因有证据；回归测试修复前失败 |
 
 每个阶段的完整规则在 `.claude/hub/stages/<stage>/SKILL.md`，执行前必须完整读取。
+
+### 轻量流程
+
+- 小功能走 `req --light`：`brief.md` 合并需求与计划，仍要写测试计划、运行测试、完成 review。
+- 小 bug 走 `debug`：正确行为已由代码、测试或需求定义时，直接修复并写 `debug.md`；普通 bug 测试通过即结束，涉及安全、数据、公共接口、迁移或依赖时在 `debug.md` 顶部写 `review: required`，测试通过后再补 review。
+- 升级条件：新增依赖、公共接口/数据结构/迁移、安全边界、不可逆操作，或非测试改动 >200 行 / >10 文件 / >2 子项目。80–200 行或 5–10 个文件先询问一次。
+- 升级时保留 `brief.md` / `debug.md` 作为审计材料，在文件内写 `## 升级判断`，再补 `req.md` / `plan.md`。
 
 ## 方案调研与搜索失败处理
 
@@ -583,7 +599,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 180 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 195 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

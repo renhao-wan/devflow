@@ -43,7 +43,7 @@
 
 ### 5. 可验证的内部质量
 
-- 180 项 `node:test` 测试；
+- 195 项 `node:test` 测试；
 - 覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与端到端链路；
 - `claude plugin validate . --strict` 通过。
 
@@ -69,7 +69,7 @@
 
 ## 不适合谁
 
-- **只想“把需求变成代码”的人**：Spec Kit、BMAD、Spec Workflow 的启动成本更低。
+- **只想“把需求变成代码”的人**：Spec Kit、BMAD、Spec Workflow 的启动成本更低；devflow 的 `--light` 与 `debug` 轻量路径缓解了这个问题，但仍保留测试与审查门禁。
 - **不做流程定制、只用一个项目的人**：`hub + 投影 + 回灌` 的复杂度换不来等量收益。
 - **需要全自动编排、状态机或 dashboard 的人**：cc-spec-driven 或 Spec Workflow 更合适。
 - **希望零维护的人**：阶段规则、slug 与测试命令仍需要人工确认。

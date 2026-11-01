@@ -197,3 +197,89 @@ test('路由模块与 CLI 随插件发布', () => {
   assert.ok(existsSync(join(ROOT, 'scripts', 'hub-route.mjs')));
 });
 
+test('轻量功能凭 brief 模板记录目标、验收与升级判断', () => {
+  const rel = 'templates/stages/req/templates/brief.template.md';
+  assert.ok(existsSync(join(ROOT, ...rel.split('/'))), '缺少 brief 模板');
+  const tpl = read(rel);
+  assert.match(tpl, /mode: light/);
+  assert.match(tpl, /## 目标/);
+  assert.match(tpl, /## 验收标准/);
+  assert.match(tpl, /## 本次不做/);
+  assert.match(tpl, /## 改动范围与测试计划/);
+  assert.match(tpl, /## 约束与依赖/);
+  assert.match(tpl, /## 回滚/);
+  assert.match(tpl, /## 升级判断/);
+  assert.match(tpl, /## 实施记录/);
+});
+
+test('req 阶段说明轻量模式与硬触发升级', () => {
+  const skill = read('templates/stages/req/SKILL.md');
+  assert.match(skill, /轻量模式/);
+  assert.match(skill, /--light/);
+  assert.match(skill, /brief\.md/);
+  assert.match(skill, /硬触发/);
+  assert.match(skill, /200 行/);
+  assert.match(skill, /10 个文件/);
+  assert.match(skill, /新增依赖/);
+  const entry = read('skills/req/SKILL.md');
+  assert.match(entry.split('---')[1] || '', /--light/);
+  assert.match(entry, /brief\.md/);
+});
+
+test('debug 阶段支持独立小 bug 与风险标记', () => {
+  const skill = read('templates/stages/debug/SKILL.md');
+  assert.match(skill, /独立小 bug/);
+  assert.match(skill, /debug\.md/);
+  assert.match(skill, /review: required/);
+  assert.match(skill, /硬触发/);
+  const tpl = read('templates/stages/debug/templates/debug-report.template.md');
+  assert.match(tpl, /## 正确行为依据/);
+  assert.match(tpl, /## 改动范围/);
+  assert.match(tpl, /## 回归测试/);
+  assert.match(tpl, /修复前/);
+  assert.match(tpl, /修复后/);
+  assert.match(tpl, /## 升级判断/);
+  assert.match(tpl, /review: required/);
+});
+
+test('轻量任务能被实现、测试与审查阶段消费', () => {
+  const implement = read('templates/stages/implement/SKILL.md');
+  assert.match(implement, /brief\.md/);
+  assert.match(implement, /实施记录/);
+  assert.match(implement, /硬触发/);
+
+  const test = read('templates/stages/test/SKILL.md');
+  assert.match(test, /debug\.md/);
+  assert.match(test, /回归测试/);
+  assert.match(test, /修复前失败/);
+
+  const review = read('templates/stages/review/SKILL.md');
+  assert.match(review, /brief\.md/);
+  assert.match(review, /debug\.md/);
+  assert.match(review, /升级判断/);
+  assert.match(read('skills/test/SKILL.md'), /review: required/);
+  assert.match(read('skills/implement/SKILL.md'), /brief\.md/);
+  assert.match(read('skills/plan/SKILL.md'), /brief\.md/);
+});
+
+test('review 模板支持轻量验收来源与升级判断核对', () => {
+  const tpl = read('templates/stages/review/templates/review.template.md');
+  assert.match(tpl, /## 范围与模式/);
+  assert.match(tpl, /轻量功能/);
+  assert.match(tpl, /轻量修复/);
+  assert.match(tpl, /验收来源/);
+  assert.match(tpl, /## 升级判断核对/);
+  assert.match(tpl, /硬触发/);
+});
+
+test('流程技能说明轻量双通道且不跳测试与审查', () => {
+  const skill = read('skills/devflow-engineering-flow/SKILL.md');
+  assert.match(skill, /轻量功能/);
+  assert.match(skill, /轻量修复/);
+  assert.match(skill, /req --light/);
+  assert.match(skill, /不能跳门禁/);
+  assert.match(skill, /## 轻量流程的升级条件/);
+  assert.match(skill, /review: required/);
+  assert.match(read('skills/status/SKILL.md'), /轻量功能/);
+});
+

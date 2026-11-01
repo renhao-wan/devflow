@@ -45,12 +45,14 @@
 
 | 阶段 | 产出 | 硬门禁 |
 | --- | --- | --- |
-| req | req.md | 验收标准非空，未知项列明 |
+| req | req.md / brief.md | 验收标准非空，未知项列明 |
 | plan | plan.md | 调研结论有来源；每个改动点有验证方式 |
 | implement | 代码 | 小步，可编译，优先 TDD |
 | test | 测试证据 | 通过要有命令与输出 |
 | review | 评审结论 | 高危未修不得通过 |
 | debug | 根因与回归 | 无复现不下结论 |
+
+小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都保留测试与审查门禁，只压缩文档。命中依赖、公共接口、迁移、安全、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
 
 ## hooks
 
@@ -66,7 +68,7 @@
 
 ## 进度与命令衔接
 
-阶段产物 `docs/devflow/<slug>/{req,plan,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
+阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
 
 - `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。

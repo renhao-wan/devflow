@@ -15,9 +15,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Skill, Bash(*)
    - `suggest`：说明候选工具与理由并询问；用户未同意时继续 devflow。
    - `delegate`：在技能上下文中用 `Skill` 工具调用 `invoke`（去掉前导 `/`，如 `superpowers:brainstorming`）；无法调用时说明原因并询问是否继续 devflow。阶段顺序、门禁与 `docs/devflow/<slug>/` 产物仍由本阶段负责。
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
-2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替。
+2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替。若目录有 `req.md` 却缺 `plan.md`，返回 `/devflow:plan`，不要用 `brief.md` 冒充计划。
 3. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）；可用 `devflow-test-runner` 子代理执行并汇总，但报告需自己核对。
-4. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。
+4. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。轻量修复的回归测试须与 `debug.md` 记录的「命令 / 修复前失败输出 / 修复后通过输出」一致。
 5. 测试失败时不要改断言迁就实现，转入 `/devflow:debug`。
 6. 全部通过后运行：
 
@@ -28,3 +28,5 @@ node scripts/devflow-test.mjs --command "<实际使用的命令>"
 7. 将结果写入 `docs/devflow/<slug>/test.md`，包括：命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
 8. 报告时区分「自动化已通过」「手动验证过」「未验证」，不得混写。
 9. 全部通过后进入审查阶段：`/devflow:review <slug>`；测试失败按第 5 步转入 `/devflow:debug`。
+   - 轻量修复（`debug.md` 顶部前 10 行没有 `review: required`）测试通过即完成，不进入 review；有标记时必须进入 review。
+   - 轻量功能与完整任务始终进入 review。

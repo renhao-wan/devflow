@@ -16,7 +16,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, Bash(g
    - `delegate`：在技能上下文中用 `Skill` 工具调用 `invoke`（去掉前导 `/`，如 `superpowers:brainstorming`）；无法调用时说明原因并询问是否继续 devflow。阶段顺序、门禁与 `docs/devflow/<slug>/` 产物仍由本阶段负责。
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
 2. 未提供 slug 时，扫描 `docs/devflow/*/req.md`：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替。
-3. 找到并完整读取 `docs/devflow/<slug>/req.md`。缺失或门禁未过时，先回到 `/devflow:req`，不要凭空设计方案。
+3. 找到并完整读取 `docs/devflow/<slug>/req.md`。缺失时：若目录只有 `brief.md`，说明这是轻量功能，提示直接 `/devflow:implement <slug>`；若要完整方案，先升级 `/devflow:req <slug>` 产出 `req.md`。门禁未过时先回到 `/devflow:req`，不要凭空设计方案。
 4. 阅读相关代码，确认真实入口、数据结构与依赖。
 5. 按改动规模分级，决定方案深度；新增依赖、新子系统或架构性选择必须调研已有实现：
    - 用外部社区会用的词检索 GitHub、官方文档与开源项目；
