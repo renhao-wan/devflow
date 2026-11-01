@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256 } from '../scripts/lib/common.mjs';
+import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256, argValue } from '../scripts/lib/common.mjs';
 
 test('parseYaml 解析嵌套 map、块列表与行内列表', () => {
   const config = parseYaml(`
@@ -75,6 +75,13 @@ test('bumpPatch 与 sha256 稳定', () => {
   assert.equal(bumpPatch('1.2.9'), '1.2.10');
   assert.equal(sha256('a'), sha256('a'));
   assert.notEqual(sha256('a'), sha256('b'));
+});
+
+test('argValue 不把后续开关当成参数值', () => {
+  assert.equal(argValue(['--slug', 'add-login'], '--slug', 'fallback'), 'add-login');
+  assert.equal(argValue(['--slug', '--json'], '--slug', 'fallback'), 'fallback');
+  assert.equal(argValue(['--json', '--slug'], '--slug', 'fallback'), 'fallback');
+  assert.equal(argValue(['--json'], '--slug', 'fallback'), 'fallback');
 });
 
 test('parseYaml 行内注释不误伤引号内 # 与词内 #', () => {

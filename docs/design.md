@@ -52,7 +52,7 @@
 | review | 评审结论 | 高危未修不得通过 |
 | debug | 根因与回归 | 无复现不下结论 |
 
-小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中依赖、公共接口、迁移、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
+小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中依赖、公共接口、迁移、权限/认证/支付/并发/安全边界、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
 
 ## hooks
 
@@ -112,7 +112,7 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - 默认 `mode: ask`；`off` 关闭路由；`forceDevflowStages` 与 `--force-devflow` 提供强制出口。
 - 决策优先级：强制 devflow > `--tool <id>` > `mode: off` > 强制阶段 > 自动匹配。
 
-检测是启发式的，只检查技能目录与 `settings.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具、不在状态里记录绝对路径；`enabled: false` 的工具不参与检测。状态缺失或过期时，`devflow route --stage` 会自动检测一次（`--list` 保持只读）。配置缺失、解析失败或检测结果缺失时回退 devflow，不阻塞开发；只有显式指定的工具不可用时才报错。
+检测是启发式的，只检查技能目录与项目/用户 `settings.json`、`settings.local.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具、不在状态里记录绝对路径；`enabled: false` 的工具不参与检测。状态缺失或过期时，`devflow route --stage` 会自动检测一次（`--list` 保持只读）。配置缺失、解析失败或检测结果缺失时回退 devflow，不阻塞开发；只有显式指定的工具不可用时才报错。
 
 路由命令：`devflow route --stage <stage> [--tool <id>] [--force-devflow] [--json]`，以及 `--detect` / `--list`。阶段入口技能在执行前自动调用；`init` 创建配置并首次检测，`doctor` 校验配置与检测时效，`status` 展示当前模式与可用工具。详见 `docs/tool-routing.md`。
 
@@ -132,4 +132,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新
 - [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
-- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）
+- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）、轻量功能与小 bug 双通道（`brief.md` / `debug.md`）

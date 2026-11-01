@@ -70,7 +70,7 @@ tools:
 | `tools.<id>.stages` | 该工具适用的 devflow 阶段 |
 | `tools.<id>.invoke` | 调用入口；支持 `{capability}` 与 `{stage}` 占位符 |
 | `tools.<id>.detectSkills` | 用于检测的技能目录名 |
-| `tools.<id>.detectPlugins` | 用于检测的插件键（`settings.json` 的 `enabledPlugins`） |
+| `tools.<id>.detectPlugins` | 用于检测的插件键（`settings.json` / `settings.local.json` 的 `enabledPlugins`） |
 
 省略 `tools` 时使用内置目录（superpowers、BMAD、GitHub Spec Kit、OpenSpec、cc-spec-driven、Claude Code Spec Workflow、ucai）。只写部分工具时，未列出的工具不会参与路由。`tools: {}` 表示不启用任何工具；块形式的空 `tools:` 与省略等价，会回填内置目录。
 
@@ -87,7 +87,7 @@ tools:
     stages: [req, plan]
     invoke: /my-workflow
     detectSkills: [my-workflow]   # 项目或用户 .claude/skills 下的目录名
-    detectPlugins: [my-workflow]  # settings.json 中 enabledPlugins 的键
+    detectPlugins: [my-workflow]  # settings.json / settings.local.json 中 enabledPlugins 的键
     note: 团队内部流程；仅在 req、plan 建议使用。
 ```
 

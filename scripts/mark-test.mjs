@@ -1,20 +1,18 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readText, writeAtomic, isMain, projectRoot, argValue } from './lib/common.mjs';
+import { isMain, projectRoot, argValue, updateJson } from './lib/common.mjs';
 
 export async function main(argv = process.argv.slice(2)) {
   const root = argValue(argv, '--root', projectRoot());
   const command = argValue(argv, '--command', null);
   const file = join(root, '.claude', '.devflow-state.json');
-  let state = {};
-  if (existsSync(file)) {
-    try { state = JSON.parse(readText(file)); } catch { state = {}; }
-  }
-  state.lastTestPassedAt = new Date().toISOString();
-  state.testsPending = false;
-  if (command) state.lastTestCommand = command;
-  writeAtomic(file, `${JSON.stringify(state, null, 2)}\n`);
+  const state = updateJson(file, (current) => {
+    const next = current && typeof current === 'object' ? current : {};
+    next.lastTestPassedAt = new Date().toISOString();
+    next.testsPending = false;
+    if (command) next.lastTestCommand = command;
+    return next;
+  });
   console.log(`[OK]   已记录测试通过：${state.lastTestPassedAt}${command ? `（${command}）` : ''}`);
 }
 

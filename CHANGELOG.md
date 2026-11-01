@@ -29,6 +29,13 @@
 - 修复阶段入口缺少 `Skill` 权限导致无法委派路由候选工具的问题（req、test 补齐，六个入口统一 `delegate` / `error` 处理）
 - 修复多行 `note` 渲染为 YAML 时破坏配置结构的问题
 - 路由错误结果统一包含 `constraints`，避免调用方读取空字段
+- `hub-status` 在完整流程只有 `review.md`、缺少 `test.md` 时回到 test，避免无测试证据却判定完成
+- hooks 状态写入统一加锁并原子替换，锁残留与超时后降级；`track-changes` 忽略账本自身的锁与临时文件，`git status` 增加超时与输出上限；`check-tests` 在已测试或投影已生成时清零对应提醒
+- `guard-dangerous` 支持 `git -C <dir> push`、引号命令名、`xargs`/`find -exec` 嵌套 shell 与 PowerShell `Remove-Item -Recurse` 盘符根；放行 `man mkfs`、`Get-Help Format-Volume` 等帮助查询
+- `guard-generated` 在无 `hub.yaml` 的项目中不介入，修正生成阶段索引与状态账本提示
+- `hub-init` / `hub-sync` 校验 `requiresPlugin`、限制写入项目内路径、逐步持久化账本并在中断后自愈；manifest 只记录与插件模板一致的文件。`hub-doctor` 区分缺失与损坏的 `.devflow.json` / 账本；生态检测补充用户 `settings.local.json`
+- `argValue` 不再把后续开关当成参数值；`findPluginRoot` 优先使用当前会话的 `CLAUDE_PLUGIN_ROOT`
+- 修正两处 eval grader：否定式正确回答（“不要直接修改”）不再被误判为违规
 
 ### 测试
 
@@ -36,6 +43,7 @@
 - 状态测试补充轻量功能与轻量修复的 implement/test/review/done 分支、`review: required` 风险标记与完整流程优先级
 - 新增 `tests/route.test.mjs`，覆盖 22 种路由决策：未配置回退、mode、ask/auto、强制与指定工具、阶段不匹配、forceDevflowStages、检测与插件键、检测结果缺失时自动检测、禁用工具不参与检测、`--detect` 与阶段/列表组合、解析失败 fail-open、`--list`、非法阶段名、检测名路径穿越与默认配置渲染往返
 - 更新 CLI、端到端、状态视图、模板约定与 hooks 测试，覆盖 `route` 命令、生态配置生成、入口路由步骤、禁用工具过滤与检测状态保护
+- 补充完整流程“review 早于 test”回归、`argValue` 不吞开关、eval grader 不误伤否定式回答，以及 git 全局选项/引号命令名、嵌套 shell、PowerShell 盘符删除与磁盘帮助命令的 hooks 用例
 
 ### 文档
 
@@ -43,6 +51,7 @@
 - 新增 `docs/value-and-limits.md`，说明适用人群、当前限制与真实项目验证方法
 - 新增 `docs/tool-routing.md`，说明配置、检测范围、决策优先级、命令、安全边界与 fail-open 行为
 - README、设计文档、对比、价值与限制、SECURITY、CHANGELOG 同步更新工具路由说明
+- 同步文档中的测试数、五个 loader、`settings.local.json` 检测范围、CI 清单校验与轻量流程升级触发项
 
 ## 1.4.0
 

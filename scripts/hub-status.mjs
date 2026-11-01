@@ -66,7 +66,7 @@ function flowOf(files) {
 }
 
 // 只读 debug.md 前 10 行判断是否需要独立 review；读取失败按普通小 bug 处理。
-// 只接受顶部 frontmatter 中的小写标记，可带引号；写在正文后面不生效。
+// 标记须独占一行且为小写，可带引号；写在正文后面不生效。
 function needsReview(root, slug) {
   const file = join(root, 'docs', 'devflow', slug, 'debug.md');
   if (!existsSync(file)) return false;
@@ -87,6 +87,8 @@ function stageOf(files, testsPending, reviewRequired = false) {
     if (!has('plan.md')) return 'plan';
     // 代码改动晚于最近一次测试时，即使已有 review.md 也应回到 test。
     if (testsPending) return 'test';
+    // review 不能早于测试证据：缺少 test.md 时先补测试，不因 review.md 直接判完成。
+    if (has('review.md') && !has('test.md')) return 'test';
     if (has('review.md')) return 'done';
     if (has('test.md')) return 'review';
     return 'implement';
@@ -159,7 +161,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (testsPending) {
     suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>"`);
   }
-  if (state.hubPending) {
+  // 投影时间戳晚于最近一次阶段源改动时视为已生成，不再反复提示。
+  const lastHubChange = Date.parse(state.lastHubChangeAt || '');
+  const hubGenerated = mtimeOf(join(root, '.claude', '.hub-manifest.json')) >= lastHubChange
+    && !Number.isNaN(lastHubChange);
+  if (state.hubPending && !hubGenerated) {
     suggestions.push('阶段源（.claude/hub/）有改动；运行 node scripts/devflow-gen.mjs 重新生成投影');
   }
 

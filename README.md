@@ -89,7 +89,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | 小功能 | `/devflow:req --light <需求>` | `brief.md → test.md → review.md` | review 无阻断项 |
 | 小 bug | `/devflow:debug <问题>` | `debug.md → test.md` | 普通测试通过即结束；`review: required` 时补 review |
 
-轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 普通修复在测试通过后结束，涉及安全、数据、认证/权限/并发风险且不触发升级时，用 `debug.md` 顶部的 `review: required` 补审。命中依赖、公共接口、数据迁移、安全边界、不可逆操作，或非测试/文档改动超过 200 行 / 10 个文件 / 2 个子项目时，必须升级完整流程并写 `## 升级判断`。
+轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 普通修复在测试通过后结束，涉及安全、数据、认证/权限/并发风险且不触发升级时，用 `debug.md` 顶部的 `review: required` 补审。命中依赖、公共接口、数据迁移、权限/认证/支付/并发/安全边界、不可逆操作，或非测试/文档改动超过 200 行 / 10 个文件 / 2 个子项目时，必须升级完整流程并写 `## 升级判断`。
 
 ## 命令
 
@@ -193,7 +193,7 @@ devflow route --stage plan --tool superpowers
 - 默认 `routing.mode: ask`：命中时说明候选并询问，用户未同意就继续 devflow。
 - `auto` 只自动委派 `kind: technique` 的工具；`workflow` 类工具仍只建议，避免整个流程被静默替换。
 - 路由只决定“谁执行技法”；阶段顺序、门禁与 `docs/devflow/<slug>/` 产物始终由 devflow 负责。
-- 检测只检查技能目录与 `settings.json` 的 `enabledPlugins` 键，不读技能内容、不执行外部工具；结果写入 `.claude/.ecosystem-state.json`（已 gitignore）。`enabled: false` 的工具不参与检测。
+- 检测只检查技能目录与 `settings.json` / `settings.local.json` 的 `enabledPlugins` 键，不读技能内容、不执行外部工具；结果写入 `.claude/.ecosystem-state.json`（已 gitignore）。`enabled: false` 的工具不参与检测。
 - 新克隆或状态缺失时，`devflow route --stage <stage>` 会自动检测一次；`--list` 保持只读。检测读写都会校验真实路径，拒绝写到项目外。
 - 配置缺失、解析失败或未检测到工具时回退 devflow，不阻塞开发。显式 `--tool <id>` 未知、禁用或阶段不匹配时退出码 1。
 
@@ -399,7 +399,7 @@ node scripts/devflow-gen.mjs
 node scripts/devflow-doctor.mjs
 ```
 
-`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与四个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
+`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与五个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
 
 ## 回灌
 
@@ -599,7 +599,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 195 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 210 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -607,6 +607,7 @@ node --test
 CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运行：
 
 - `syntax`：Node 20 / 22 下对所有受版本控制的 `*.mjs` 执行 `node --check`，并逐个解析 `*.json`；
+- `plugin-manifest`：校验插件清单、版本一致性与 tag 预览；
 - `test`：Ubuntu Node 20 / 22、Windows Node 22（matrix 排除了 Windows + Node 20），执行 `node --test`；
 - `smoke`：在 Linux 与 Windows 的临时目录执行 `init → gen --check → doctor`，并确认 loader 已生成且被 `.gitignore` 忽略；
 - `smoke-result`：汇总两个平台的冒烟结果，以固定名称 `init → doctor` 上报，供分支保护作为必填检查。
@@ -616,7 +617,7 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 `evals/` 存放插件行为的评测用例（阶段路由、生成物保护、危险命令拒绝），每个用例是一个带 frontmatter 的 `prompt.md`，grader 以内联 `graders:` 声明。`claude plugin eval` 目前处于 early access，未在本仓库 CI 中运行；用例结构由 `tests/evals.test.mjs` 校验。启用后可在插件目录运行：
 
 ```bash
-claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep
+claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep,Bash
 ```
 
 运行前请先看 `evals/README.md`，其中说明了每条用例的允许工具与判定方式。

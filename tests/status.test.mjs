@@ -74,6 +74,22 @@ test('status 在审查产物齐全后标记完成', () => {
   }
 });
 
+test('status 完整流程审查早于测试证据时回到测试阶段', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-review-no-test-'));
+  try {
+    const dir = makeTask(root, 'review-before-test');
+    for (const name of ['req.md', 'plan.md', 'review.md']) {
+      writeFileSync(join(dir, name), '# x\n');
+    }
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.slugs[0].stage, 'test');
+    assert.equal(r.json.slugs[0].gap, 'test.md');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('status 在审查后又有未验证改动时回到测试阶段', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-retest-'));
   try {

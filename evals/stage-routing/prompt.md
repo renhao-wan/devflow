@@ -15,7 +15,7 @@ graders:
     match: contains
   - type: regex
     name: no-blind-fix
-    pattern: '(直接修改|先改代码)'
+    pattern: '(已修改|已经修改|直接修改了).{0,10}代码'
     flags: i
     match: not_contains
 ---

@@ -1,48 +1,24 @@
 #!/usr/bin/env node
 // PreToolUse(Bash|PowerShell|Monitor)：危险命令硬门禁。deny 直接阻止，ask 交给用户确认。
 // 只在命令位置匹配命令类规则，引号内文本不参与匹配；嵌套 shell、xargs、find -exec 会递归检查。
+import { writeSync } from 'node:fs';
 import { readStdin } from './lib.mjs';
 
 const DENY = [
-  { re: /\b(mkfs(\.\w+)?|fdisk|parted)\b/, why: '格式化或分区磁盘' },
   { re: /\bdd\b[^|;]*\bof=\/dev\/(sd|hd|nvme|disk)/, why: '直接写裸设备' },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, why: 'fork 炸弹' },
   { re: /\bchmod\s+-R\s+777\s+\/(\s|$)/, why: '对根目录递归放开权限' },
   { re: /\bcurl\b[^|;]*\|\s*(sudo\s+)?(sh|bash)\b/, why: '下载内容直接执行' },
   { re: /\bwget\b[^|;]*\|\s*(sudo\s+)?(sh|bash)\b/, why: '下载内容直接执行' },
-  { re: /\bgit\s+push\b[^|;]*\s(-f|--force(-with-lease)?)\b[^|;]*\b(main|master|release\/\S+)\b/, why: '强推受保护分支' },
-  { re: /\bgit\s+push\b[^|;]*\s\+[^\s:]*(main|master)\b/, why: '强推受保护分支' },
-  { re: /\bgit\s+push\b[^|;]*\s:(main|master)\b/, why: '删除远端受保护分支' },
-  { re: /\bgit\s+push\b[^|;]*\s(-f|--force)\s*$/, why: '强推（未指定分支）' },
-  { re: /\b(Restart-Computer|Stop-Computer)\b/i, why: '关机或重启机器' },
-  { re: /\bformat\s+[a-zA-Z]:/i, why: '格式化磁盘' },
-  { re: /\bdiskpart\b/i, why: '磁盘分区操作' },
-  { re: /\bcipher\s+\/w\b/i, why: '擦除磁盘空闲空间' },
-  { re: /\bvssadmin\s+delete\s+shadows\b/i, why: '删除卷影副本' },
-  { re: /\b(Format-Volume|Clear-Disk|Initialize-Disk)\b/i, why: '格式化或初始化磁盘' },
   { re: />\s*\/dev\/(sd|hd|nvme)/, why: '重定向覆盖裸设备' },
 ];
 
 const ASK = [
-  { re: /\bgit\s+push\b[^|;]*\s(-f|--force)\b/, why: '强推，可能覆盖远端历史' },
-  { re: /\bgit\s+push\b[^|;]*\s\+[^\s:]/, why: '强推 refspec，可能覆盖远端历史' },
-  { re: /\bgit\s+push\b[^|;]*\s:[^\s]+/, why: '删除远端分支或引用' },
-  { re: /\bgit\s+reset\s+--hard\b/, why: '丢弃工作区改动' },
-  { re: /\bgit\s+clean\b[^|;]*(\s-[a-zA-Z]*[fdx][a-zA-Z]*\b|\s--force\b)/, why: '删除未跟踪文件' },
-  { re: /\bgit\s+reset\s+--(hard|mixed)\b/, why: '重置提交，可能丢失改动' },
-  { re: /\bgit\s+checkout\s+(--\s+)?\./, why: '丢弃所有本地改动' },
-  { re: /\bgit\s+restore\s+(--\S+\s+)*\./, why: '丢弃所有本地改动' },
-  { re: /\bgit\s+branch\b[^|;]*(-D\b|(--delete|-[a-zA-Z]*d[a-zA-Z]*)\b[^|;]*(--force|-f\b)|(--force|-f\b)[^|;]*(--delete|-[a-zA-Z]*d[a-zA-Z]*)\b)/, why: '强制删除本地分支' },
-  { re: /\bgit\s+push\s+\S+\s+--delete\b/, why: '删除远端分支' },
   { re: /\bnpm\s+publish\b/, why: '发布包到 registry' },
   { re: /\bdocker\s+(rm|rmi)\s+-f\b/, why: '强制删除容器或镜像' },
   { re: /\bdocker\s+system\s+prune\b/, why: '清理 Docker 资源' },
   { re: /\b(kubectl\s+delete|helm\s+uninstall)\b/, why: '删除集群资源' },
   { re: /\bmigrate\b[^|;]*\b(down|reset|rollback)\b/i, why: '回滚数据库迁移' },
-  { re: /\bgit\s+update-ref\s+-d\b/, why: '删除 Git 引用' },
-  { re: /\bgit\s+filter-branch\b/, why: '重写 Git 历史' },
-  { re: /\bgit\s+push\s+\S*\s*--mirror\b/, why: '镜像推送，可能覆盖远端所有引用' },
-  { re: /\bgit\s+reflog\s+expire\b/, why: '清空 reflog，丢失恢复线索' },
 ];
 
 // SQL 规则只作用于 SQL 客户端通过 -c/-e 传入的语句，避免 echo/grep 文档里的同名文本误伤。
@@ -60,7 +36,11 @@ const DB_CLIENTS = new Set([
 ]);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell']);
 const WRAPPERS = new Set(['sudo', 'doas', 'command', 'time', 'nohup', 'nice', 'builtin', 'exec', 'env']);
-const HALT_COMMANDS = new Set(['shutdown', 'reboot', 'halt', 'poweroff']);
+const HALT_COMMANDS = new Set(['shutdown', 'reboot', 'halt', 'poweroff', 'restart-computer', 'stop-computer']);
+const DISK_COMMANDS = new Set([
+  'fdisk', 'parted', 'diskpart', 'format', 'cipher', 'vssadmin',
+  'format-volume', 'clear-disk', 'initialize-disk',
+]);
 const MAX_DEPTH = 4;
 
 /** 把引号内文本替换为空格，保留引号与位置，避免提交信息、grep 关键词被当成命令。 */
@@ -268,7 +248,7 @@ function rmDecision(args) {
 
 const WIN_ROOT = /^[a-zA-Z]:\\?\*?$/i;
 const RECURSE_SWITCH = /^\/[a-z/]*s[a-z/]*$/i;
-const RECURSE_PARAM = /^-rec[a-z]*$/i;
+const RECURSE_PARAM = /^-(?:r[a-z]*|recurse)$/i;
 
 /** Windows 的 rd/del/Remove-Item 递归删除不在全局正则里逐条覆盖，按命令位置判断。 */
 function winDeleteDecision(cmd, args) {
@@ -291,36 +271,141 @@ function winDeleteDecision(cmd, args) {
   return [];
 }
 
+/** 磁盘级破坏按命令位置判断，避免 `man mkfs`、`Get-Help Format-Volume` 被误拦。 */
+function diskDecision(cmd, args) {
+  const values = args.map((t) => t.value);
+  const lower = values.map((v) => v.toLowerCase());
+  if (cmd.startsWith('mkfs')) return [{ decision: 'deny', why: '格式化或分区磁盘' }];
+  if (cmd === 'fdisk' || cmd === 'parted') return [{ decision: 'deny', why: '格式化或分区磁盘' }];
+  if (cmd === 'diskpart') return [{ decision: 'deny', why: '磁盘分区操作' }];
+  if (cmd === 'format' && values.some((v) => /^[a-zA-Z]:/.test(v))) {
+    return [{ decision: 'deny', why: '格式化磁盘' }];
+  }
+  if (cmd === 'cipher' && values.some((v) => /^\/w/i.test(v))) {
+    return [{ decision: 'deny', why: '擦除磁盘空闲空间' }];
+  }
+  if (cmd === 'vssadmin' && lower.includes('delete') && lower.includes('shadows')) {
+    return [{ decision: 'deny', why: '删除卷影副本' }];
+  }
+  if (cmd === 'format-volume' || cmd === 'clear-disk' || cmd === 'initialize-disk') {
+    return [{ decision: 'deny', why: '格式化或初始化磁盘' }];
+  }
+  return [];
+}
+
+function ddDecision(args) {
+  if (args.some((t) => /^of=\/dev\/(sd|hd|nvme|disk)/i.test(t.value))) {
+    return [{ decision: 'deny', why: '直接写裸设备' }];
+  }
+  return [];
+}
+
+const GIT_GLOBAL_VALUE = new Set([
+  '-C', '--git-dir', '--work-tree', '-c', '--namespace', '--exec-path', '--config-env', '--super-prefix',
+]);
+
+function isProtectedRef(value) {
+  const clean = String(value).replace(/^\+/, '').split(':').pop();
+  return /(^|\/)(main|master)$/.test(clean) || /^release\//.test(clean);
+}
+
+function gitPushDecision(args) {
+  let force = false;
+  let del = false;
+  let mirror = false;
+  const refs = [];
+  for (const value of args) {
+    if (value === '-f' || value === '--force' || /^--force-with-lease(?:=.*)?$/.test(value)) force = true;
+    else if (value === '--mirror') mirror = true;
+    else if (value === '--delete' || value === '-d') del = true;
+    else if (value.startsWith('-')) continue;
+    else refs.push(value);
+  }
+  const plus = refs.some((r) => r.startsWith('+'));
+  const deleteRefspec = refs.some((r) => r.startsWith(':') && r.length > 1);
+  const protectedRef = refs.some(isProtectedRef);
+  if ((force || plus) && protectedRef) return [{ decision: 'deny', why: '强推受保护分支' }];
+  if ((del || deleteRefspec) && protectedRef) return [{ decision: 'deny', why: '删除远端受保护分支' }];
+  if (force && refs.length === 0) return [{ decision: 'deny', why: '强推（未指定分支）' }];
+  const findings = [];
+  if (force || plus) findings.push({ decision: 'ask', why: '强推，可能覆盖远端历史' });
+  if (del || deleteRefspec) findings.push({ decision: 'ask', why: '删除远端分支或引用' });
+  if (mirror) findings.push({ decision: 'ask', why: '镜像推送，可能覆盖远端所有引用' });
+  return findings;
+}
+
+/** 解析 git 全局选项后按子命令判断；支持 `git -C <dir> ...` 与引号命令名。 */
+function gitDecision(tokens) {
+  let i = 1;
+  while (i < tokens.length) {
+    const value = tokens[i].value;
+    if (value === '--') { i += 1; break; }
+    if (!value.startsWith('-')) break;
+    if (value.includes('=')) { i += 1; continue; }
+    i += GIT_GLOBAL_VALUE.has(value) ? 2 : 1;
+  }
+  const sub = String(tokens[i]?.value || '').toLowerCase();
+  if (!sub) return [];
+  const args = tokens.slice(i + 1).map((t) => t.value);
+  if (sub === 'push') return gitPushDecision(args);
+  if (sub === 'reset' && args.some((a) => a === '--hard' || a === '--mixed')) {
+    return [{ decision: 'ask', why: '重置提交，可能丢失改动' }];
+  }
+  if (sub === 'clean' && args.some((a) => a === '--force' || /^-[a-zA-Z]*[fdx]/.test(a))) {
+    return [{ decision: 'ask', why: '删除未跟踪文件' }];
+  }
+  if ((sub === 'checkout' || sub === 'restore') && args.includes('.')) {
+    return [{ decision: 'ask', why: '丢弃所有本地改动' }];
+  }
+  if (sub === 'branch' && args.some((a) => a === '--delete' || /^-[a-zA-Z]*[dD]/.test(a))) {
+    return [{ decision: 'ask', why: '删除本地分支' }];
+  }
+  if (sub === 'update-ref' && args.includes('-d')) {
+    return [{ decision: 'ask', why: '删除 Git 引用' }];
+  }
+  if (sub === 'filter-branch') return [{ decision: 'ask', why: '重写 Git 历史' }];
+  if (sub === 'reflog' && args.includes('expire')) {
+    return [{ decision: 'ask', why: '清空 reflog，丢失恢复线索' }];
+  }
+  return [];
+}
+
 const XARGS_VALUE_OPTS = new Set([
   '-n', '-L', '-P', '-I', '-d', '-E', '-s', '-a', '-e',
   '--max-args', '--max-lines', '--max-procs', '--replace', '--delimiter',
   '--eof', '--max-chars', '--arg-file',
 ]);
 
-function xargsDecision(args) {
-  let target = null;
+/** 返回 xargs 实际执行命令在 args 中的下标；找不到时返回 -1。 */
+function xargsTargetIndex(args) {
   for (let i = 0; i < args.length; i += 1) {
     const value = args[i].value;
-    if (value === '--') { target = args[i + 1] || null; break; }
+    if (value === '--') return i + 1 < args.length ? i + 1 : -1;
     if (value.startsWith('-') && value !== '-') {
       const opt = value.split('=')[0];
       if (!value.includes('=') && XARGS_VALUE_OPTS.has(opt)) i += 1;
       continue;
     }
-    target = args[i];
-    break;
+    return i;
   }
-  if (target && normalizeCmd(target.value) === 'rm') {
+  return -1;
+}
+
+function xargsDecision(args) {
+  const index = xargsTargetIndex(args);
+  if (index >= 0 && normalizeCmd(args[index].value) === 'rm') {
     return [{ decision: 'ask', why: 'xargs 调用 rm，删除目标由输入决定' }];
   }
   return [];
 }
 
+function findExecIndex(args) {
+  return args.findIndex((t) => ['-exec', '-execdir', '-ok', '-okdir'].includes(t.value));
+}
+
 function findDecision(args) {
-  const values = args.map((t) => t.value);
-  const i = values.findIndex((v) => ['-exec', '-execdir', '-ok', '-okdir'].includes(v));
-  const target = i >= 0 ? values[i + 1] : null;
-  if (target && normalizeCmd(target) === 'rm') {
+  const i = findExecIndex(args);
+  if (i >= 0 && args[i + 1] && normalizeCmd(args[i + 1].value) === 'rm') {
     return [{ decision: 'ask', why: 'find -exec 调用 rm' }];
   }
   return [];
@@ -375,6 +460,10 @@ function evaluate(command, depth = 0) {
     const group = stripWrappers(raw);
     if (!group.length) continue;
     const cmd = normalizeCmd(group[0].value);
+    const runNested = (sub) => {
+      const inner = nestedCommand(sub);
+      if (inner) findings.push(...evaluate(inner, depth + 1));
+    };
     if (HALT_COMMANDS.has(cmd)) findings.push({ decision: 'deny', why: '关机或重启机器' });
     else if (cmd === 'systemctl' && group.slice(1).some((t) => /^(reboot|poweroff|halt)$/i.test(t.value))) {
       findings.push({ decision: 'deny', why: '关机或重启机器' });
@@ -383,9 +472,23 @@ function evaluate(command, depth = 0) {
     } else if (['rd', 'rmdir', 'del', 'erase', 'remove-item', 'ri'].includes(cmd)) {
       findings.push(...winDeleteDecision(cmd, group.slice(1)));
     } else if (cmd === 'xargs') {
-      findings.push(...xargsDecision(group.slice(1)));
+      const rest = group.slice(1);
+      findings.push(...xargsDecision(rest));
+      const index = xargsTargetIndex(rest);
+      // xargs -I{} bash -c "..." 这类会把危险命令藏在嵌套 shell 里
+      if (index >= 0) runNested(rest.slice(index));
     } else if (cmd === 'find') {
-      findings.push(...findDecision(group.slice(1)));
+      const rest = group.slice(1);
+      findings.push(...findDecision(rest));
+      const index = findExecIndex(rest);
+      // find -exec sh -c "..." 同上
+      if (index >= 0) runNested(rest.slice(index + 1));
+    } else if (cmd === 'git') {
+      findings.push(...gitDecision(group));
+    } else if (cmd === 'dd') {
+      findings.push(...ddDecision(group.slice(1)));
+    } else if (DISK_COMMANDS.has(cmd) || cmd.startsWith('mkfs')) {
+      findings.push(...diskDecision(cmd, group.slice(1)));
     }
     const inner = nestedCommand(group);
     if (inner) findings.push(...evaluate(inner, depth + 1));
@@ -420,7 +523,8 @@ function redact(text) {
 }
 
 function emit(decision, reason) {
-  process.stdout.write(JSON.stringify({
+  // 单次 writeSync 保证进程退出前 stdout 已刷新，避免 decision 丢失。
+  writeSync(1, JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: decision,

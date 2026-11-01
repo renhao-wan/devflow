@@ -306,6 +306,7 @@ export function detectTools(root, config, options = {}) {
     join(root, '.claude', 'settings.json'),
     join(root, '.claude', 'settings.local.json'),
     join(home, '.claude', 'settings.json'),
+    join(home, '.claude', 'settings.local.json'),
   ];
   const enabledPlugins = readEnabledPlugins(settingsFiles);
   const result = {};

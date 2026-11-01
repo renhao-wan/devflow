@@ -4,7 +4,7 @@ import { join, dirname, resolve, delimiter } from 'node:path';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath,
-  readMeta, isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
+  isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
 import {
@@ -146,7 +146,17 @@ export async function main(argv = process.argv.slice(2)) {
     add('error', err.message);
   }
 
-  const meta = readMeta(root);
+  const metaFile = join(root, '.devflow.json');
+  let meta = null;
+  if (!existsSync(metaFile)) {
+    add('warn', '缺少 .devflow.json，运行 /devflow:init 可重建');
+  } else {
+    try {
+      meta = JSON.parse(readText(metaFile));
+    } catch (err) {
+      add('error', `.devflow.json 损坏：${err.message}，运行 /devflow:init 可重建`);
+    }
+  }
   if (meta?.pluginVersion && info?.version && meta.pluginVersion !== info.version) {
     add('warn', `.devflow.json 记录的插件版本 ${meta.pluginVersion} 与当前 ${info.version} 不一致，建议运行 /devflow:sync 或重跑 /devflow:init`);
   }
@@ -229,8 +239,22 @@ export async function main(argv = process.argv.slice(2)) {
 
   const manifestFile = join(root, '.claude', '.hub-manifest.json');
   const manifest = readJson(manifestFile);
-  if (!manifest) add('warn', '缺少 .claude/.hub-manifest.json，运行 node scripts/devflow-gen.mjs');
-  else add('ok', `生成账本包含 ${manifest.skills?.length || 0} 个技能`);
+  if (!manifest) {
+    add('warn', existsSync(manifestFile)
+      ? '.claude/.hub-manifest.json 损坏，运行 node scripts/devflow-gen.mjs 重建'
+      : '缺少 .claude/.hub-manifest.json，运行 node scripts/devflow-gen.mjs');
+  } else {
+    add('ok', `生成账本包含 ${manifest.skills?.length || 0} 个技能`);
+  }
+  const sourcesFile = join(root, '.claude', '.hub-sources.json');
+  const sources = readJson(sourcesFile);
+  if (!sources) {
+    add('warn', existsSync(sourcesFile)
+      ? '.claude/.hub-sources.json 损坏，运行 /devflow:sync 可重建'
+      : '缺少 .claude/.hub-sources.json，运行 /devflow:sync 可重建');
+  } else {
+    add('ok', `阶段源账本记录 ${Object.keys(sources.files || {}).length} 个文件`);
+  }
   if (manifest?.skills?.length) {
     const withResources = manifest.skills.filter((s) => Array.isArray(s.resources) && s.resources.length).length;
     add('ok', `阶段资源清单：${manifest.skills.length} 个技能，${withResources} 个含 references/templates`);

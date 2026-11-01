@@ -9,6 +9,7 @@ import {
 } from './lib/common.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE, createDefaultConfig, loadEcosystem, writeDetectedState,
+  ecosystemPath, statePath,
 } from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -128,7 +129,8 @@ function discoverSubprojects(root) {
       const child = join(dir, entry.name);
       const rel = relative(root, child).split(sep).join('/');
       if (isProjectDir(child)) {
-        const looksDemand = /demand|require|design|spec|doc/i.test(entry.name);
+        // 只把 demand/require/design/spec/doc 这类目录整体当作需求来源；docker 等名字不能被误判。
+        const looksDemand = /(^|[-_])(demand|requirements?|design|specs?|docs?)([-_.]|$)/i.test(entry.name);
         const modules = looksDemand ? [] : expandMavenModules(root, child);
         if (modules.length) {
           expanded.push(`${rel}（${modules.length} 个 Maven 模块）`);
@@ -260,14 +262,21 @@ function copyStageTemplates(pluginRoot, root, force) {
   return copied;
 }
 
-/** 记录阶段源文件哈希，供 /devflow:sync 判断本地是否手改过。 */
-function writeSourceManifest(root, version) {
+/** 记录阶段源文件哈希，供 /devflow:sync 判断本地是否手改过。
+ * 只记录“内容仍等于插件模板”的文件；初始化时因已存在而跳过的文件若已被手改，
+ * 不能当作基线，否则 sync 会把本地改动误判成模板更新。
+ */
+function writeSourceManifest(root, version, pluginRoot) {
   const hubDir = join(root, '.claude', 'hub');
   const files = {};
   for (const abs of walk(join(hubDir, 'stages'))) {
     const rel = relPosix(hubDir, abs);
     if (isGeneratedArtifact(rel)) continue;
-    files[`.claude/hub/${rel}`] = contentHash(readText(abs));
+    const tpl = join(pluginRoot, 'templates', ...rel.split('/'));
+    if (!existsSync(tpl)) continue;
+    const hash = contentHash(readText(abs));
+    if (hash !== contentHash(readText(tpl))) continue;
+    files[`.claude/hub/${rel}`] = hash;
   }
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
     schemaVersion: 1,
@@ -305,12 +314,23 @@ function upsertGitignore(root) {
   return true;
 }
 
+/** 写入前校验：词法上在项目内，且解析 junction/符号链接后仍在项目内。 */
+function assertWritable(root, target, what) {
+  if (!isPathInside(root, target) || !isRealPathInside(root, target)) {
+    throw new Error(`${what} 越界（可能被 junction/符号链接引到项目外）：${posix(target)}`);
+  }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const force = hasFlag(argv, '--force');
-  const pluginRoot = argValue(argv, '--plugin-root', pluginRootFromScript());
+  const pluginRoot = resolve(argValue(argv, '--plugin-root', pluginRootFromScript()));
   const info = pluginInfo(pluginRoot);
   const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+  assertWritable(root, join(root, '.claude', 'hub'), '.claude/hub');
+  assertWritable(root, hubFile, 'hub.yaml');
+  assertWritable(root, ecosystemPath(root), ECOSYSTEM_FILE);
+  assertWritable(root, statePath(root), STATE_FILE);
 
   const previousMeta = readMeta(root) || {};
   const sourceArg = argValue(argv, '--source-root', null);
@@ -329,7 +349,7 @@ export async function main(argv = process.argv.slice(2)) {
     const { list: subs, expanded } = discoverSubprojects(root);
     const rootTest = detectTestCommand(root);
     writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
-    writeSourceManifest(root, info.version);
+    writeSourceManifest(root, info.version, pluginRoot);
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     if (expanded.length) {
       log('ok', `Maven 多模块已展开：${expanded.join('、')}。父 pom 不再单独成项，可按需调整。`);
@@ -357,6 +377,7 @@ export async function main(argv = process.argv.slice(2)) {
     : `工具检测：未发现已知工具（写入 ${STATE_FILE}）`);
 
   const metaFile = join(root, '.devflow.json');
+  assertWritable(root, metaFile, '.devflow.json');
   writeAtomic(metaFile, `${JSON.stringify({
     pluginRoot,
     pluginVersion: info.version,
@@ -366,9 +387,11 @@ export async function main(argv = process.argv.slice(2)) {
   log('ok', '记录插件位置 .devflow.json');
 
   const scriptsDir = join(root, 'scripts');
+  assertWritable(root, scriptsDir, 'scripts/');
   ensureDir(scriptsDir);
   for (const [file, target] of Object.entries(LOADERS)) {
     const dst = join(scriptsDir, file);
+    assertWritable(root, dst, `scripts/${file}`);
     const source = loaderSource(target);
     if (existsSync(dst) && !force) {
       // loader 是生成物：内容过旧时自动重写，避免插件升级后仍走旧回退顺序。
@@ -381,6 +404,7 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', `写入 scripts/${file}`);
   }
 
+  assertWritable(root, join(root, '.gitignore'), '.gitignore');
   if (upsertGitignore(root)) log('ok', '更新 .gitignore');
   else log('ok', '.gitignore 已包含 devflow 片段');
 

@@ -212,6 +212,42 @@ test('guard 递归检查嵌套 shell、xargs 与 find -exec', () => {
   );
 });
 
+test('guard 识别带全局选项与引号的 git 强推', () => {
+  for (const command of ['git -C . push -f', '"git" push -f origin main', 'git push --force-with-lease origin main']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  for (const command of ['git -C repo push -f origin feature', '"git" push -f origin feature']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+  }
+});
+
+test('guard 递归检查 xargs 与 find -exec 里的嵌套 shell', () => {
+  for (const command of [
+    'xargs -I{} bash -c "rm -rf /"',
+    'find . -exec sh -c "rm -rf /" \\;',
+  ]) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+});
+
+test('guard 覆盖 PowerShell 递归删除盘符根', () => {
+  for (const command of ['Remove-Item -R C:\\', 'Remove-Item -Recurse C:\\', 'ri -Rec C:\\']) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command: 'Remove-Item -Recurse C:\\temp' } }).stdout);
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'ask');
+});
+
+test('guard 放行查询磁盘命令的帮助', () => {
+  for (const command of ['man mkfs', 'man fdisk', 'Get-Help Format-Volume', 'where format', 'rg format-volume docs']) {
+    assert.equal(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout, '', command);
+  }
+});
+
 test('guard 识别 SQL 客户端传入的危险语句', () => {
   for (const command of [
     "psql postgres -c 'DROP DATABASE prod'",
