@@ -85,7 +85,7 @@ req 阶段同步记录技术约束（是否允许新增依赖、许可证政策�
 
 ## 与 superpowers 的边界
 
-devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不同：devflow 负责**阶段顺序、产物路径、门禁、项目真源、回灌与同步**；superpowers 负责**执行技法**（brainstorming、writing-plans、TDD、systematic-debugging、code-review、verification、worktrees）。
+devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不同：devflow 负责**阶段顺序、产物路径、门禁、项目真源、回灌与同步**；superpowers 负责**执行技法**（brainstorming、writing-plans、TDD、systematic-debugging、requesting-code-review / receiving-code-review、verification、worktrees）。
 
 冲突时以 devflow 的阶段门禁与产物路径为准；已有的 superpowers 设计或计划吸收进 `plan.md`，不维护两份。devflow 自带的 TDD、排障、评审技能作为未安装 superpowers 时的 fallback。
 
@@ -102,3 +102,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 文档与版本 1.2.0
 - [x] 1.3.0：plan 方案前调研与搜索失败降级、req 技术约束、review 依赖核对、debug 已知问题检索、superpowers 边界
 - [x] 1.3.1：修复生成器账本与 `--json`、ship 基分支、track-changes 误报、Windows 递归删除拦截，统一命令与阶段技能引用
+- [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新

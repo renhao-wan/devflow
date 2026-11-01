@@ -1,7 +1,7 @@
 ---
 description: 测试阶段：运行测试、补齐覆盖、记录可验证的结果
 argument-hint: [slug]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Task, Bash(*)
 ---
 
 执行 devflow 测试阶段：**$ARGUMENTS**

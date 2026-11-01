@@ -59,7 +59,7 @@ const DB_CLIENTS = new Set([
   'mongosh', 'mongo', 'cockroach', 'mysqlsh', 'clickhouse-client',
 ]);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell']);
-const WRAPPERS = new Set(['sudo', 'command', 'doas', 'time', 'nohup', 'nice', 'builtin', 'exec']);
+const WRAPPERS = new Set(['sudo', 'doas', 'command', 'time', 'nohup', 'nice', 'builtin', 'exec', 'env']);
 const HALT_COMMANDS = new Set(['shutdown', 'reboot', 'halt', 'poweroff']);
 const MAX_DEPTH = 4;
 
@@ -127,12 +127,20 @@ function tokenize(input) {
     }
     if (ch === "'") { mode = 'single'; started = true; quoted = true; continue; }
     if (ch === '"') { mode = 'double'; started = true; quoted = true; continue; }
+    // 反斜杠续行：\\\n / \\\r\n 不是命令分隔符，先整体跳过。
+    if (ch === '\\' && (input[i + 1] === '\n' || input[i + 1] === '\r')) {
+      i += 1;
+      if (input[i] === '\r' && input[i + 1] === '\n') i += 1;
+      continue;
+    }
     if (ch === '\\' && i + 1 < input.length) {
       cur += input[i + 1];
       i += 1;
       started = true;
       continue;
     }
+    // 换行必须先生成命令分隔符，不能作为普通空白吞掉。
+    if (ch === '\n' || ch === '\r') { endWord(); tokens.push({ op: ';' }); continue; }
     if (/\s/.test(ch)) { endWord(); continue; }
     if ((ch === '&' && input[i + 1] === '&') || (ch === '|' && input[i + 1] === '|')) {
       endWord();
@@ -173,24 +181,50 @@ function baseName(value) {
   return (i >= 0 ? s.slice(i + 1) : s).replace(/^["']|["']$/g, '');
 }
 
+/** 统一命令名：去目录、去 .exe、转小写，避免 shutdown.exe / CMD.EXE 之类的变体绕过。 */
+function normalizeCmd(value) {
+  return baseName(value).replace(/\.exe$/i, '').toLowerCase();
+}
+
+const WRAPPER_VALUES = {
+  sudo: new Set(['-u', '--user', '-g', '--group', '-C', '--close-from', '-h', '--host',
+    '-p', '--prompt', '-r', '--role', '-t', '--type', '-U', '--other-user',
+    '-T', '--command-timeout']),
+  doas: new Set(['-u', '-C']),
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']),
+  nice: new Set(['-n', '--adjustment']),
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  exec: new Set(['-a']),
+};
+
+/** 跳过命令前的选项及其参数（如 sudo -u root、nice -n 10）。 */
+function skipOptions(tokens, start, withValue = null) {
+  let i = start;
+  while (i < tokens.length) {
+    const value = tokens[i].value;
+    if (value === '--') { i += 1; break; }
+    if (value === '-' || !value.startsWith('-')) break;
+    const opt = value.split('=')[0];
+    i += 1;
+    if (!value.includes('=') && withValue?.has(opt)) i += 1;
+  }
+  return i;
+}
+
 function stripWrappers(tokens) {
   let i = 0;
   while (i < tokens.length) {
-    const name = baseName(tokens[i].value);
-    if (name === 'time') {
-      i += 1;
-      if (tokens[i]?.value === '-p') i += 1;
+    // 环境变量前缀也属于包装：FOO=1 rm -rf /
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i].value)) { i += 1; continue; }
+    const name = normalizeCmd(tokens[i].value);
+    if (name === 'timeout') {
+      i = skipOptions(tokens, i + 1, WRAPPER_VALUES.timeout);
+      // 跳过一个 duration 参数，后面才是真正要执行的命令
+      if (i < tokens.length) i += 1;
       continue;
     }
-    if (name === 'nice') {
-      i += 1;
-      if (tokens[i]?.value === '-n') i += 2;
-      continue;
-    }
-    if (WRAPPERS.has(name)) { i += 1; continue; }
-    if (name === 'env') {
-      i += 1;
-      while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i].value)) i += 1;
+    if (WRAPPERS.has(name)) {
+      i = skipOptions(tokens, i + 1, WRAPPER_VALUES[name] || null);
       continue;
     }
     break;
@@ -200,6 +234,7 @@ function stripWrappers(tokens) {
 
 const ROOTISH = /^(?:\/|~|\$HOME|\.{1,2})\/?$/;
 const BROAD_TARGET = /^(?:\/|\.{1,2}\/)?\*+$/;
+const DRIVE_ROOT = /^[a-zA-Z]:\\?\*?$/;
 
 function rmDecision(args) {
   let recursive = false;
@@ -220,7 +255,7 @@ function rmDecision(args) {
     }
     targets.push(value);
   }
-  if (recursive && targets.some((t) => ROOTISH.test(t))) {
+  if (recursive && targets.some((t) => ROOTISH.test(t) || DRIVE_ROOT.test(t))) {
     return [{ decision: 'deny', why: '递归删除根目录或当前目录' }];
   }
   if (recursive && force && targets.some((t) => BROAD_TARGET.test(t))) {
@@ -231,35 +266,51 @@ function rmDecision(args) {
   return [];
 }
 
-const WIN_ROOT = /^[a-zA-Z]:\\?\*?$/;
+const WIN_ROOT = /^[a-zA-Z]:\\?\*?$/i;
+const RECURSE_SWITCH = /^\/[a-z/]*s[a-z/]*$/i;
+const RECURSE_PARAM = /^-rec[a-z]*$/i;
 
 /** Windows 的 rd/del/Remove-Item 递归删除不在全局正则里逐条覆盖，按命令位置判断。 */
 function winDeleteDecision(cmd, args) {
-  const name = cmd.replace(/\.exe$/i, '').toLowerCase();
+  const name = normalizeCmd(cmd);
   const values = args.map((t) => t.value);
   const hasSwitch = (re) => values.some((v) => re.test(v));
   const target = values.find((v) => !v.startsWith('/') && !v.startsWith('-'));
-  if (name === 'rd' || name === 'rmdir') {
-    if (!hasSwitch(/^\/[a-z]*s[a-z]*$/i)) return [];
+  if (name === 'rd' || name === 'rmdir' || name === 'del' || name === 'erase') {
+    // rd /s/q 这类合并开关也要识别
+    if (!hasSwitch(RECURSE_SWITCH)) return [];
     if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
-    return [{ decision: 'ask', why: '递归删除目录，可能丢数据' }];
-  }
-  if (name === 'del' || name === 'erase') {
-    if (!hasSwitch(/^\/[a-z]*s[a-z]*$/i)) return [];
-    if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
-    return [{ decision: 'ask', why: '递归删除文件，可能丢数据' }];
+    return [{ decision: 'ask', why: '递归删除文件或目录，可能丢数据' }];
   }
   if (name === 'remove-item' || name === 'ri') {
-    if (!hasSwitch(/^(?:-recurse|\/recurse)$/i)) return [];
+    // PowerShell 允许 -Rec、-Recurse 等前缀缩写
+    if (!hasSwitch(RECURSE_PARAM)) return [];
     if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
     return [{ decision: 'ask', why: '递归删除文件或目录，可能丢数据' }];
   }
   return [];
 }
 
+const XARGS_VALUE_OPTS = new Set([
+  '-n', '-L', '-P', '-I', '-d', '-E', '-s', '-a', '-e',
+  '--max-args', '--max-lines', '--max-procs', '--replace', '--delimiter',
+  '--eof', '--max-chars', '--arg-file',
+]);
+
 function xargsDecision(args) {
-  const target = args.find((t) => !t.value.startsWith('-'));
-  if (target && baseName(target.value) === 'rm') {
+  let target = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const value = args[i].value;
+    if (value === '--') { target = args[i + 1] || null; break; }
+    if (value.startsWith('-') && value !== '-') {
+      const opt = value.split('=')[0];
+      if (!value.includes('=') && XARGS_VALUE_OPTS.has(opt)) i += 1;
+      continue;
+    }
+    target = args[i];
+    break;
+  }
+  if (target && normalizeCmd(target.value) === 'rm') {
     return [{ decision: 'ask', why: 'xargs 调用 rm，删除目标由输入决定' }];
   }
   return [];
@@ -269,7 +320,7 @@ function findDecision(args) {
   const values = args.map((t) => t.value);
   const i = values.findIndex((v) => ['-exec', '-execdir', '-ok', '-okdir'].includes(v));
   const target = i >= 0 ? values[i + 1] : null;
-  if (target && baseName(target) === 'rm') {
+  if (target && normalizeCmd(target) === 'rm') {
     return [{ decision: 'ask', why: 'find -exec 调用 rm' }];
   }
   return [];
@@ -283,17 +334,19 @@ function commandAfter(tokens, i) {
 }
 
 function nestedCommand(tokens) {
-  const cmd = baseName(tokens[0].value);
+  const cmd = normalizeCmd(tokens[0].value);
   if (SHELLS.has(cmd)) {
     for (let i = 1; i < tokens.length; i += 1) {
-      if (['-c', '-Command', '-command', '/c'].includes(tokens[i].value)) {
+      const value = tokens[i].value;
+      // bash -lc、pwsh -NoProfile -Command、sh -ec 等所有含 c 的短选项
+      if (/^-[A-Za-z]*c[A-Za-z]*$/i.test(value) || /^--command$/i.test(value) || /^\/[ck]$/i.test(value)) {
         return commandAfter(tokens, i);
       }
     }
     return null;
   }
   if (cmd === 'cmd') {
-    const i = tokens.findIndex((t, idx) => idx > 0 && /^\/c$/i.test(t.value));
+    const i = tokens.findIndex((t, idx) => idx > 0 && /^\/\/?[ck]$/i.test(t.value));
     return i >= 0 ? commandAfter(tokens, i) : null;
   }
   if (cmd === 'eval') return tokens.slice(1).map((t) => t.value).join(' ');
@@ -304,7 +357,7 @@ function sqlTexts(command) {
   const texts = [];
   for (const raw of simpleCommands(tokenize(command))) {
     const group = stripWrappers(raw);
-    if (!group.length || !DB_CLIENTS.has(baseName(group[0].value))) continue;
+    if (!group.length || !DB_CLIENTS.has(normalizeCmd(group[0].value))) continue;
     for (let i = 1; i < group.length; i += 1) {
       if (['-c', '-e', '-Q', '-q', '--command', '--execute', '-Command'].includes(group[i].value) && group[i + 1]) {
         texts.push(group[i + 1].value);
@@ -321,14 +374,13 @@ function evaluate(command, depth = 0) {
   for (const raw of simpleCommands(tokenize(command))) {
     const group = stripWrappers(raw);
     if (!group.length) continue;
-    const cmd = baseName(group[0].value);
+    const cmd = normalizeCmd(group[0].value);
     if (HALT_COMMANDS.has(cmd)) findings.push({ decision: 'deny', why: '关机或重启机器' });
-    else if (cmd === 'systemctl' && group.slice(1).some((t) => /^(reboot|poweroff|halt)$/.test(t.value))) {
+    else if (cmd === 'systemctl' && group.slice(1).some((t) => /^(reboot|poweroff|halt)$/i.test(t.value))) {
       findings.push({ decision: 'deny', why: '关机或重启机器' });
     } else if (cmd === 'rm') {
       findings.push(...rmDecision(group.slice(1)));
-    } else if (['rd', 'rmdir', 'del', 'erase', 'remove-item', 'ri']
-      .includes(cmd.replace(/\.exe$/i, '').toLowerCase())) {
+    } else if (['rd', 'rmdir', 'del', 'erase', 'remove-item', 'ri'].includes(cmd)) {
       findings.push(...winDeleteDecision(cmd, group.slice(1)));
     } else if (cmd === 'xargs') {
       findings.push(...xargsDecision(group.slice(1)));
@@ -357,6 +409,15 @@ function decide(command) {
     || null;
 }
 
+/** 回显命令前脱敏：URL 凭据、常见 token 查询参数与 Authorization 头。 */
+function redact(text) {
+  return String(text)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s/@:]+):([^\s/@]+)@/gi, '$1$2:***@')
+    .replace(/([?&](?:token|access_token|api[_-]?key|key|secret|password|passwd|pwd)=)[^&\s]+/gi, '$1***')
+    .replace(/(\bAuthorization\s*[:=]\s*Bearer\s+)[^\s"']+/gi, '$1***')
+    .replace(/(--?(?:token|api-key|apikey|secret|password|passwd|pwd)\s+)([^\s]+)/gi, '$1***');
+}
+
 function emit(decision, reason) {
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -379,7 +440,8 @@ try {
   const hit = decide(command);
   if (hit) {
     const prefix = hit.decision === 'deny' ? 'devflow 安全门禁：' : 'devflow 提醒：';
-    emit(hit.decision, `${prefix}${hit.why}${hit.decision === 'ask' ? '，请确认后再执行' : ''}。命令：${command.slice(0, 200)}`);
+    const shown = redact(command).slice(0, 200);
+    emit(hit.decision, `${prefix}${hit.why}${hit.decision === 'ask' ? '，请确认后再执行' : ''}。命令：${shown}`);
   }
 } catch {
   // 钩子自身异常时放行，避免把正常命令挡死。

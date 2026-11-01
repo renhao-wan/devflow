@@ -4,8 +4,8 @@ import { join, dirname, resolve, relative, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
-  log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, sha256, walk, relPosix,
-  isGeneratedArtifact,
+  log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
+  walk, relPosix, isGeneratedArtifact,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -183,10 +183,17 @@ function renderHubYaml(subprojects, version, rootTest) {
   return `${lines.join('\n')}\n`;
 }
 
-function loaderSource(name) {
+export const LOADERS = {
+  'devflow-gen.mjs': 'gen-claude-skills',
+  'devflow-doctor.mjs': 'hub-doctor',
+  'devflow-upstream.mjs': 'hub-upstream',
+  'devflow-test.mjs': 'mark-test',
+};
+
+export function loaderSource(name) {
   return `#!/usr/bin/env node
 // devflow 薄 loader：真实实现在插件内，避免项目里出现第二份脚本。
-// 插件升级后 .devflow.json 记录的旧缓存可能失效，此时回退到源码仓库或当前会话的 CLAUDE_PLUGIN_ROOT。
+// 插件升级后 .devflow.json 记录的旧缓存可能失效，此时优先使用当前会话的 CLAUDE_PLUGIN_ROOT，再回退到源码仓库。
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -195,7 +202,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let meta = {};
 try { meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8')); } catch { meta = {}; }
 
-const candidates = [meta.pluginRoot, meta.pluginSourceRoot, process.env.CLAUDE_PLUGIN_ROOT].filter(Boolean);
+const candidates = [process.env.CLAUDE_PLUGIN_ROOT, meta.pluginRoot, meta.pluginSourceRoot]
+  .filter(Boolean)
+  .filter((dir, i, all) => all.indexOf(dir) === i);
 let mod = null;
 let lastError = null;
 for (const dir of candidates) {
@@ -252,7 +261,7 @@ function writeSourceManifest(root, version) {
   for (const abs of walk(join(hubDir, 'stages'))) {
     const rel = relPosix(hubDir, abs);
     if (isGeneratedArtifact(rel)) continue;
-    files[`.claude/hub/${rel}`] = sha256(readText(abs));
+    files[`.claude/hub/${rel}`] = contentHash(readText(abs));
   }
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
     schemaVersion: 1,
@@ -333,16 +342,17 @@ export async function main(argv = process.argv.slice(2)) {
 
   const scriptsDir = join(root, 'scripts');
   ensureDir(scriptsDir);
-  const loaders = {
-    'devflow-gen.mjs': 'gen-claude-skills',
-    'devflow-doctor.mjs': 'hub-doctor',
-    'devflow-upstream.mjs': 'hub-upstream',
-    'devflow-test.mjs': 'mark-test',
-  };
-  for (const [file, target] of Object.entries(loaders)) {
+  for (const [file, target] of Object.entries(LOADERS)) {
     const dst = join(scriptsDir, file);
-    if (existsSync(dst) && !force) continue;
-    writeText(dst, loaderSource(target));
+    const source = loaderSource(target);
+    if (existsSync(dst) && !force) {
+      // loader 是生成物：内容过旧时自动重写，避免插件升级后仍走旧回退顺序。
+      if (normalizeEol(readText(dst)) === normalizeEol(source)) continue;
+      writeText(dst, source);
+      log('ok', `更新 scripts/${file}`);
+      continue;
+    }
+    writeText(dst, source);
     log('ok', `写入 scripts/${file}`);
   }
 

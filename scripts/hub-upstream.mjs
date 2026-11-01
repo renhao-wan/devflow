@@ -4,9 +4,9 @@ import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   pluginInfo, argValue, hasFlag, readText, writeText,
-  writeAtomic, log, posix, isMain, projectRoot, ensureDir, sha256,
+  writeAtomic, log, posix, isMain, projectRoot, ensureDir, normalizeEol,
   walk, relPosix, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
-  isGeneratedArtifact, loadHub, bumpVersion,
+  isGeneratedArtifact, loadHub, bumpVersion, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 
 const PRIVATE_PATTERNS = [
@@ -123,6 +123,9 @@ export async function main(argv = process.argv.slice(2)) {
   const apply = hasFlag(argv, '--apply');
   const kind = bumpKind(argv);
   if (!stage) throw new Error('必须指定 --stage <req|plan|implement|test|review|debug>');
+  if (!isValidStageName(stage)) {
+    throw new Error(`阶段名非法：${stage}。只允许小写字母开头的 [a-z0-9_-]。`);
+  }
 
   const { config } = loadHub(root);
   const pluginRoot = resolveUpstreamRoot(root, argValue(argv, '--plugin-root', null));
@@ -131,6 +134,12 @@ export async function main(argv = process.argv.slice(2)) {
 
   const srcDir = join(root, '.claude', 'hub', 'stages', stage);
   const dstDir = join(pluginRoot, 'templates', 'stages', stage);
+  if (!isPathInside(join(root, '.claude', 'hub', 'stages'), srcDir)) {
+    throw new Error(`阶段源目录越界：${posix(srcDir)}`);
+  }
+  if (!isPathInside(join(pluginRoot, 'templates', 'stages'), dstDir)) {
+    throw new Error(`回灌目标越界：${posix(dstDir)}`);
+  }
   if (!existsSync(srcDir)) throw new Error(`项目里没有该阶段：${posix(srcDir)}`);
 
   const files = walk(srcDir)
@@ -146,7 +155,7 @@ export async function main(argv = process.argv.slice(2)) {
     const dst = join(dstDir, ...f.rel.split('/'));
     const text = readText(src);
     const verdict = classify(text, config);
-    const changed = !existsSync(dst) || sha256(readText(dst)) !== sha256(text);
+    const changed = !existsSync(dst) || normalizeEol(readText(dst)) !== normalizeEol(text);
     console.log(`${verdict.type === 'reusable' ? '[可回灌]' : '[项目专属]'} ${stage}/${f.rel}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}${verdict.type === 'reusable' && !changed ? '（与插件一致）' : ''}`);
     if (verdict.type === 'reusable') reusable.push({ src, dst, name: f.rel, changed });
     else localCount += 1;

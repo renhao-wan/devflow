@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -222,6 +222,39 @@ test('guard 识别 SQL 客户端传入的危险语句', () => {
   }
 });
 
+test('guard 识别换行、包装器与 Windows 可执行文件变体', () => {
+  const deny = [
+    'git status\nrm -rf /',
+    'FOO=1 rm -rf /',
+    'sudo -u root rm -rf /',
+    'timeout 5 rm -rf /',
+    'env -i rm -rf /',
+    "bash -lc 'rm -rf /'",
+    'cmd.exe /c rd /s /q C:\\',
+    'cmd //c rd /s /q C:\\',
+    "powershell -C 'Remove-Item -Recurse -Force C:\\'",
+    'shutdown.exe /s',
+    'rd /s/q C:\\',
+    'Remove-Item -Rec C:\\',
+  ];
+  for (const command of deny) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  for (const command of ['make --halt-on-error', 'npm run reboot', 'echo "FOO=1 rm -rf /"']) {
+    assert.equal(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout, '', command);
+  }
+});
+
+test('guard 回显命令时脱敏凭据', () => {
+  const command = 'git push --force https://user:secret123@example.com/repo.git?token=abc123 --password hunter2';
+  const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'ask');
+  const reason = out.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /强推/);
+  assert.doesNotMatch(reason, /secret123|abc123|hunter2/);
+});
+
 test('track-changes 忽略账本与生成元数据', () => {
   const root = makeRoot();
   try {
@@ -248,6 +281,55 @@ test('track-changes 记录改动并标记待测', () => {
     const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
     assert.deepEqual(state.changedFiles, ['src/a.js']);
     assert.equal(state.testsPending, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 记录 NotebookEdit 的 notebook_path', () => {
+  const root = makeRoot();
+  try {
+    const r = runHook('track-changes.mjs', {
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: join(root, 'notebooks', 'demo.ipynb') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(r.status, 0, r.stderr);
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.deepEqual(state.changedFiles, ['notebooks/demo.ipynb']);
+    assert.equal(state.testsPending, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 在缺失时间字段时只回看最近改动', (t) => {
+  if (spawnSync('git', ['--version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('git 不可用');
+    return;
+  }
+  const root = makeRoot();
+  try {
+    if (spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' }).status !== 0) {
+      t.skip('git init 失败');
+      return;
+    }
+    mkdirSync(join(root, 'src'), { recursive: true });
+    const old = join(root, 'src', 'old.js');
+    writeFileSync(old, 'x');
+    // 缺失时间字段不能退化成 1999 年，否则打开会话前就存在的脏文件会被误记。
+    const past = new Date('2020-01-01T00:00:00.000Z');
+    utimesSync(old, past, past);
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: [],
+      testsPending: false,
+    }));
+    runHook('track-changes.mjs', {
+      tool_name: 'Bash',
+      tool_input: { command: 'git status' },
+    }, { CLAUDE_PROJECT_DIR: root });
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    // 测试工作区本身是新建的，hub.yaml 属于最近改动；关键是多年前的 old.js 不能被误记。
+    assert.ok(!state.changedFiles.includes('src/old.js'), JSON.stringify(state.changedFiles));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -395,6 +477,20 @@ test('check-tests 在改动未验证时提醒', () => {
     const r = runHook('check-tests.mjs', {}, { CLAUDE_PROJECT_DIR: root });
     const out = JSON.parse(r.stdout);
     assert.match(out.systemMessage, /尚未验证通过/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check-tests 在缺失时间字段时仍提醒', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: ['src/a.js'],
+      testsPending: true,
+    }));
+    const r = runHook('check-tests.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.match(JSON.parse(r.stdout).systemMessage, /尚未验证通过/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

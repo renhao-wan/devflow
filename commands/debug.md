@@ -1,7 +1,7 @@
 ---
 description: 排障阶段：先复现再定位，验证根因后修复并补回归测试
 argument-hint: <问题描述或报错信息>
-allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Bash(*)
+allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, Bash(*)
 ---
 
 执行 devflow 排障阶段：**$ARGUMENTS**

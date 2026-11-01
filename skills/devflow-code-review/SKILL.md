@@ -49,7 +49,7 @@ description: Use when reviewing a diff, a pull request, or freshly written code 
 
 ## 与 superpowers 的关系
 
-- 已安装 superpowers 时，审查技法可优先用其 `code-review`；本技能是未安装时的 fallback。
+- 已安装 superpowers 时，审查技法可优先用其 `requesting-code-review` / `receiving-code-review`；本技能是未安装时的 fallback。
 - 阶段门禁、问题分级与产物路径以 devflow 为准；两者结论冲突时以 devflow 为准。
 
 ## 边界

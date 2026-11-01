@@ -3,7 +3,7 @@ import { existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub,
-  readText, writeAtomic, sha256, log, posix, isMain, ensureDir, walk, relPosix,
+  readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir, walk, relPosix,
   readMeta, isGeneratedArtifact,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
@@ -65,18 +65,21 @@ export async function main(argv = process.argv.slice(2)) {
     const src = join(pluginRoot, 'templates', 'stages', ...rel.split('/'));
     const destRel = `${STAGE_PREFIX}${rel}`;
     const dest = join(root, ...destRel.split('/'));
-    const templateHash = sha256(readText(src));
+    const templateHash = contentHash(readText(src));
     if (!existsSync(dest)) {
       actions.push({ rel: destRel, type: 'add', src, dest, templateHash });
       continue;
     }
-    const currentHash = sha256(readText(dest));
+    const destText = readText(dest);
+    const currentHash = contentHash(destText);
     if (currentHash === templateHash) {
       actions.push({ rel: destRel, type: 'same', dest, templateHash });
       continue;
     }
     const recorded = sources?.files?.[destRel];
-    if (recorded && recorded === currentHash) {
+    // 旧版账本记录的是原始文本哈希；兼容它，避免升级后把未改动的 CRLF 文件误判成手改。
+    const recordedMatch = recorded && (recorded === currentHash || recorded === sha256(destText));
+    if (recordedMatch) {
       actions.push({ rel: destRel, type: 'update', src, dest, templateHash });
     } else if (force) {
       actions.push({ rel: destRel, type: 'overwrite', src, dest, templateHash });

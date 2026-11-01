@@ -36,7 +36,13 @@ function gitChanged(root) {
   for (let i = 0; i < entries.length; i += 1) {
     const status = entries[i].slice(0, 2);
     files.push(entries[i].slice(3).replace(/\\/g, '/'));
-    if (status[0] === 'R' || status[0] === 'C') i += 1;
+    if (status[0] === 'R' || status[0] === 'C') {
+      // rename 的原始路径同样发生了删除，必须记录；copy 的源文件未变。
+      if (status[0] === 'R' && entries[i + 1]) {
+        files.push(entries[i + 1].replace(/\\/g, '/'));
+      }
+      i += 1;
+    }
   }
   return files;
 }
@@ -55,7 +61,9 @@ try {
     try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
   }
   // 没有历史状态时只回看最近 2 秒，避免把打开会话前就存在的脏文件算成本次改动。
-  const lastTrackAt = Date.parse(state.lastTrackAt || state.lastChangeAt || 0) || (Date.now() - 2000);
+  // 注意不能写 Date.parse(x || 0)：Date.parse(0) 会得到 1999 年，2 秒兜底将永远不生效。
+  const parsed = Date.parse(state.lastTrackAt || state.lastChangeAt || '');
+  const lastTrackAt = Number.isNaN(parsed) ? Date.now() - 2000 : parsed;
 
   let changed = [];
   if (payload.tool_name === 'Bash') {
@@ -68,7 +76,9 @@ try {
       }
     });
   } else {
-    const file = payload.tool_input?.file_path || payload.tool_input?.path;
+    const file = payload.tool_input?.file_path
+      || payload.tool_input?.path
+      || payload.tool_input?.notebook_path;
     if (!file) process.exit(0);
     let rel = file;
     if (isAbsolute(file)) rel = relative(root, file).split('\\').join('/');

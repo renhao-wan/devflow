@@ -98,18 +98,23 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
     const subject = git(bare, ['log', '--format=%s', '-1', branchName]);
     assert.match(subject, /回灌 review 阶段规则/);
 
-    const plugin = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8'));
+    const plugin = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/plugin.json`]));
     assert.equal(plugin.version, '1.0.1');
-    const pkg = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(git(bare, ['show', `${branchName}:package.json`]));
     assert.equal(pkg.version, '1.0.1');
-    const market = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    const market = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/marketplace.json`]));
     assert.equal(market.metadata.version, '1.0.1');
 
-    const template = readFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
+    const template = git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]);
     assert.match(template, /先看正确性/);
 
-    const log = readFileSync(join(repo, 'templates', 'stages', '_feedback-log.md'), 'utf8');
+    const log = git(bare, ['show', `${branchName}:templates/stages/_feedback-log.md`]);
     assert.match(log, /回灌文件/);
+
+    // 回灌只在临时 worktree 中发生：主工作区版本与分支不变，也不留下未提交改动。
+    assert.equal(JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0');
+    assert.equal(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
+    assert.equal(git(repo, ['status', '--porcelain']), '');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -130,8 +135,11 @@ test('ship 从 --base 创建分支，不携带当前分支的无关提交', () =
     const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main'], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
 
-    const branch = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
-    assert.match(branch, /^devflow\/upstream-review/);
+    const branches = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n');
+    const branch = branches.find((b) => b.startsWith('devflow/upstream-review'));
+    assert.ok(branch, `未找到回灌分支：${branches.join('、')}`);
+    // 临时 worktree 方案不切换主工作区
+    assert.equal(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']), 'feature');
     const subjects = git(repo, ['log', '--format=%s', `main..${branch}`]).split('\n');
     assert.equal(subjects.length, 1, subjects.join('\n'));
     assert.match(subjects[0], /回灌 review 阶段规则/);

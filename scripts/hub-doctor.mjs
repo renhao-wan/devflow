@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve, delimiter } from 'node:path';
+import { join, dirname, resolve, delimiter } from 'node:path';
 import {
-  pluginInfo, findPluginRoot, satisfies, readText, sha256, log,
-  posix, isMain, projectRoot, argValue, hasFlag, parseYaml,
-  readMeta, isPluginCache, isValidPluginRoot, samePath, isValidStageName,
+  pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
+  posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath,
+  readMeta, isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
+import { LOADERS, loaderSource } from './hub-init.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -59,6 +60,23 @@ function toolExists(tool) {
 
 function readJson(file, fallback = null) {
   try { return JSON.parse(readText(file)); } catch { return fallback; }
+}
+
+/** 账本里的目标路径必须落在 skillsRoot 内，且真实路径不能借符号链接跳出项目。 */
+function safeManifestTarget(root, rel) {
+  if (!rel || String(rel).startsWith('/') || String(rel).includes('..')) return null;
+  const target = join(root, ...String(rel).split('/'));
+  if (!isPathInside(join(root, '.claude', 'skills'), target)) return null;
+  let anchor = target;
+  while (!existsSync(anchor)) {
+    const parent = dirname(anchor);
+    if (parent === anchor) break;
+    anchor = parent;
+  }
+  const rootReal = canonicalPath(root);
+  const anchorReal = canonicalPath(anchor);
+  if (anchorReal !== rootReal && !anchorReal.startsWith(`${rootReal}/`)) return null;
+  return target;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -166,12 +184,20 @@ export async function main(argv = process.argv.slice(2)) {
     add('ok', '.gitignore 含 devflow 片段');
   }
 
-  const loaders = ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs'];
-  const missingLoaders = loaders.filter((f) => !existsSync(join(root, 'scripts', f)));
+  const loaderFiles = Object.entries(LOADERS);
+  const missingLoaders = loaderFiles.filter(([f]) => !existsSync(join(root, 'scripts', f))).map(([f]) => f);
+  const staleLoaders = loaderFiles
+    .filter(([f, target]) => {
+      const dst = join(root, 'scripts', f);
+      return existsSync(dst) && normalizeEol(readText(dst)) !== normalizeEol(loaderSource(target));
+    })
+    .map(([f]) => f);
   if (missingLoaders.length) {
     add('warn', `缺少 loader：${missingLoaders.map((f) => `scripts/${f}`).join('、')}，重新运行 /devflow:init 可重建`);
+  } else if (staleLoaders.length) {
+    add('warn', `loader 内容过期：${staleLoaders.map((f) => `scripts/${f}`).join('、')}，重新运行 /devflow:init 可刷新`);
   } else {
-    add('ok', 'loader 脚本齐全');
+    add('ok', 'loader 脚本齐全且为最新');
   }
 
   const manifestFile = join(root, '.claude', '.hub-manifest.json');
@@ -182,19 +208,44 @@ export async function main(argv = process.argv.slice(2)) {
     const withResources = manifest.skills.filter((s) => Array.isArray(s.resources) && s.resources.length).length;
     add('ok', `阶段资源清单：${manifest.skills.length} 个技能，${withResources} 个含 references/templates`);
   }
+  if (Array.isArray(manifest?.shared)) {
+    const issues = [];
+    for (const entry of manifest.shared) {
+      const rel = String(entry?.path || '');
+      if (!rel) { issues.push('账本含空共享规则条目'); continue; }
+      const abs = join(root, ...rel.split('/'));
+      if (!isPathInside(join(root, '.claude', 'hub', '_shared'), abs)) {
+        issues.push(`共享规则路径越界：${rel}`);
+      } else if (!existsSync(abs)) {
+        issues.push(`共享规则缺失：${rel}`);
+      } else if (entry.hash && contentHash(readText(abs)) !== entry.hash) {
+        issues.push(`共享规则已变更：${rel}，请运行 node scripts/devflow-gen.mjs`);
+      }
+    }
+    if (issues.length) for (const issue of issues) add('warn', issue);
+    else if (manifest.shared.length) add('ok', `共享规则与账本一致（${manifest.shared.length} 个）`);
+  }
 
   const managed = new Map((manifest?.skills || []).map((s) => [s.name, s]));
   for (const [name, s] of managed) {
-    const target = join(root, ...String(s.target).split('/'));
+    const target = safeManifestTarget(root, s.target);
+    if (!target) {
+      add('warn', `${name} 的投影目标越界或非法：${s.target}`);
+      continue;
+    }
     if (!existsSync(target)) {
       add('warn', `${name} 投影缺失，建议重新生成`);
-    } else if (s.hash && sha256(readText(target)) !== s.hash) {
+    } else if (s.hash && contentHash(readText(target)) !== s.hash) {
       add('warn', `${name} 投影被手改或过期，建议重新生成`);
     } else {
       add('ok', `${name} 投影一致`);
     }
     const source = join(root, ...String(s.source).split('/'));
-    if (!existsSync(source)) add('error', `${name} 源文件缺失：${s.source}`);
+    if (!isPathInside(join(root, '.claude', 'hub', 'stages'), source)) {
+      add('error', `${name} 源路径越界：${s.source}`);
+    } else if (!existsSync(source)) {
+      add('error', `${name} 源文件缺失：${s.source}`);
+    }
     const sourceDir = join(root, ...String(s.source).split('/').slice(0, -1));
     const resources = Array.isArray(s.resources) ? s.resources : [];
     const lost = resources.filter((rel) => !existsSync(join(sourceDir, ...String(rel).split('/'))));
@@ -239,8 +290,17 @@ export async function main(argv = process.argv.slice(2)) {
   const stateFile = join(root, '.claude', '.devflow-state.json');
   if (existsSync(stateFile)) {
     const state = readJson(stateFile, {});
-    if (state.lastTestPassedAt) add('ok', `最近一次测试通过：${state.lastTestPassedAt}`);
-    else add('warn', '还没有记录测试通过；/devflow:test 会写入');
+    const tested = Date.parse(state.lastTestPassedAt || '');
+    const changed = Date.parse(state.lastChangeAt || '');
+    if (state.testsPending) {
+      add('warn', '有改动尚未验证；完成测试后运行 /devflow:test');
+    } else if (Number.isNaN(tested)) {
+      add('warn', '还没有记录测试通过；/devflow:test 会写入');
+    } else if (!Number.isNaN(changed) && changed > tested) {
+      add('warn', `最近改动晚于测试通过时间（${state.lastChangeAt}），建议重新跑测试`);
+    } else {
+      add('ok', `最近一次测试通过：${state.lastTestPassedAt}`);
+    }
   }
 
   if (json) {

@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.3.2
+
+### 修复
+
+- `hub-upstream` / `hub-ship` 校验阶段名并做路径包含性检查，防止通过 `hub.yaml` 或账本把文件写到 `.claude/hub/stages` 与插件模板之外
+- 生成器与 `doctor` 解析账本路径时使用真实路径校验，跳过符号链接，并把 Windows 与 POSIX 的行尾差异归一化后再比较哈希
+- `hub-ship` 改用临时 git worktree 完成回灌、提交与推送，主工作区不切换分支；`--base` 在写文件前校验，push 失败时保留本地分支与提交
+- `track-changes` 修复 `Date.parse` 缺失时间时的 1999 年回退，记录 rename 的旧路径，并支持 `NotebookEdit` 的 `notebook_path`
+- `check-tests` 对缺失或非法时间字段按“未知”处理，不再因时间回退而漏提醒或误静默
+- `guard-dangerous` 识别换行分隔的复合命令、环境变量前缀与 `sudo -u` / `timeout` / `env` / `nice` 等包装器，以及 `cmd.exe /c`、`cmd //c`、`powershell -C`、`shutdown.exe`、`rd /s/q`、`Remove-Item -Rec` 等变体；拒绝原因中的 URL 凭据、token 与密码参数会脱敏
+- `init` 重跑时自动刷新过期的 loader，且 loader 加载顺序优先使用当前会话的 `CLAUDE_PLUGIN_ROOT`
+- `hub-sync` 兼容旧账本记录的原始哈希，仅行尾不同时不再误判为手改
+- `doctor` 校验 `.claude/hub/_shared/` 的路径与哈希，发现共享规则变更时提示重新生成；测试状态同时参考 `testsPending` 与改动时间
+
+### 增强
+
+- 新增跨阶段共享规则目录 `.claude/hub/_shared/`，生成器会把其中每条规则注入所有阶段投影并记入账本
+- 命令的 `allowed-tools` 补齐 `Task` / `Skill`；review 命令与相关技能改用 superpowers 的实际技能名 `requesting-code-review` / `receiving-code-review`
+- 测试报告模板新增运行环境字段（OS / Node / 包管理器）
+
+### 文档
+
+- README 更新 loader 顺序、`_shared/`、ship 的临时 worktree 安全约束、CI Node 20 / 22 与测试数量
+- `docs/design.md` 补充 1.3.2 里程碑
+
 ## 1.3.1
 
 ### 修复

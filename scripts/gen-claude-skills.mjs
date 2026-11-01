@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
-  readText, writeAtomic, sha256, log, posix, isMain, projectRoot,
-  walk, relPosix, parseFrontmatter, isValidStageName, STAGE_NAME_RE,
-  isGeneratedArtifact,
+  readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
+  walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact,
 } from './lib/common.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
@@ -52,16 +51,42 @@ function stageResources(root, stage) {
     .sort();
 }
 
-/** 目标必须落在 .claude/skills/devflow-<stage>/ 内，避免账本或阶段名把文件写到工作区外。 */
+/** 读取项目级共享规则：对所有阶段生效，随投影一起分发。 */
+function sharedRules(root) {
+  const dir = join(root, '.claude', 'hub', '_shared');
+  return walk(dir, '.md')
+    .map((abs) => ({
+      path: `.claude/hub/_shared/${relPosix(dir, abs)}`,
+      rel: relPosix(dir, abs),
+      content: normalizeEol(readText(abs)).trim(),
+      hash: contentHash(readText(abs)),
+    }))
+    .filter((s) => s.content && !isGeneratedArtifact(s.rel))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+/** 目标必须落在 .claude/skills/devflow-<stage>/ 内，且真实路径不能跳出项目（防 junction/符号链接）。 */
 function safeSkillTarget(root, rel) {
   if (!rel || rel.startsWith('/') || rel.includes('..')) return null;
   if (!rel.startsWith('.claude/skills/devflow-')) return null;
   const parts = rel.split('/');
   if (parts.length !== 4 || parts[3] !== 'SKILL.md') return null;
-  return join(root, ...parts);
+  const target = join(root, ...parts);
+
+  // 目标或父目录可能是符号链接：用最近的已存在祖先做真实路径校验。
+  let anchor = target;
+  while (!existsSync(anchor)) {
+    const parent = dirname(anchor);
+    if (parent === anchor) break;
+    anchor = parent;
+  }
+  const rootReal = canonicalPath(root);
+  const anchorReal = canonicalPath(anchor);
+  if (anchorReal !== rootReal && !anchorReal.startsWith(`${rootReal}/`)) return null;
+  return target;
 }
 
-function buildSkill(root, stage, config) {
+function buildSkill(root, stage, config, shared) {
   const source = `.claude/hub/stages/${stage}/SKILL.md`;
   const sourceAbs = join(root, ...source.split('/'));
   if (!existsSync(sourceAbs)) {
@@ -76,6 +101,9 @@ function buildSkill(root, stage, config) {
   const overrideBlock = overrides.length
     ? overrides.map((s) => `- 处理 \`${s}\` 时，优先读取 \`.claude/hub/overrides/${s}/${stage}.md\`。`).join('\n')
     : '- 当前没有子项目级覆盖。';
+  const sharedBlock = shared.length
+    ? shared.map((s) => `### \`${s.rel}\`\n\n${s.content}`).join('\n\n')
+    : '- 当前没有共享规则。';
 
   const body = `${MARKER}
 > 源：\`.claude/hub/stages/${stage}/SKILL.md\`
@@ -91,6 +119,12 @@ ${description}
 
 执行前必须完整读取 \`${source}\`。
 其中的 \`references/\`、\`templates/\` 等相对引用，以**该文件所在目录**为基准。
+
+## 共享规则
+
+以下规则来自 \`.claude/hub/_shared/\`，对所有阶段生效；阶段正文可补充，但不得放宽其中的安全与门禁要求。
+
+${sharedBlock}
 
 ## 阶段资源
 
@@ -127,6 +161,7 @@ ${overrideBlock}
     source,
     description,
     resources,
+    shared: shared.map((s) => s.rel),
     content: `---\nname: devflow-${stage}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`,
   };
 }
@@ -164,6 +199,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const stages = stageList(config, root);
+  const shared = sharedRules(root);
   const results = [];
   const errors = [];
   for (const stage of stages) {
@@ -171,7 +207,7 @@ export async function main(argv = process.argv.slice(2)) {
       errors.push({ stage, error: `阶段名 "${stage}" 非法：只允许小写字母开头的 [a-z0-9_-]。` });
       continue;
     }
-    const built = buildSkill(root, stage, config);
+    const built = buildSkill(root, stage, config, shared);
     if (built.error) errors.push(built);
     else results.push(built);
   }
@@ -191,7 +227,7 @@ export async function main(argv = process.argv.slice(2)) {
       continue;
     }
     if (!existsSync(target)) drift.push({ ...r, reason: 'missing' });
-    else if (sha256(readText(target)) !== sha256(r.content)) drift.push({ ...r, reason: 'changed' });
+    else if (contentHash(readText(target)) !== contentHash(r.content)) drift.push({ ...r, reason: 'changed' });
   }
   for (const s of stale) drift.push({ name: s.name, target: s.target, reason: 'stale' });
   for (const e of errors) drift.push({ name: `devflow-${e.stage}`, reason: 'source-missing', detail: e.error });
@@ -244,7 +280,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (existsSync(target) && !force) {
       const managed = previous.skills.some((s) => s.name === r.name);
-      if (!managed && sha256(readText(target)) !== sha256(r.content)) {
+      if (!managed && contentHash(readText(target)) !== contentHash(r.content)) {
         errors.push({ stage: r.stage, error: `${r.target} 已存在且不受 devflow 管理，跳过。使用 --force 覆盖。` });
         skipped.push(r.target);
         continue;
@@ -286,13 +322,15 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion: version,
     requiresPlugin: requires,
     source: '.claude/hub',
+    shared: shared.map((s) => ({ path: s.path, hash: s.hash })),
     skills: [
       ...written.map((r) => ({
         name: r.name,
         target: r.target,
         source: r.source,
-        hash: sha256(r.content),
+        hash: contentHash(r.content),
         resources: r.resources,
+        shared: r.shared,
       })),
       ...preserved,
     ],

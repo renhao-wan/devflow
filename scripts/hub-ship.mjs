@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, rmSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   argValue, hasFlag, projectRoot, pluginInfo,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
-  bumpVersion, samePath,
+  bumpVersion, samePath, isValidStageName,
 } from './lib/common.mjs';
 import { main as upstream } from './hub-upstream.mjs';
 
@@ -51,7 +51,13 @@ function dirty(cwd) {
     const entry = entries[i];
     const status = entry.slice(0, 2);
     out.push({ status, path: entry.slice(3).replace(/\\/g, '/') });
-    if (status[0] === 'R' || status[0] === 'C') i += 1;
+    if (status[0] === 'R' || status[0] === 'C') {
+      // rename 的旧路径同样需要参与白名单冲突判断
+      if (status[0] === 'R' && entries[i + 1]) {
+        out.push({ status, path: entries[i + 1].replace(/\\/g, '/') });
+      }
+      i += 1;
+    }
   }
   return out;
 }
@@ -75,6 +81,27 @@ function uniqueBranch(cwd, base) {
 
 function stamp() {
   return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+}
+
+/** 临时 worktree 放在插件仓库同级的父目录，保证同一盘符，结束后删除。 */
+function worktreePath(pluginRoot) {
+  const parent = dirname(pluginRoot);
+  const prefix = join(parent, `.devflow-ship-${basename(pluginRoot)}-${process.pid}-${stamp()}`);
+  let candidate = prefix;
+  let i = 2;
+  while (existsSync(candidate)) {
+    candidate = `${prefix}-${i}`;
+    i += 1;
+  }
+  return candidate;
+}
+
+function removeWorktree(pluginRoot, dir) {
+  try { git(pluginRoot, ['worktree', 'remove', '--force', dir]); } catch { /* fallback below */ }
+  try {
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  } catch { /* 尽力清理，不掩盖主流程错误 */ }
+  try { git(pluginRoot, ['worktree', 'prune']); } catch { /* ignore */ }
 }
 
 function compareUrl(owner, repo, base, branch) {
@@ -144,6 +171,9 @@ export async function main(argv = process.argv.slice(2)) {
   const dryRun = hasFlag(argv, '--dry-run');
   const noPr = hasFlag(argv, '--no-pr');
   if (!stage) throw new Error('必须指定 --stage <req|plan|implement|test|review|debug>');
+  if (!isValidStageName(stage)) {
+    throw new Error(`阶段名非法：${stage}。只允许小写字母开头的 [a-z0-9_-]。`);
+  }
   if (!['patch', 'minor', 'major'].includes(kind)) {
     throw new Error(`--bump 只支持 patch|minor|major，收到：${kind}`);
   }
@@ -176,6 +206,16 @@ export async function main(argv = process.argv.slice(2)) {
   const oldVersion = info.version;
   const branch = uniqueBranch(pluginRoot, `devflow/upstream-${stage}-${stamp()}`);
 
+  // 先确认基分支存在，避免回灌写入后才发现无法建分支。
+  const baseRef = [base, `origin/${base}`].find((ref) =>
+    git(pluginRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).status === 0);
+  if (!baseRef) {
+    throw new Error(`找不到 --base ${base} 的本地或 origin 分支；请先 fetch，或改用正确的基础分支。`);
+  }
+  if (baseRef.startsWith('origin/')) {
+    log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
+  }
+
   if (dryRun) {
     const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--bump', kind]);
     console.log('\n[dry-run] 不会创建分支或提交。');
@@ -197,113 +237,100 @@ export async function main(argv = process.argv.slice(2)) {
     );
   }
 
-  // 先确认基分支存在，避免回灌写入后才发现无法建分支，留下脏工作区。
-  const baseRef = [base, `origin/${base}`].find((ref) =>
-    git(pluginRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).status === 0);
-  if (!baseRef) {
-    throw new Error(`找不到 --base ${base} 的本地或 origin 分支；请先 fetch，或改用正确的基础分支。`);
-  }
+  const worktreeDir = worktreePath(pluginRoot);
+  let worktreeAdded = false;
+  let keepBranch = false;
+  try {
+    // 在临时 worktree 中回灌和提交：主工作区的改动、当前分支和未提交文件完全不受影响。
+    gitOut(pluginRoot, ['worktree', 'add', '-b', branch, worktreeDir, baseRef]);
+    worktreeAdded = true;
 
-  const result = await upstream(['--root', root, '--stage', stage, '--plugin-root', pluginRoot, '--apply', '--bump', kind]);
-  if (!result.pending) {
-    console.log('没有可回灌的变化，未创建分支。');
-    return { stage, branch: null, applied: false };
-  }
+    const result = await upstream([
+      '--root', root, '--stage', stage, '--plugin-root', worktreeDir, '--apply', '--bump', kind,
+    ]);
+    if (!result.pending) {
+      console.log('没有可回灌的变化，未创建分支。');
+      return { stage, branch: null, applied: false };
+    }
 
-  const newVersion = result.version;
-  const after = dirty(pluginRoot);
-  const baselinePaths = new Set(baseline.map((f) => f.path));
-  const outOfScope = after.filter((f) => !isWhitelisted(f.path) && !baselinePaths.has(f.path));
-  if (outOfScope.length) {
-    const reverted = [];
-    for (const f of outOfScope) {
+    const newVersion = result.version;
+    const after = dirty(worktreeDir);
+    const outOfScope = after.filter((f) => !isWhitelisted(f.path));
+    if (outOfScope.length) {
+      throw new Error(`回灌改动了白名单外的文件，已停止提交：${outOfScope.map((f) => f.path).join('、')}`);
+    }
+
+    const toAdd = after.filter((f) => isWhitelisted(f.path)).map((f) => f.path);
+    if (!toAdd.length) throw new Error('没有可提交的改动');
+
+    for (const path of toAdd) gitOut(worktreeDir, ['add', '--', path]);
+
+    const projectName = basename(root);
+    const subject = `feat(templates): 回灌 ${stage} 阶段规则`;
+    const message = [
+      subject,
+      '',
+      `来源：${projectName}`,
+      `文件：${toAdd.join('、')}`,
+      `版本：${oldVersion} → ${newVersion}`,
+    ].join('\n');
+    gitOut(worktreeDir, ['commit', '-m', message]);
+    keepBranch = true;
+    log('ok', `已提交到分支 ${branch}`);
+
+    const pushed = git(worktreeDir, ['push', '-u', 'origin', branch]);
+    if (pushed.status !== 0) {
+      throw new Error(
+        `push 失败，分支和提交已保留在本地：${branch}，主工作区未切换。\n${(pushed.stderr || '').trim()}`,
+      );
+    }
+    log('ok', `已推送到 origin/${branch}`);
+
+    if (baseline.length) {
+      console.log(`提醒：${baseline.length} 个工作区改动未包含在本次提交：${baseline.map((f) => f.path).join('、')}`);
+    }
+
+    if (noPr || !ghRepo) {
+      if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactUrl(remoteUrl)}`);
+      return { stage, branch, applied: true, version: newVersion, prUrl: null };
+    }
+
+    const url = compareUrl(ghRepo.owner, ghRepo.repo, base, branch);
+    const prBody = buildPrBody(worktreeDir, {
+      stage, projectName, files: toAdd, oldVersion, newVersion, kind,
+    });
+
+    const ghAvailable = spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;
+    if (ghAvailable) {
+      const created = spawnSync('gh', [
+        'pr', 'create', '--base', base, '--head', branch, '--title', subject, '--body', prBody,
+      ], { cwd: worktreeDir, encoding: 'utf8' });
+      if (created.status === 0) {
+        const prUrl = (created.stdout || '').trim().split('\n').pop();
+        log('ok', `已创建 PR：${prUrl}`);
+        return { stage, branch, applied: true, version: newVersion, prUrl };
+      }
+      console.error(`[WARN] gh pr create 失败：${(created.stderr || '').trim()}`);
+    }
+
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    if (token) {
       try {
-        if (f.status === '??' || f.status[0] === 'A') {
-          rmSync(join(pluginRoot, f.path), { force: true });
-          reverted.push(`删除 ${f.path}`);
-        } else {
-          gitOut(pluginRoot, ['checkout', '--', f.path]);
-          reverted.push(`还原 ${f.path}`);
-        }
-      } catch { /* 尽力还原，失败不阻断报错 */ }
+        const prUrl = await createPrViaApi(ghRepo.owner, ghRepo.repo, base, branch, subject, prBody, token);
+        log('ok', `已创建 PR（API）：${prUrl}`);
+        return { stage, branch, applied: true, version: newVersion, prUrl };
+      } catch (err) {
+        console.error(`[WARN] GitHub API 创建 PR 失败：${err.message}`);
+      }
     }
-    throw new Error(
-      `回灌改动了白名单外的文件，已停止提交：${outOfScope.map((f) => f.path).join('、')}`
-      + (reverted.length ? `\n已尝试还原：${reverted.join('、')}` : ''),
-    );
+
+    console.log(`\n已推送分支，请打开以下链接创建 PR：\n${url}`);
+    return { stage, branch, applied: true, version: newVersion, prUrl: url };
+  } finally {
+    if (worktreeAdded) removeWorktree(pluginRoot, worktreeDir);
+    // 没有提交时删除刚创建的空分支；已提交（含 push 失败）则保留，便于用户续推。
+    if (worktreeAdded && !keepBranch) git(pluginRoot, ['branch', '-D', branch]);
   }
-
-  const toAdd = after.filter((f) => isWhitelisted(f.path)).map((f) => f.path);
-  if (!toAdd.length) throw new Error('没有可提交的改动');
-
-  const originalBranch = gitOut(pluginRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  gitOut(pluginRoot, ['checkout', '-b', branch, baseRef]);
-  for (const path of toAdd) gitOut(pluginRoot, ['add', '--', path]);
-
-  const projectName = basename(root);
-  const subject = `feat(templates): 回灌 ${stage} 阶段规则`;
-  const message = [
-    subject,
-    '',
-    `来源：${projectName}`,
-    `文件：${toAdd.join('、')}`,
-    `版本：${oldVersion} → ${newVersion}`,
-  ].join('\n');
-  gitOut(pluginRoot, ['commit', '-m', message]);
-  log('ok', `已提交到分支 ${branch}`);
-
-  const pushed = git(pluginRoot, ['push', '-u', 'origin', branch]);
-  if (pushed.status !== 0) {
-    // 保留分支与提交，但把工作区切回原分支，避免把用户留在半成品状态
-    if (originalBranch && originalBranch !== 'HEAD') {
-      git(pluginRoot, ['checkout', originalBranch]);
-    }
-    throw new Error(
-      `push 失败，分支和提交已保留在本地：${branch}（已切回 ${originalBranch || '原分支'}）\n${(pushed.stderr || '').trim()}`,
-    );
-  }
-  log('ok', `已推送到 origin/${branch}`);
-
-  if (baseline.length) {
-    console.log(`提醒：${baseline.length} 个工作区改动未包含在本次提交：${baseline.map((f) => f.path).join('、')}`);
-  }
-
-  if (noPr || !ghRepo) {
-    if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactUrl(remoteUrl)}`);
-    return { stage, branch, applied: true, version: newVersion, prUrl: null };
-  }
-
-  const url = compareUrl(ghRepo.owner, ghRepo.repo, base, branch);
-  const prBody = buildPrBody(pluginRoot, {
-    stage, projectName, files: toAdd, oldVersion, newVersion, kind,
-  });
-
-  const ghAvailable = spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;
-  if (ghAvailable) {
-    const created = spawnSync('gh', [
-      'pr', 'create', '--base', base, '--head', branch, '--title', subject, '--body', prBody,
-    ], { cwd: pluginRoot, encoding: 'utf8' });
-    if (created.status === 0) {
-      const prUrl = (created.stdout || '').trim().split('\n').pop();
-      log('ok', `已创建 PR：${prUrl}`);
-      return { stage, branch, applied: true, version: newVersion, prUrl };
-    }
-    console.error(`[WARN] gh pr create 失败：${(created.stderr || '').trim()}`);
-  }
-
-  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-  if (token) {
-    try {
-      const prUrl = await createPrViaApi(ghRepo.owner, ghRepo.repo, base, branch, subject, prBody, token);
-      log('ok', `已创建 PR（API）：${prUrl}`);
-      return { stage, branch, applied: true, version: newVersion, prUrl };
-    } catch (err) {
-      console.error(`[WARN] GitHub API 创建 PR 失败：${err.message}`);
-    }
-  }
-
-  console.log(`\n已推送分支，请打开以下链接创建 PR：\n${url}`);
-  return { stage, branch, applied: true, version: newVersion, prUrl: url };
 }
 
 if (isMain(import.meta.url)) {

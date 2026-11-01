@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, renameSync, rmSync, realpathSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep } from 'node:path';
+import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -64,10 +64,28 @@ export function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+/** Git 与编辑器可能改写行尾；比较文本时统一为 LF，避免仅 CRLF 差异被当成漂移。 */
+export function normalizeEol(text) {
+  return String(text).replace(/\r\n?/g, '\n');
+}
+
+/** 文本内容哈希（行尾归一化），用于源账本、投影漂移与回灌比较。 */
+export function contentHash(text) {
+  return sha256(normalizeEol(text));
+}
+
+/** child 是否位于 parent 目录内（词法判断，不要求路径已存在）。 */
+export function isPathInside(parent, child) {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
 export function walk(dir, suffix = '') {
   const out = [];
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // 不跟随符号链接/junction：避免把项目外的文件当成阶段资源或回灌内容。
+    if (entry.isSymbolicLink()) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...walk(full, suffix));
     else if (!suffix || entry.name.endsWith(suffix)) out.push(full);

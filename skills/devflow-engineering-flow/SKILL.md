@@ -58,7 +58,7 @@ devflow 与 superpowers 都覆盖“计划、TDD、排障、评审”，但职�
 
 | 维度 | devflow | superpowers |
 | --- | --- | --- |
-| 管什么 | 阶段顺序、产物路径、门禁、项目真源、回灌与同步 | 执行技法：brainstorming、writing-plans、TDD、systematic-debugging、code-review、verification、worktrees |
+| 管什么 | 阶段顺序、产物路径、门禁、项目真源、回灌与同步 | 执行技法：brainstorming、writing-plans、TDD、systematic-debugging、requesting-code-review / receiving-code-review、verification、worktrees |
 | 产物放哪 | `docs/devflow/<slug>/` 下的 `req.md`、`plan.md` 等 | 由对应技能自行约定 |
 | 权威性 | 项目规则以 `.claude/hub/stages/<stage>/SKILL.md` 为准 | 作为方法来源 |
 

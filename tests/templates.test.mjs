@@ -85,6 +85,39 @@ test('调研相关命令与子代理具备检索工具', () => {
   }
 });
 
+test('命令 allowed-tools 覆盖子代理与技能调用', () => {
+  const expected = {
+    plan: ['Skill'],
+    implement: ['Skill'],
+    test: ['Task'],
+    debug: ['Task', 'Skill'],
+    review: ['Task', 'Skill'],
+  };
+  for (const [stage, tools] of Object.entries(expected)) {
+    const front = read(`commands/${stage}.md`).split('---')[1] || '';
+    for (const tool of tools) {
+      assert.match(front, new RegExp(`allowed-tools:[^\\n]*\\b${tool}\\b`), `${stage} 缺少 ${tool}`);
+    }
+  }
+});
+
+test('review 命令与技能引用 superpowers 的实际技能名', () => {
+  for (const rel of ['commands/review.md', 'skills/devflow-code-review/SKILL.md',
+    'skills/devflow-engineering-flow/SKILL.md', 'templates/stages/review/SKILL.md']) {
+    const body = read(rel);
+    assert.match(body, /requesting-code-review/, `${rel} 缺少 requesting-code-review`);
+    assert.match(body, /receiving-code-review/, `${rel} 缺少 receiving-code-review`);
+  }
+});
+
+test('测试报告模板记录运行环境', () => {
+  const tpl = read('templates/stages/test/templates/test-report.template.md');
+  assert.match(tpl, /环境/);
+  assert.match(tpl, /OS/);
+  assert.match(tpl, /Node/);
+  assert.match(tpl, /包管理器/);
+});
+
 test('流程技能说明与 superpowers 的协作边界', () => {
   const skill = read('skills/devflow-engineering-flow/SKILL.md');
   assert.match(skill, /## 与 superpowers 的协作边界/);

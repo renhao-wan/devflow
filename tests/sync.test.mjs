@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -153,6 +154,41 @@ test('sync 不复制备份/临时文件，并刷新 pluginRoot', () => {
 
     const meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8'));
     assert.equal(meta.pluginRoot, installed);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 归一化行尾，兼容旧账本的原始哈希', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-crlf-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\nreview v1\n',
+    });
+    const root = makeProject(base, repo);
+    const dest = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+
+    // 仅行尾不同不算冲突
+    writeFileSync(dest, readFileSync(dest, 'utf8').replace(/\n/g, '\r\n'));
+    const same = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo, '--dry-run'], root);
+    assert.equal(same.status, 0, same.stderr + same.stdout);
+    assert.match(same.stdout, /冲突 0/);
+    assert.match(same.stdout, /更新 0/);
+
+    // 旧账本记录原始哈希：模板升级后应识别为“未手改”，直接更新
+    const sourcesFile = join(root, '.claude', '.hub-sources.json');
+    const sources = JSON.parse(readFileSync(sourcesFile, 'utf8'));
+    const rel = '.claude/hub/stages/review/SKILL.md';
+    sources.files[rel] = createHash('sha256').update(readFileSync(dest, 'utf8'), 'utf8').digest('hex');
+    writeFileSync(sourcesFile, JSON.stringify(sources, null, 2));
+    writeFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 评审\n---\n\nreview v2\n');
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /更新 .*review\/SKILL\.md/);
+    assert.doesNotMatch(sync.stdout, /冲突 .*review\/SKILL\.md/);
+    assert.match(readFileSync(dest, 'utf8'), /review v2/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
