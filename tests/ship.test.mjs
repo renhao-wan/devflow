@@ -72,6 +72,7 @@ function makePluginRepo(base) {
   git(repo, ['config', 'user.email', 'test@example.com']);
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-m', 'init']);
+  git(repo, ['branch', '-M', 'main']);
 
   const bare = join(base, 'remote.git');
   git(base, ['init', '--bare', bare]);
@@ -97,18 +98,84 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
     const subject = git(bare, ['log', '--format=%s', '-1', branchName]);
     assert.match(subject, /回灌 review 阶段规则/);
 
-    const plugin = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8'));
+    const plugin = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/plugin.json`]));
     assert.equal(plugin.version, '1.0.1');
-    const pkg = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(git(bare, ['show', `${branchName}:package.json`]));
     assert.equal(pkg.version, '1.0.1');
-    const market = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    const market = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/marketplace.json`]));
     assert.equal(market.metadata.version, '1.0.1');
 
-    const template = readFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
+    const template = git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]);
     assert.match(template, /先看正确性/);
 
-    const log = readFileSync(join(repo, 'templates', 'stages', '_feedback-log.md'), 'utf8');
+    const log = git(bare, ['show', `${branchName}:templates/stages/_feedback-log.md`]);
     assert.match(log, /回灌文件/);
+
+    // 回灌只在临时 worktree 中发生：主工作区版本与分支不变，也不留下未提交改动。
+    assert.equal(JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0');
+    assert.equal(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
+    assert.equal(git(repo, ['status', '--porcelain']), '');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ship 从 --base 创建分支，不携带当前分支的无关提交', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-base-'));
+  try {
+    const root = makeProject();
+    const { repo } = makePluginRepo(base);
+
+    git(repo, ['checkout', '-b', 'feature']);
+    writeFileSync(join(repo, 'unrelated.txt'), '无关改动\n');
+    git(repo, ['add', 'unrelated.txt']);
+    git(repo, ['commit', '-m', 'chore: feature 分支无关提交']);
+    const unrelated = git(repo, ['rev-parse', 'HEAD']);
+
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main'], repo);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+
+    const branches = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n');
+    const branch = branches.find((b) => b.startsWith('devflow/upstream-review'));
+    assert.ok(branch, `未找到回灌分支：${branches.join('、')}`);
+    // 临时 worktree 方案不切换主工作区
+    assert.equal(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']), 'feature');
+    const subjects = git(repo, ['log', '--format=%s', `main..${branch}`]).split('\n');
+    assert.equal(subjects.length, 1, subjects.join('\n'));
+    assert.match(subjects[0], /回灌 review 阶段规则/);
+    assert.notEqual(spawnSync('git', ['merge-base', '--is-ancestor', unrelated, branch], { cwd: repo }).status, 0);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ship 在基分支缺失时先失败，不改插件工作区', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-nobase-'));
+  try {
+    const root = makeProject();
+    const { repo } = makePluginRepo(base);
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'requiresPlugin: "^1.0.0"',
+      'stages:',
+      '  - review',
+      'subprojects: {}',
+      'defaults:',
+      '  testCommand: "npm test"',
+      'upstream:',
+      '  blocklist: []',
+      '',
+    ].join('\n'));
+
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'no-such-base'], repo);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /找不到 --base/);
+    const plugin = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8'));
+    assert.equal(plugin.version, '1.0.0');
+    assert.equal(readFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8'), '旧内容\n');
+    assert.equal(git(repo, ['status', '--porcelain']), '');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

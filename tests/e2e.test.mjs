@@ -33,6 +33,7 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'req', 'SKILL.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'references', 'severity.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'templates', 'review.template.md')));
+    assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'prior-art-research.md')));
     assert.ok(existsSync(join(root, '.devflow.json')));
     for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs']) {
       assert.ok(existsSync(join(root, 'scripts', file)), `缺少 loader ${file}`);
@@ -50,6 +51,8 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.equal(manifest.skills.length, 6);
     const reviewEntry = manifest.skills.find((s) => s.name === 'devflow-review');
     assert.deepEqual(reviewEntry.resources, ['references/severity.md', 'templates/review.template.md']);
+    const planEntry = manifest.skills.find((s) => s.name === 'devflow-plan');
+    assert.ok(planEntry.resources.includes('references/prior-art-research.md'));
 
     const reviewProjection = readFileSync(join(root, '.claude', 'skills', 'devflow-review', 'SKILL.md'), 'utf8');
     assert.match(reviewProjection, /## 阶段资源/);
@@ -118,6 +121,65 @@ test('子项目测试命令可从根执行，并识别包管理器', () => {
     assert.equal(config.defaults.testCommand, 'pnpm run test');
     assert.deepEqual(Object.keys(config.subprojects), ['api', 'worker']);
     assert.match(init.stdout, /services\/worker/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gen 跳过不受管理的同名投影，不接管也不覆盖', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const manifestFile = join(root, '.claude', '.hub-manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.skills = manifest.skills.filter((s) => s.name !== 'devflow-req');
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+    const target = join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md');
+    writeFileSync(target, '手写内容\n');
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1, gen.stderr + gen.stdout);
+    assert.match(gen.stdout + gen.stderr, /不受 devflow 管理/);
+    assert.equal(readFileSync(target, 'utf8'), '手写内容\n');
+    const after = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    assert.equal(after.skills.some((s) => s.name === 'devflow-req'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('源文件缺失时保留旧投影与账本条目', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const source = join(root, '.claude', 'hub', 'stages', 'test', 'SKILL.md');
+    const projection = join(root, '.claude', 'skills', 'devflow-test', 'SKILL.md');
+    const before = readFileSync(projection, 'utf8');
+    rmSync(source);
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1);
+    assert.match(gen.stdout + gen.stderr, /缺少源文件/);
+    assert.equal(existsSync(projection), true);
+    assert.equal(readFileSync(projection, 'utf8'), before);
+    const manifest = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    assert.ok(manifest.skills.some((s) => s.name === 'devflow-test'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gen --json 普通执行时 stdout 只输出可解析的 JSON', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const gen = run('gen-claude-skills.mjs', ['--root', root, '--json'], root);
+    assert.equal(gen.status, 0, gen.stderr);
+    const report = JSON.parse(gen.stdout);
+    assert.equal(report.written.length, 6);
+    assert.equal(report.errors.length, 0);
+    assert.doesNotMatch(gen.stdout, /\[OK\]/);
+    assert.match(gen.stderr, /\[ok\]/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -327,6 +389,80 @@ test('doctor 提示 testCommand 依赖的工具不在 PATH', () => {
     } finally {
       rmSync(emptyBin, { recursive: true, force: true });
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('_shared 规则注入所有投影，变更后 doctor 提示重新生成', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const sharedDir = join(root, '.claude', 'hub', '_shared');
+    mkdirSync(sharedDir, { recursive: true });
+    writeFileSync(join(sharedDir, 'security.md'), '# 安全\n\n- 不提交密钥。\n');
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 0, gen.stderr);
+    for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+      const projection = readFileSync(join(root, '.claude', 'skills', `devflow-${stage}`, 'SKILL.md'), 'utf8');
+      assert.match(projection, /## 共享规则/);
+      assert.match(projection, /不提交密钥/);
+    }
+    const manifest = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    assert.equal(manifest.shared.length, 1);
+    assert.equal(manifest.shared[0].path, '.claude/hub/_shared/security.md');
+
+    const check = run('gen-claude-skills.mjs', ['--root', root, '--check'], root);
+    assert.equal(check.status, 0, check.stdout);
+
+    writeFileSync(join(sharedDir, 'security.md'), '# 安全\n\n- 不提交密钥。\n- 不记录个人路径。\n');
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.match(doctor.stdout, /共享规则已变更/);
+
+    assert.equal(run('gen-claude-skills.mjs', ['--root', root], root).status, 0);
+    assert.match(readFileSync(join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md'), 'utf8'), /不记录个人路径/);
+    assert.doesNotMatch(run('hub-doctor.mjs', ['--root', root], root).stdout, /共享规则已变更/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('init 自动刷新旧 loader，doctor 能发现过期 loader', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const loader = join(root, 'scripts', 'devflow-gen.mjs');
+    writeFileSync(loader, '#!/usr/bin/env node\n// 旧 loader\n');
+    assert.match(run('hub-doctor.mjs', ['--root', root], root).stdout, /loader 内容过期/);
+
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const refreshed = readFileSync(loader, 'utf8');
+    assert.match(refreshed, /CLAUDE_PLUGIN_ROOT/);
+    assert.doesNotMatch(run('hub-doctor.mjs', ['--root', root], root).stdout, /loader 内容过期/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor 结合 testsPending 与改动时间判断测试状态', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const stateFile = join(root, '.claude', '.devflow-state.json');
+    writeFileSync(stateFile, JSON.stringify({
+      lastChangeAt: '2026-01-02T00:00:00.000Z',
+      lastTestPassedAt: '2026-01-01T00:00:00.000Z',
+      testsPending: false,
+    }));
+    assert.match(run('hub-doctor.mjs', ['--root', root], root).stdout, /改动晚于测试通过时间/);
+
+    writeFileSync(stateFile, JSON.stringify({
+      lastChangeAt: '2026-01-02T00:00:00.000Z',
+      lastTestPassedAt: '2026-01-03T00:00:00.000Z',
+      testsPending: false,
+    }));
+    assert.match(run('hub-doctor.mjs', ['--root', root], root).stdout, /最近一次测试通过/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

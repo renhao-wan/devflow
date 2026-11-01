@@ -52,9 +52,27 @@ req → plan → implement → test → review
 - 生成的投影：`.claude/skills/devflow-<stage>/SKILL.md`（勿手改）
 - 改动源后运行 `node scripts/devflow-gen.mjs`
 
+## 与 superpowers 的协作边界
+
+devflow 与 superpowers 都覆盖“计划、TDD、排障、评审”，但职责不同，不要同时维护两份：
+
+| 维度 | devflow | superpowers |
+| --- | --- | --- |
+| 管什么 | 阶段顺序、产物路径、门禁、项目真源、回灌与同步 | 执行技法：brainstorming、writing-plans、TDD、systematic-debugging、requesting-code-review / receiving-code-review、verification、worktrees |
+| 产物放哪 | `docs/devflow/<slug>/` 下的 `req.md`、`plan.md` 等 | 由对应技能自行约定 |
+| 权威性 | 项目规则以 `.claude/hub/stages/<stage>/SKILL.md` 为准 | 作为方法来源 |
+
+协作规则：
+
+- 阶段顺序、产物路径与门禁冲突时，**以 devflow 为准**。
+- 已有 superpowers 的 `brainstorming` 结果或 `writing-plans` 计划时，把结论吸收进 `plan.md`，不并存两份设计/计划。
+- 需要发散方案、拆解执行步骤、系统排障时，优先用 superpowers 的技能；需要确认“现在该走哪个阶段、产物落在哪、门禁过没”时，用 devflow。
+- 未安装 superpowers 时，devflow 自带的 TDD、系统排障、代码评审技能作为 fallback。
+
 ## 反模式
 
 - 没需求就写代码；没计划就大改。
 - 测试没跑就说通过。
 - 审查只夸不挑。
 - 排障靠猜，不复现。
+- 同时维护 superpowers 计划与 `plan.md` 两份方案。

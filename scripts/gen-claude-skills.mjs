@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
-  readText, writeAtomic, sha256, log, posix, isMain, projectRoot,
-  walk, relPosix, parseFrontmatter, isValidStageName, STAGE_NAME_RE,
-  isGeneratedArtifact,
+  readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
+  walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact,
 } from './lib/common.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
@@ -52,16 +51,42 @@ function stageResources(root, stage) {
     .sort();
 }
 
-/** 目标必须落在 .claude/skills/devflow-<stage>/ 内，避免账本或阶段名把文件写到工作区外。 */
+/** 读取项目级共享规则：对所有阶段生效，随投影一起分发。 */
+function sharedRules(root) {
+  const dir = join(root, '.claude', 'hub', '_shared');
+  return walk(dir, '.md')
+    .map((abs) => ({
+      path: `.claude/hub/_shared/${relPosix(dir, abs)}`,
+      rel: relPosix(dir, abs),
+      content: normalizeEol(readText(abs)).trim(),
+      hash: contentHash(readText(abs)),
+    }))
+    .filter((s) => s.content && !isGeneratedArtifact(s.rel))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+/** 目标必须落在 .claude/skills/devflow-<stage>/ 内，且真实路径不能跳出项目（防 junction/符号链接）。 */
 function safeSkillTarget(root, rel) {
   if (!rel || rel.startsWith('/') || rel.includes('..')) return null;
   if (!rel.startsWith('.claude/skills/devflow-')) return null;
   const parts = rel.split('/');
   if (parts.length !== 4 || parts[3] !== 'SKILL.md') return null;
-  return join(root, ...parts);
+  const target = join(root, ...parts);
+
+  // 目标或父目录可能是符号链接：用最近的已存在祖先做真实路径校验。
+  let anchor = target;
+  while (!existsSync(anchor)) {
+    const parent = dirname(anchor);
+    if (parent === anchor) break;
+    anchor = parent;
+  }
+  const rootReal = canonicalPath(root);
+  const anchorReal = canonicalPath(anchor);
+  if (anchorReal !== rootReal && !anchorReal.startsWith(`${rootReal}/`)) return null;
+  return target;
 }
 
-function buildSkill(root, stage, config) {
+function buildSkill(root, stage, config, shared) {
   const source = `.claude/hub/stages/${stage}/SKILL.md`;
   const sourceAbs = join(root, ...source.split('/'));
   if (!existsSync(sourceAbs)) {
@@ -76,6 +101,9 @@ function buildSkill(root, stage, config) {
   const overrideBlock = overrides.length
     ? overrides.map((s) => `- 处理 \`${s}\` 时，优先读取 \`.claude/hub/overrides/${s}/${stage}.md\`。`).join('\n')
     : '- 当前没有子项目级覆盖。';
+  const sharedBlock = shared.length
+    ? shared.map((s) => `### \`${s.rel}\`\n\n${s.content}`).join('\n\n')
+    : '- 当前没有共享规则。';
 
   const body = `${MARKER}
 > 源：\`.claude/hub/stages/${stage}/SKILL.md\`
@@ -91,6 +119,12 @@ ${description}
 
 执行前必须完整读取 \`${source}\`。
 其中的 \`references/\`、\`templates/\` 等相对引用，以**该文件所在目录**为基准。
+
+## 共享规则
+
+以下规则来自 \`.claude/hub/_shared/\`，对所有阶段生效；阶段正文可补充，但不得放宽其中的安全与门禁要求。
+
+${sharedBlock}
 
 ## 阶段资源
 
@@ -127,6 +161,7 @@ ${overrideBlock}
     source,
     description,
     resources,
+    shared: shared.map((s) => s.rel),
     content: `---\nname: devflow-${stage}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`,
   };
 }
@@ -149,6 +184,10 @@ export async function main(argv = process.argv.slice(2)) {
   const dryRun = hasFlag(argv, '--dry-run');
   const json = hasFlag(argv, '--json');
   const force = hasFlag(argv, '--force');
+  // JSON 模式下 stdout 只输出报告，过程日志走 stderr，避免把输出流混在一起。
+  const emit = json
+    ? (status, message) => process.stderr.write(`[${status}] ${message}\n`)
+    : log;
 
   const { config, file: hubFile } = loadHub(root);
   const pluginRoot = hasFlag(argv, '--no-plugin') ? null : findPluginRoot(root);
@@ -160,6 +199,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const stages = stageList(config, root);
+  const shared = sharedRules(root);
   const results = [];
   const errors = [];
   for (const stage of stages) {
@@ -167,14 +207,17 @@ export async function main(argv = process.argv.slice(2)) {
       errors.push({ stage, error: `阶段名 "${stage}" 非法：只允许小写字母开头的 [a-z0-9_-]。` });
       continue;
     }
-    const built = buildSkill(root, stage, config);
+    const built = buildSkill(root, stage, config, shared);
     if (built.error) errors.push(built);
     else results.push(built);
   }
 
   const previous = readManifest(root);
+  const erroredStages = new Set(errors.map((e) => e.stage));
   const currentNames = new Set(results.map((r) => r.name));
-  const stale = previous.skills.filter((s) => s.name && !currentNames.has(s.name));
+  const stale = previous.skills.filter((s) => s.name
+    && !currentNames.has(s.name)
+    && !erroredStages.has(s.name.replace(/^devflow-/, '')));
 
   const drift = [];
   for (const r of results) {
@@ -184,7 +227,7 @@ export async function main(argv = process.argv.slice(2)) {
       continue;
     }
     if (!existsSync(target)) drift.push({ ...r, reason: 'missing' });
-    else if (sha256(readText(target)) !== sha256(r.content)) drift.push({ ...r, reason: 'changed' });
+    else if (contentHash(readText(target)) !== contentHash(r.content)) drift.push({ ...r, reason: 'changed' });
   }
   for (const s of stale) drift.push({ name: s.name, target: s.target, reason: 'stale' });
   for (const e of errors) drift.push({ name: `devflow-${e.stage}`, reason: 'source-missing', detail: e.error });
@@ -195,7 +238,9 @@ export async function main(argv = process.argv.slice(2)) {
     requiresPlugin: requires,
     stages: results.map((r) => ({ name: r.name, target: r.target, source: r.source })),
     drift,
-    errors: errors.map((e) => e.detail),
+    errors: errors.map((e) => e.error ?? e.detail ?? String(e)),
+    written: [],
+    skipped: [],
     check,
     dryRun,
   };
@@ -224,28 +269,33 @@ export async function main(argv = process.argv.slice(2)) {
     return report;
   }
 
+  const written = [];
+  const skipped = [];
   for (const r of results) {
     const target = safeSkillTarget(root, r.target);
     if (!target) {
       errors.push({ stage: r.stage, error: `目标路径越界，跳过：${r.target}` });
+      skipped.push(r.target);
       continue;
     }
     if (existsSync(target) && !force) {
       const managed = previous.skills.some((s) => s.name === r.name);
-      if (!managed && sha256(readText(target)) !== sha256(r.content)) {
+      if (!managed && contentHash(readText(target)) !== contentHash(r.content)) {
         errors.push({ stage: r.stage, error: `${r.target} 已存在且不受 devflow 管理，跳过。使用 --force 覆盖。` });
+        skipped.push(r.target);
         continue;
       }
     }
     writeAtomic(target, r.content);
-    log('ok', `写入 ${r.target}`);
+    written.push(r);
+    emit('ok', `写入 ${r.target}`);
   }
 
   for (const s of stale) {
     if (!s.target) continue;
     const target = safeSkillTarget(root, s.target);
     if (!target) {
-      log('warn', `账本中的过期目标不合法，跳过：${s.target}`);
+      emit('warn', `账本中的过期目标不合法，跳过：${s.target}`);
       continue;
     }
     if (existsSync(target)) {
@@ -255,10 +305,16 @@ export async function main(argv = process.argv.slice(2)) {
       if (siblings.length === 1 && siblings[0] === 'SKILL.md') {
         const { rmSync } = await import('node:fs');
         rmSync(dir, { recursive: true, force: true });
-        log('ok', `清理过期技能 ${s.name}`);
+        emit('ok', `清理过期技能 ${s.name}`);
       }
     }
   }
+
+  // 源文件出错的阶段可能暂时无法生成：保留账本中的旧条目，避免投影失去归属。
+  const writtenNames = new Set(written.map((r) => r.name));
+  const erroredNames = new Set(errors.map((e) => `devflow-${e.stage}`));
+  const preserved = previous.skills.filter((s) => s.name && s.target
+    && erroredNames.has(s.name) && !writtenNames.has(s.name));
 
   const manifest = {
     schemaVersion: 1,
@@ -266,18 +322,28 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion: version,
     requiresPlugin: requires,
     source: '.claude/hub',
-    skills: results.map((r) => ({
-      name: r.name,
-      target: r.target,
-      source: r.source,
-      hash: sha256(r.content),
-      resources: r.resources,
-    })),
+    shared: shared.map((s) => ({ path: s.path, hash: s.hash })),
+    skills: [
+      ...written.map((r) => ({
+        name: r.name,
+        target: r.target,
+        source: r.source,
+        hash: contentHash(r.content),
+        resources: r.resources,
+        shared: r.shared,
+      })),
+      ...preserved,
+    ],
   };
   writeAtomic(join(root, '.claude', '.hub-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  log('ok', `生成 ${results.length} 个技能 → .claude/skills/`);
-  for (const e of errors) log('error', e.error);
+  emit('ok', `生成 ${written.length} 个技能 → .claude/skills/`);
+  for (const e of errors) emit('error', e.error);
   if (errors.length) process.exitCode = 1;
+
+  report.written = written.map((r) => r.target);
+  report.skipped = skipped;
+  report.errors = errors.map((e) => e.error ?? e.detail ?? String(e));
+  if (json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   return report;
 }
 

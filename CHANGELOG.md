@@ -1,5 +1,69 @@
 # Changelog
 
+## 1.3.2
+
+### 修复
+
+- `hub-upstream` / `hub-ship` 校验阶段名并做路径包含性检查，防止通过 `hub.yaml` 或账本把文件写到 `.claude/hub/stages` 与插件模板之外
+- 生成器与 `doctor` 解析账本路径时使用真实路径校验，跳过符号链接，并把 Windows 与 POSIX 的行尾差异归一化后再比较哈希
+- `hub-ship` 改用临时 git worktree 完成回灌、提交与推送，主工作区不切换分支；`--base` 在写文件前校验，push 失败时保留本地分支与提交
+- `track-changes` 修复 `Date.parse` 缺失时间时的 1999 年回退，记录 rename 的旧路径，并支持 `NotebookEdit` 的 `notebook_path`
+- `check-tests` 对缺失或非法时间字段按“未知”处理，不再因时间回退而漏提醒或误静默
+- `guard-dangerous` 识别换行分隔的复合命令、环境变量前缀与 `sudo -u` / `timeout` / `env` / `nice` 等包装器，以及 `cmd.exe /c`、`cmd //c`、`powershell -C`、`shutdown.exe`、`rd /s/q`、`Remove-Item -Rec` 等变体；拒绝原因中的 URL 凭据、token 与密码参数会脱敏
+- `init` 重跑时自动刷新过期的 loader，且 loader 加载顺序优先使用当前会话的 `CLAUDE_PLUGIN_ROOT`
+- `hub-sync` 兼容旧账本记录的原始哈希，仅行尾不同时不再误判为手改
+- `doctor` 校验 `.claude/hub/_shared/` 的路径与哈希，发现共享规则变更时提示重新生成；测试状态同时参考 `testsPending` 与改动时间
+
+### 增强
+
+- 新增跨阶段共享规则目录 `.claude/hub/_shared/`，生成器会把其中每条规则注入所有阶段投影并记入账本
+- 命令的 `allowed-tools` 补齐 `Task` / `Skill`；review 命令与相关技能改用 superpowers 的实际技能名 `requesting-code-review` / `receiving-code-review`
+- 测试报告模板新增运行环境字段（OS / Node / 包管理器）
+
+### 文档
+
+- README 更新 loader 顺序、`_shared/`、ship 的临时 worktree 安全约束、CI Node 20 / 22 与测试数量
+- `docs/design.md` 补充 1.3.2 里程碑
+
+## 1.3.1
+
+### 修复
+
+- 生成器只把实际写入的投影记入账本；源文件出错时保留旧账本条目，过期清理跳过出错阶段，避免投影失去归属后被误删
+- 非受管投影内容与生成结果一致时正常采用；内容不同时跳过并提示 `--force`，不再静默覆盖或写入账本
+- `--json` 普通执行时 stdout 只输出报告，过程日志改走 stderr，便于脚本解析
+- `init` / `sync` 在生成阶段出错时明确提示错误数量，不再把失败包装成“初始化/同步完成”
+- `ship` 从 `--base`（本地或 `origin/<base>`）创建分支，避免把当前分支的无关提交带进 PR；远端 URL 日志做脱敏
+- `track-changes` 用修改时间筛选 Bash 后的 `git status`，已有脏文件或只读命令不再误触发“测试待验证”
+- `guard-dangerous` 覆盖 Windows 非根递归删除（`rd /s`、`del /s`、`Remove-Item -Recurse`），按命令位置判断避免误伤 `echo` / `grep` 文本；盘符根仍直接拒绝
+- `hub-upstream` 在 CHANGELOG 标题缺失时补标题再插入；已有同版本条目时不重复写入
+
+### 文档
+
+- 命令入口标注“以下为入口摘要，与阶段 SKILL 冲突时以 SKILL 为准”，并补齐 TDD、测试执行、系统排障、代码审查技能与子代理引用
+- plan 阶段明确吸收 superpowers 的 `brainstorming` / `writing-plans` 结论，不并存两份设计或计划
+- 三个 fallback 技能补充与 superpowers 的关系说明
+- README 更新 hooks 事件、Windows 递归删除的 deny/ask 说明与版本号
+
+## 1.3.0
+
+### 增强
+
+- plan 阶段新增“先调研已有实现”：按小改动 / 有界 / 架构性 / 可行性探索分级决定调研深度；产出 `## 调研与复用判断`，记录检索记录、候选对比与“采用 / 借鉴 / 自建 / 排除”的理由
+- 新增 `templates/stages/plan/references/prior-art-research.md`：检索方法、候选评估维度（能力、许可证、维护状态、依赖与退出成本、安全合规、迁移成本）与结论分类
+- plan 新增搜索失败降级协议：WebSearch → 官方文档/仓库 → GitHub API → 本地插件/vendor/缓存 → 用户资料；有上限重试，显式标记未验证项，禁止编造来源；高风险改动检索失败时先请用户确认
+- req 新增“技术约束”：是否允许新增依赖、许可证政策、运行时/版本下限、离线或私有部署、数据驻留、必须兼容接口；产出模板新增 `## 技术约束`
+- review 新增“复用与依赖检查”：核对 plan 的复用判断来源、许可证与约束一致性、维护状态与已知漏洞、搜索失败披露；`review-checklist` 新增对应清单
+- debug 新增可选的“查已知问题”：用完整错误、错误码与依赖版本检索官方 issue 与变更日志；外部结论只作线索，须本地复现验证
+- `commands/plan|review|debug` 的 `allowed-tools` 补充 `WebSearch`、`WebFetch`；plan 额外补充 `Bash(gh:*)`；`devflow-code-reviewer`、`devflow-debug-investigator` 子代理同步获得检索能力
+- `devflow-engineering-flow` 新增“与 superpowers 的协作边界”：devflow 管阶段与门禁，superpowers 管执行技法，冲突以 devflow 为准，已有计划吸收进 `plan.md`
+
+### 文档
+
+- README 新增“方案调研与搜索失败处理”“与 superpowers 的关系”章节，六阶段表更新 plan 门禁
+- `docs/design.md` 新增方案前调研决策、superpowers 边界与 1.3.0 里程碑
+- `SECURITY.md` 新增“外部调研”安全说明：外部内容不可信、不外发敏感信息、许可证以原文为准、网络调用不受 guard 保护；支持范围更新至 1.3.x
+
 ## 1.2.1
 
 ### 修复

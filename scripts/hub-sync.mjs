@@ -3,7 +3,7 @@ import { existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub,
-  readText, writeAtomic, sha256, log, posix, isMain, ensureDir, walk, relPosix,
+  readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir, walk, relPosix,
   readMeta, isGeneratedArtifact,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
@@ -65,18 +65,21 @@ export async function main(argv = process.argv.slice(2)) {
     const src = join(pluginRoot, 'templates', 'stages', ...rel.split('/'));
     const destRel = `${STAGE_PREFIX}${rel}`;
     const dest = join(root, ...destRel.split('/'));
-    const templateHash = sha256(readText(src));
+    const templateHash = contentHash(readText(src));
     if (!existsSync(dest)) {
       actions.push({ rel: destRel, type: 'add', src, dest, templateHash });
       continue;
     }
-    const currentHash = sha256(readText(dest));
+    const destText = readText(dest);
+    const currentHash = contentHash(destText);
     if (currentHash === templateHash) {
       actions.push({ rel: destRel, type: 'same', dest, templateHash });
       continue;
     }
     const recorded = sources?.files?.[destRel];
-    if (recorded && recorded === currentHash) {
+    // 旧版账本记录的是原始文本哈希；兼容它，避免升级后把未改动的 CRLF 文件误判成手改。
+    const recordedMatch = recorded && (recorded === currentHash || recorded === sha256(destText));
+    if (recordedMatch) {
       actions.push({ rel: destRel, type: 'update', src, dest, templateHash });
     } else if (force) {
       actions.push({ rel: destRel, type: 'overwrite', src, dest, templateHash });
@@ -148,7 +151,12 @@ export async function main(argv = process.argv.slice(2)) {
     }, null, 2)}\n`);
   }
 
-  if (!noGen) await generate(['--root', root]);
+  if (!noGen) {
+    const report = await generate(['--root', root]);
+    if (report.errors?.length) {
+      log('warn', `同步完成，但生成阶段有 ${report.errors.length} 个错误，请按上方提示处理。`);
+    }
+  }
 
   console.log(`\n完成：新增 ${counts.add}，更新 ${counts.update}，覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，一致 ${counts.same}。`);
   if (counts.conflict) console.log('冲突文件保留本地版本；确认覆盖时加 --force。');

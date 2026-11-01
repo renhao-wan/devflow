@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // PostToolUse(Edit|Write|MultiEdit|NotebookEdit|Bash)：记录改动文件，标记测试待验证。
 // Bash 可能通过 sed -i、格式化器、代码生成等间接改文件，用 git status 兜底发现。
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join, relative, isAbsolute } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
+import { join, relative, isAbsolute, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readStdin, findHubRoot } from './lib.mjs';
 
@@ -36,7 +36,13 @@ function gitChanged(root) {
   for (let i = 0; i < entries.length; i += 1) {
     const status = entries[i].slice(0, 2);
     files.push(entries[i].slice(3).replace(/\\/g, '/'));
-    if (status[0] === 'R' || status[0] === 'C') i += 1;
+    if (status[0] === 'R' || status[0] === 'C') {
+      // rename 的原始路径同样发生了删除，必须记录；copy 的源文件未变。
+      if (status[0] === 'R' && entries[i + 1]) {
+        files.push(entries[i + 1].replace(/\\/g, '/'));
+      }
+      i += 1;
+    }
   }
   return files;
 }
@@ -49,11 +55,30 @@ try {
   const root = findHubRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
   if (!root) process.exit(0);
 
+  const stateFile = join(root, '.claude', '.devflow-state.json');
+  let state = {};
+  if (existsSync(stateFile)) {
+    try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
+  }
+  // 没有历史状态时只回看最近 2 秒，避免把打开会话前就存在的脏文件算成本次改动。
+  // 注意不能写 Date.parse(x || 0)：Date.parse(0) 会得到 1999 年，2 秒兜底将永远不生效。
+  const parsed = Date.parse(state.lastTrackAt || state.lastChangeAt || '');
+  const lastTrackAt = Number.isNaN(parsed) ? Date.now() - 2000 : parsed;
+
   let changed = [];
   if (payload.tool_name === 'Bash') {
-    changed = gitChanged(root).filter((rel) => rel && !rel.startsWith('..') && !isNoise(rel));
+    // Bash 后的 git status 会包含执行前就存在的脏文件；只保留本次命令真正改动的路径。
+    changed = gitChanged(root).filter((rel) => {
+      if (!rel || rel.startsWith('..') || isNoise(rel)) return false;
+      // 文件被删除时自身已无 mtime，用父目录的更新时间判断本次操作。
+      try { return statSync(join(root, rel)).mtimeMs > lastTrackAt; } catch {
+        try { return statSync(dirname(join(root, rel))).mtimeMs > lastTrackAt; } catch { return false; }
+      }
+    });
   } else {
-    const file = payload.tool_input?.file_path || payload.tool_input?.path;
+    const file = payload.tool_input?.file_path
+      || payload.tool_input?.path
+      || payload.tool_input?.notebook_path;
     if (!file) process.exit(0);
     let rel = file;
     if (isAbsolute(file)) rel = relative(root, file).split('\\').join('/');
@@ -64,15 +89,11 @@ try {
   }
   if (!changed.length) process.exit(0);
 
-  const stateFile = join(root, '.claude', '.devflow-state.json');
-  let state = {};
-  if (existsSync(stateFile)) {
-    try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
-  }
   const files = Array.isArray(state.changedFiles) ? state.changedFiles : [];
   for (const rel of changed) if (!files.includes(rel)) files.push(rel);
   state.changedFiles = files.slice(-200);
   state.lastChangeAt = new Date().toISOString();
+  state.lastTrackAt = state.lastChangeAt;
   state.testsPending = true;
 
   const tmp = `${stateFile}.tmp`;

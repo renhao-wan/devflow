@@ -16,13 +16,14 @@ try {
   try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { process.exit(0); }
   if (!state.testsPending) process.exit(0);
 
-  const lastChange = Date.parse(state.lastChangeAt || 0);
-  const lastTest = Date.parse(state.lastTestPassedAt || 0);
-  if (state.lastTestPassedAt && lastTest >= lastChange) process.exit(0);
+  // 解析失败必须按“未知”处理，不能落成 1999 年造成误判。
+  const lastChange = Date.parse(state.lastChangeAt || '');
+  const lastTest = Date.parse(state.lastTestPassedAt || '');
+  if (!Number.isNaN(lastTest) && (Number.isNaN(lastChange) || lastTest >= lastChange)) process.exit(0);
 
   // 同一批改动已提醒过就不再重复，避免每次 Stop 都刷屏
-  const lastReminder = Date.parse(state.lastReminderAt || 0);
-  if (lastReminder >= lastChange) process.exit(0);
+  const lastReminder = Date.parse(state.lastReminderAt || '');
+  if (!Number.isNaN(lastReminder) && (Number.isNaN(lastChange) || lastReminder >= lastChange)) process.exit(0);
 
   state.lastReminderAt = new Date().toISOString();
   try {

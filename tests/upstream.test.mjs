@@ -123,6 +123,37 @@ test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
   }
 });
 
+test('回灌在 CHANGELOG 缺少标题时仍写入版本条目', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const skill = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+    writeFileSync(skill, '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'requiresPlugin: "^1.0.0"',
+      'stages:',
+      '  - review',
+      'subprojects: {}',
+      'defaults:',
+      '  testCommand: "npm test"',
+      'upstream:',
+      '  blocklist: []',
+      '',
+    ].join('\n'));
+    writeFileSync(join(pluginCopy, 'CHANGELOG.md'), '历史内容\n');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 0, result.stderr);
+    const changelog = readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8');
+    assert.match(changelog, /^# Changelog\n/);
+    assert.match(changelog, /## 1\.0\.1/);
+    assert.match(changelog, /历史内容/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('回灌递归处理阶段资源目录', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);

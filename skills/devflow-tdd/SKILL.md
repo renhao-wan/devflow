@@ -40,6 +40,11 @@ description: Use when implementing a feature or fixing a bug where behavior can 
 - 编译/导入失败 → 测试本身有问题，先修测试。
 - 环境失败 → 先解决环境，不要改断言。
 
+## 与 superpowers 的关系
+
+- 已安装 superpowers 时，TDD 的执行技法可优先用其 `test-driven-development`；本技能是未安装时的 fallback。
+- 阶段顺序、产物路径与门禁以 devflow 为准；两者结论冲突时不动摇 devflow 的门禁。
+
 ## 与 devflow 阶段配合
 
 - 在 implement 阶段使用。
