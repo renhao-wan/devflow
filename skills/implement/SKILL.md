@@ -22,5 +22,5 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Skill, Bash(git status:*), Bash(gi
    - 不夹带无关改动，不顺手重构。
 5. 每个任务完成后运行该子项目的测试命令（`hub.yaml` 中的 `testCommand`，否则 `defaults.testCommand`）。
 6. 计划与实际偏离时，先更新 `plan.md`（轻量功能更新 `brief.md` 的「实施记录」）再继续；轻量功能命中硬触发（非测试/文档改动超过 200 行、10 个文件或 2 个子项目，或涉及依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界、不可逆操作）时，停止轻量流程并升级完整流程；完整任务范围明显扩大时说明并更新 `plan.md`。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
-7. 结束时报告：已完成任务、未完成任务及原因、新增/修改的测试、运行过的验证命令与真实结果。没有运行的不要说已通过。
-8. 实现完成且自测通过后进入测试阶段：`/devflow:test <slug>`。
+7. 结束时报告：实际 slug、任务目录、已完成任务、未完成任务及原因、新增/修改的测试、运行过的验证命令与真实结果。没有运行的不要说已通过。
+8. 实现完成且自测通过后进入测试阶段：`/devflow:test <实际 slug>`。

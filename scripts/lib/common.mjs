@@ -277,7 +277,7 @@ function parseScalar(v) {
 
 export function loadHub(root) {
   const file = join(root, '.claude', 'hub', 'hub.yaml');
-  if (!existsSync(file)) throw new Error(`找不到 hub 配置：${posix(file)}`);
+  if (!existsSync(file)) throw new Error(`找不到 hub 配置：${posix(file)}；先运行 /devflow:init 初始化工作区`);
   return { file, config: parseYaml(readText(file)) };
 }
 

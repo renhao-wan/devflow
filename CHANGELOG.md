@@ -22,7 +22,9 @@
 - 检测结果缺失或过期时，`devflow route --stage` 自动检测一次后再决策，避免新克隆项目首次进入阶段总是回退；`--list` 保持只读
 - `enabled: false` 的工具不参与检测，也不出现在 SessionStart 注入的可用工具中
 - `--detect` 可与 `--stage` / `--list` 组合，组合命令的 stdout 始终只有一份 JSON
-- `detectSkills` / `detectPlugins` 必须是单段名称，拒绝 `../` 等路径穿越；检测读写均校验真实路径在项目内
+- 终端反馈改进：`hub-status` 每个任务分行展示阶段、产物与下一步；`hub-doctor` 按告警类型给出具体建议，不再统一提示重新生成；`hub-sync` 遇冲突后提示手工合并或 `--force`（会备份）；缺失 hub 配置时提示先运行 `/devflow:init`
+- 六个阶段入口统一报告实际 slug 与 `docs/devflow/<slug>/` 路径，下一步命令使用实际 slug，避免用户猜测占位符
+- README 同步五个 loader、`devflow-route` 生成物与快速开始中的 `/devflow:status` 确认步骤
 
 ### 修复
 
@@ -44,6 +46,7 @@
 - 新增 `tests/route.test.mjs`，覆盖 22 种路由决策：未配置回退、mode、ask/auto、强制与指定工具、阶段不匹配、forceDevflowStages、检测与插件键、检测结果缺失时自动检测、禁用工具不参与检测、`--detect` 与阶段/列表组合、解析失败 fail-open、`--list`、非法阶段名、检测名路径穿越与默认配置渲染往返
 - 更新 CLI、端到端、状态视图、模板约定与 hooks 测试，覆盖 `route` 命令、生态配置生成、入口路由步骤、禁用工具过滤与检测状态保护
 - 补充完整流程“review 早于 test”回归、`argValue` 不吞开关、eval grader 不误伤否定式回答，以及 git 全局选项/引号命令名、嵌套 shell、PowerShell 盘符删除与磁盘帮助命令的 hooks 用例
+- 补充 UX 回归：`status` 多行输出、`doctor` 按类型建议、`sync` 冲突后续操作、入口技能报告实际 slug、`loadHub` 初始化提示
 
 ### 文档
 

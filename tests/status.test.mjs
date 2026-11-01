@@ -365,6 +365,9 @@ test('status 文本输出标注轻量模式与需补审查', () => {
     const featureText = run(['--root', root]);
     assert.equal(featureText.status, 0, featureText.stderr);
     assert.match(featureText.stdout, /模式：轻量功能/);
+    assert.match(featureText.stdout, /^\s+tiny-feature$/m);
+    assert.match(featureText.stdout, /产物：brief\.md/);
+    assert.match(featureText.stdout, /下一步：\/devflow:implement tiny-feature/);
     assert.doesNotMatch(featureText.stdout, /需补审查/);
 
     const bug = makeTask(root, 'risky-bug');

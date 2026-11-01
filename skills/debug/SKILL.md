@@ -26,5 +26,5 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, 
 7. 找到根因后再修复，不吞异常、不加无意义重试。
 8. 补一个修复前失败、修复后通过的回归测试。
 9. 清理临时日志与调试代码。
-10. 报告：现象、根因、修复、验证方式；给出结论（`fixed` / `partial` / `unresolved`）；`partial` 或 `unresolved` 时必须写明未排除的风险与下一步；如做了外部检索，写明来源与本地验证结果。
-11. 修复并补回归测试后回到测试阶段：`/devflow:test <slug>`；普通小 bug 测试通过即结束，`review: required` 的修复再进入 `/devflow:review <slug>`。
+10. 报告：实际 slug、`docs/devflow/<实际 slug>/debug.md` 路径、现象、根因、修复、验证方式；给出结论（`fixed` / `partial` / `unresolved`）；`partial` 或 `unresolved` 时必须写明未排除的风险与下一步；如做了外部检索，写明来源与本地验证结果。
+11. 修复并补回归测试后回到测试阶段：`/devflow:test <实际 slug>`；普通小 bug 测试通过即结束，`review: required` 的修复再进入 `/devflow:review <实际 slug>`。

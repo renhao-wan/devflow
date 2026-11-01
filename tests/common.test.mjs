@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256, argValue } from '../scripts/lib/common.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256, argValue, loadHub } from '../scripts/lib/common.mjs';
 
 test('parseYaml 解析嵌套 map、块列表与行内列表', () => {
   const config = parseYaml(`
@@ -93,4 +96,13 @@ test('parseYaml 行内注释不误伤引号内 # 与词内 #', () => {
   assert.equal(config.testCommand, 'bar');
   assert.equal(config.quoted, 'a # b');
   assert.equal(config.hashInWord, 'a#b');
+});
+
+test('loadHub 缺少配置时提示先运行 init', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-hub-missing-'));
+  try {
+    assert.throws(() => loadHub(root), /先运行 \/devflow:init/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
