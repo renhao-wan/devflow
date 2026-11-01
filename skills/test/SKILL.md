@@ -10,14 +10,16 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Bash(*)
 > 以下为入口摘要；与 `.claude/hub/stages/test/SKILL.md` 冲突时，以 SKILL 为准。
 
 1. 读取 `.claude/hub/stages/test/SKILL.md` 与 `.claude/hub/hub.yaml`，确定测试命令（子项目优先，其次默认）。
-2. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）；可用 `devflow-test-runner` 子代理执行并汇总，但报告需自己核对。
-3. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。
-4. 测试失败时不要改断言迁就实现，转入 `/devflow:debug`。
-5. 全部通过后运行：
+2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替。
+3. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）；可用 `devflow-test-runner` 子代理执行并汇总，但报告需自己核对。
+4. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。
+5. 测试失败时不要改断言迁就实现，转入 `/devflow:debug`。
+6. 全部通过后运行：
 
 ```bash
 node scripts/devflow-test.mjs --command "<实际使用的命令>"
 ```
 
-6. 将结果写入 `docs/devflow/<slug>/test.md`（slug 未知时用 `latest`），包括：命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
-7. 报告时区分「自动化已通过」「手动验证过」「未验证」，不得混写。
+7. 将结果写入 `docs/devflow/<slug>/test.md`，包括：命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
+8. 报告时区分「自动化已通过」「手动验证过」「未验证」，不得混写。
+9. 全部通过后进入审查阶段：`/devflow:review <slug>`；测试失败按第 5 步转入 `/devflow:debug`。

@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布
+
+### 增强
+
+- 新增只读 `/devflow:status`（及 `devflow status`）：扫描 `docs/devflow/` 的产物，推导各任务所处阶段、缺口与下一步命令，不写入任何状态
+- 阶段入口补充下一步命令提示；统一 slug 推断规则：只有一个候选时自动采用，多个候选时列出让用户选择，不再回落到 `latest`
+
+### 测试
+
+- 新增 `tests/status.test.mjs`，覆盖无任务、单任务推断、完成态、多任务不擅自选择与 `--slug` 过滤
+
+### 文档
+
+- 新增 `docs/comparison.md`，对比 devflow 与 BMAD、cc-spec-driven、Spec Workflow、OpenSpec、ucai、Spec Kit、superpowers 的定位、重叠与优缺点
+- 新增 `docs/value-and-limits.md`，说明适用人群、当前限制与真实项目验证方法
+
 ## 1.4.0
 
 ### 增强

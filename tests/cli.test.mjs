@@ -16,7 +16,7 @@ test('bin/devflow 输出帮助并列出命令', () => {
   for (const args of [[], ['help'], ['--help']]) {
     const r = run(args);
     assert.equal(r.status, 0, r.stderr);
-    for (const name of ['init', 'gen', 'doctor', 'sync', 'upstream', 'ship', 'test']) {
+    for (const name of ['init', 'gen', 'doctor', 'status', 'sync', 'upstream', 'ship', 'test']) {
       assert.match(r.stdout, new RegExp(`^\\s+${name}\\b`, 'm'), name);
     }
   }

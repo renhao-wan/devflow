@@ -7,6 +7,7 @@ const COMMANDS = {
   init: ['hub-init.mjs', '初始化项目工作区（.claude/hub、loader 与投影）'],
   gen: ['gen-claude-skills.mjs', '从 .claude/hub 生成阶段投影'],
   doctor: ['hub-doctor.mjs', '体检配置、版本、投影与 hooks'],
+  status: ['hub-status.mjs', '只读查看进度、产物缺口与下一步命令'],
   sync: ['hub-sync.mjs', '把插件新版阶段模板同步到项目（默认预览）'],
   upstream: ['hub-upstream.mjs', '预览或回灌阶段模板到插件（默认预览）'],
   ship: ['hub-ship.mjs', '回灌、提交并创建 PR'],

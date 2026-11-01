@@ -18,3 +18,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash(ls:*), Bash(git status:*), Ba
 4. 严格遵守 SKILL 中的门禁，逐条自查；不满足就继续澄清，不进入方案。
 5. 产出写入 `docs/devflow/<slug>/req.md`。slug 使用 kebab-case，从需求内容提炼；目录不存在时创建。
 6. 最后用一段话报告：目标、验收标准数量、本次不做的项、技术约束、影响面、遗留待确认项。
+7. 完成后进入方案阶段：`/devflow:plan <slug>`。

@@ -64,6 +64,15 @@
 | Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 
+## 进度与命令衔接
+
+阶段产物 `docs/devflow/<slug>/{req,plan,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
+
+- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
+- 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
+- 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
+- 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。
+
 ## 回灌与升级
 
 `hub-upstream` 递归对比项目 stage 目录与插件模板，分类为 project-local / reusable；只把 reusable 写入插件模板，手动确认后 bump 版本。回灌目标由显式 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。
@@ -106,3 +115,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新
 - [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
+- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则

@@ -94,11 +94,14 @@ debug.md    # 现象、根因、修复、验证（进入 debug 时）
 | `/devflow:review <slug>` | 差异导向审查，输出阻断项与建议项 |
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复 |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
+| `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
 | `/devflow:upstream --stage <stage> [--apply] [--bump patch\|minor\|major]` | 把项目经验回灌到插件模板 |
 | `/devflow:ship --stage <stage> [--bump patch\|minor\|major] [--dry-run]` | 回灌后提交到分支、推送并生成 PR |
 | `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段模板 |
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
+
+已产出的阶段文件就是进度记录：`req.md → plan.md → test.md → review.md`。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
 插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
 
@@ -106,6 +109,7 @@ debug.md    # 现象、根因、修复、验证（进入 debug 时）
 devflow init
 devflow gen
 devflow doctor --json
+devflow status --json
 devflow sync --dry-run
 devflow ship --stage review --dry-run
 ```
@@ -487,10 +491,11 @@ gh auth login --web
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区 | `--root` `--force` `--plugin-root` `--source-root` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与 cd 目标 | `--root` `--json` |
+| `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令 | `--root` `--slug` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--bump` `--root` `--plugin-root` |
 | `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR | `--stage` `--plugin-root` `--base` `--bump` `--dry-run` `--no-pr` |
 | `scripts/hub-sync.mjs` | 插件升级后同步阶段模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` |
@@ -505,7 +510,7 @@ gh auth login --web
 ```
 .claude-plugin/        # plugin.json + marketplace.json
 bin/devflow            # 统一 CLI，参数透传给 scripts/
-skills/                # 十一个入口技能（req…sync）+ 五个通用技能
+skills/                # 十二个入口技能（req…sync、status）+ 五个通用技能
 agents/                # 评审、测试、排障三个子代理
 hooks/                 # 五个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
@@ -516,6 +521,8 @@ evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/design.md         # 设计文档
+docs/comparison.md     # 与同类工作流插件的对比与定位
+docs/value-and-limits.md  # 价值、适用边界与验证方法
 SECURITY.md            # 漏洞报告与安全边界
 LICENSE                # MIT
 package.json           # 发布元数据与 npm test 脚本
@@ -549,7 +556,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 143 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 149 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -578,6 +585,7 @@ claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep
 | `找不到 devflow 插件目录` | 先运行 `/devflow:init`，或检查 `.devflow.json` 中的 `pluginRoot`；升级后旧缓存失效时，会优先使用当前会话的 `CLAUDE_PLUGIN_ROOT`，再回退到 `pluginSourceRoot` |
 | `回灌目标落在安装缓存` | 插件是从 marketplace 安装的；用 `--plugin-root <插件源码仓库>`，或运行一次 `/devflow:init --source-root <插件源码仓库>` |
 | `hub.yaml 解析失败` | 使用 YAML 子集：注释、嵌套 map、块列表、行内 `[a, b]`、标量；检查缩进与冒号 |
+| 不知道当前做到哪一步 | 运行 `/devflow:status`；它只读推导阶段并给出下一步命令，不修改状态 |
 | 投影漂移 / 手改提示 | 改源文件后运行 `node scripts/devflow-gen.mjs`，不要改投影 |
 | 编辑投影/账本被拒绝 | `guard-generated` 阻止手改生成物；改 `.claude/hub/stages/` 后重新生成，或重跑 `/devflow:init` 刷新 loader |
 | Stop 提示 hub 源改动未生成 | 运行 `node scripts/devflow-gen.mjs` 重新生成投影；之后提醒会自动消失 |
@@ -625,7 +633,7 @@ rm -rf .claude/hub .claude/skills/devflow-* .claude/.hub-manifest.json .claude/.
 
 ## 设计文档与安全
 
-架构取舍与分层说明见 `docs/design.md`；安全边界与漏洞报告方式见 `SECURITY.md`。
+架构取舍与分层说明见 `docs/design.md`；与 BMAD、Spec Kit、OpenSpec、cc-spec-driven 等方案的对比与定位见 `docs/comparison.md`；适用人群、当前限制与验证方法见 `docs/value-and-limits.md`；安全边界与漏洞报告方式见 `SECURITY.md`。
 
 ## 许可
 

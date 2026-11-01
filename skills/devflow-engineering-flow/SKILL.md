@@ -11,6 +11,8 @@ description: Use when the user asks to build, change, or fix something in a proj
 - 用户提出功能、改造、缺陷，或问“下一步做什么”。
 - 需要判断该跳过还是补齐某个阶段。
 
+不确定当前进度时，先运行 `/devflow:status`：它只读扫描 `docs/devflow/` 的产物，给出各任务的阶段与下一步命令。
+
 ## 流程
 
 ```

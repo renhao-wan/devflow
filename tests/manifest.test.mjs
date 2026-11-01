@@ -36,7 +36,7 @@ test('hooks.json 引用的脚本真实存在', () => {
 
 test('阶段入口技能均带 name 与 description，危险命令禁止模型自动调用', () => {
   const entries = ['req', 'plan', 'implement', 'test', 'review', 'debug',
-    'init', 'doctor', 'upstream', 'ship', 'sync'];
+    'init', 'doctor', 'status', 'upstream', 'ship', 'sync'];
   for (const name of entries) {
     const fm = parseFrontmatter(read(`skills/${name}/SKILL.md`));
     assert.equal(fm.name, name, `${name} 的 name 应为 ${name}`);
