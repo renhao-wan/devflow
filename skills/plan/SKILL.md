@@ -1,4 +1,5 @@
 ---
+name: plan
 description: 方案阶段：基于 req.md 调研已有实现，产出技术方案、任务拆分与测试策略
 argument-hint: <slug 或任务描述>
 allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, Bash(gh:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(node:*)

@@ -4,8 +4,8 @@
 
 | 版本 | 支持 |
 | --- | --- |
-| 1.3.x | 是 |
-| < 1.3 | 否，请先升级 |
+| 1.4.x | 是 |
+| < 1.4 | 否，请先升级 |
 
 ## 报告漏洞
 
@@ -27,7 +27,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 ### `guard-dangerous` 是尽力拦截
 
-`PreToolUse(Bash)` 钩子基于**正则与分词**识别危险命令，用于减少误操作，**不是安全边界**：
+`PreToolUse(Bash/PowerShell/Monitor)` 钩子基于**正则与分词**识别危险命令，用于减少误操作，**不是安全边界**：
 
 - 已做引号感知的分词，引号内的文本不会触发命令类规则；并递归检查 `sh/bash -c`、`pwsh -Command`、`cmd /c`、`eval`、`xargs rm`、`find -exec rm`。但变量展开、`$(...)`、命令别名、`/bin/rm` 的符号链接、`--no-preserve-root`、脚本文件里再执行命令等写法仍可能绕过。
 - 它无法分析命令的真实语义，也无法阻止通过其他工具（编辑器、`Write`、外部程序）造成的影响。
@@ -35,9 +35,13 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 若需要强隔离，请在该层之外使用操作系统权限、容器或审阅流程。
 
+### 生成物写保护
+
+`PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` 的 `guard-generated` 会拒绝直接修改由脚本维护的文件：`.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.devflow.json` 与 `scripts/devflow-*.mjs` loader。它只拦编辑类工具，无法阻止 `Bash` / `PowerShell` 中的脚本或编辑器绕过；目的是一致的单一真源，不是防篡改。
+
 ### hooks 失败时放行
 
-四个钩子（`guard-dangerous`、`track-changes`、`check-tests`、`load-hub`）遵循 **fail-open**：自身异常、输入非 JSON、超时都会静默放行，避免把正常开发卡死。这意味着钩子**崩溃时不会阻止操作**——这是有意的取舍。
+五个钩子（`guard-dangerous`、`guard-generated`、`track-changes`、`check-tests`、`load-hub`）遵循 **fail-open**：自身异常、输入非 JSON、超时都会静默放行，避免把正常开发卡死。这意味着钩子**崩溃时不会阻止操作**——这是有意的取舍。
 
 ### 凭据处理
 
@@ -53,7 +57,7 @@ plan、review、debug 阶段可能调用 `WebSearch`、`WebFetch`、GitHub API �
 - **许可证以原文为准**：复用第三方代码前核对许可证原文与仓库许可证文件，项目内记录的摘要只作线索。
 - **搜索结果不可信为事实**：外部结论必须回到本地复现或官方文档验证；不照搬未经本地验证的修复。
 - **搜索失败要留痕**：无法检索时标记未验证项与盲区，禁止编造来源或链接。
-- **网络调用不受 hooks 保护**：`guard-dangerous` 只覆盖 Bash 命令，无法审查 `WebFetch` / `WebSearch` 的 URL 与返回内容，也不会阻止向外部站点发送数据。是否允许联网检索，取决于会话的工具权限设置。
+- **网络调用不受 hooks 保护**：`guard-dangerous` 只覆盖 shell 类工具（`Bash`、`PowerShell`、`Monitor`），无法审查 `WebFetch` / `WebSearch` 的 URL 与返回内容，也不会阻止向外部站点发送数据。是否允许联网检索，取决于会话的工具权限设置。
 
 ### 依赖与供应链
 

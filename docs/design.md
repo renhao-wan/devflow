@@ -18,14 +18,14 @@
 | hub 位置 | `<根>/.claude/hub/` |
 | hooks | 关键项阻止：危险命令拦，未测试提醒 |
 | 回灌 | 手动触发 |
-| 命令归属 | 插件统一提供 `/devflow:*` |
+| 命令归属 | 插件统一提供 `/devflow:*`，入口以 `skills/<name>/SKILL.md` 实现 |
 | 初始化 | 内置模板 + 自动探测 |
 
 ## 分层
 
 ```
 插件（出厂默认）
-  commands/ + skills/ + agents/ + hooks/ + templates/
+  skills/ + agents/ + hooks/ + templates/ + bin/ + evals/
         │ init 时复制模板
         ▼
 项目 .claude/hub/（项目真源）
@@ -37,7 +37,7 @@
 
 ## 职责边界
 
-- 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。
+- 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。阶段入口（req…sync）同样是 skills，只是带上了 `disable-model-invocation` 等调用约束，不再是独立的 `commands/`。
 - `templates/stages/` 是**项目级阶段规则**，init 复制为 `.claude/hub/`，描述“本项目每个阶段的具体规范”。
 - 两者主题相近但用途不同，不互相替代：修改阶段规范只动项目 hub，修改通用方法论才动插件 skills。
 
@@ -54,13 +54,14 @@
 
 ## hooks
 
-`guard-dangerous` 对所有项目生效；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
+`guard-dangerous` 对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 阻止手改生成物；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
 
 | 事件 | 行为 |
 | --- | --- |
-| PreToolUse(Bash) | 危险命令阻止 |
-| PostToolUse(Edit/Write) | 记录改动文件 |
-| Stop | 有改动但未测试则提醒 |
+| PreToolUse(Bash/PowerShell/Monitor) | 危险命令阻止 |
+| PreToolUse(Edit/Write/MultiEdit/NotebookEdit) | 阻止手改投影、账本与 loader |
+| PostToolUse(Edit/Write/Bash… ) | 记录改动文件；hub 源改动单独标记 |
+| Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 
 ## 回灌与升级
@@ -91,7 +92,7 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 
 ## 安全边界
 
-`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；四个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
+`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；五个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
 
 ## 里程碑
 
@@ -104,3 +105,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.1：修复生成器账本与 `--json`、ship 基分支、track-changes 误报、Windows 递归删除拦截，统一命令与阶段技能引用
 - [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新
 - [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
+- [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills

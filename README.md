@@ -98,6 +98,20 @@ debug.md    # 现象、根因、修复、验证（进入 debug 时）
 | `/devflow:ship --stage <stage> [--bump patch\|minor\|major] [--dry-run]` | 回灌后提交到分支、推送并生成 PR |
 | `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段模板 |
 
+命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
+
+插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
+
+```bash
+devflow init
+devflow gen
+devflow doctor --json
+devflow sync --dry-run
+devflow ship --stage review --dry-run
+```
+
+等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。
+
 ## 六个阶段
 
 | 阶段 | 职责 | 关键门禁 |
@@ -241,14 +255,26 @@ upstream:
 
 ## 安全门禁与 hooks
 
-`guard-dangerous` 在安装插件后对所有项目的 Bash 命令生效；`track-changes`、`check-tests`、`load-hub` 只在包含 `.claude/hub/hub.yaml` 的工作区生效，不会向其他项目写入状态或注入上下文。
+`guard-dangerous` 在安装插件后对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 只在包含 `.claude/hub/hub.yaml` 的工作区生效；`track-changes`、`check-tests`、`load-hub` 也只在 hub 工作区生效，不会向其他项目写入状态或注入上下文。
 
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
-| `PreToolUse(Bash)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
-| `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash)` | `track-changes.mjs` | 记录改动文件，标记待验证 |
-| `Stop` | `check-tests.mjs` | 有改动但未验证通过时提醒，从不阻止 |
+| `PreToolUse(Bash/PowerShell/Monitor)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
+| `PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` | `guard-generated.mjs` | 阻止手改投影、账本与 loader |
+| `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash/PowerShell/Monitor)` | `track-changes.mjs` | 记录改动文件；hub 源改动单独标记 |
+| `Stop` | `check-tests.mjs` | 有改动但未验证通过、或 hub 源改动未重新生成时提醒，从不阻止 |
 | `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
+
+### 生成物写保护
+
+以下文件由插件脚本维护，直接编辑会与账本漂移，`guard-generated` 会拒绝这类写入：
+
+- `.claude/skills/devflow-*/SKILL.md`（阶段投影，改 `.claude/hub/stages/` 后运行 `node scripts/devflow-gen.mjs`）；
+- `.claude/.hub-manifest.json`、`.claude/.hub-sources.json`（生成账本）；
+- `.devflow.json`（init 写入的工作区元数据）；
+- `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`（loader，重跑 `/devflow:init` 刷新）。
+
+`docs/devflow/**` 与 `.claude/hub/**` 的改动被视为流程数据而非业务代码：前者不计入待验证改动，后者会提示重新生成投影，但都不会阻止 Stop。
 
 ### 直接拒绝（deny）
 
@@ -461,6 +487,7 @@ gh auth login --web
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区 | `--root` `--force` `--plugin-root` `--source-root` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与 cd 目标 | `--root` `--json` |
@@ -477,14 +504,15 @@ gh auth login --web
 
 ```
 .claude-plugin/        # plugin.json + marketplace.json
-commands/              # /devflow:* 十一个命令
-skills/                # 五个通用技能（流程、TDD、评审、排障、hub 管理）
+bin/devflow            # 统一 CLI，参数透传给 scripts/
+skills/                # 十一个入口技能（req…sync）+ 五个通用技能
 agents/                # 评审、测试、排障三个子代理
-hooks/                 # 四个钩子脚本、hooks.json 与共用 lib.mjs
+hooks/                 # 五个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / upstream / ship / sync / mark-test
 scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver
+evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/design.md         # 设计文档
@@ -521,7 +549,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 131 项，覆盖脚本、hooks、清单一致性、模板约定与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 143 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -533,6 +561,16 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 - `smoke`：在 Linux 与 Windows 的临时目录执行 `init → gen --check → doctor`，并确认 loader 已生成且被 `.gitignore` 忽略；
 - `smoke-result`：汇总两个平台的冒烟结果，以固定名称 `init → doctor` 上报，供分支保护作为必填检查。
 
+### 行为评测（evals）
+
+`evals/` 存放插件行为的评测用例（阶段路由、生成物保护、危险命令拒绝），每个用例是一个带 frontmatter 的 `prompt.md`，grader 以内联 `graders:` 声明。`claude plugin eval` 目前处于 early access，未在本仓库 CI 中运行；用例结构由 `tests/evals.test.mjs` 校验。启用后可在插件目录运行：
+
+```bash
+claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep
+```
+
+运行前请先看 `evals/README.md`，其中说明了每条用例的允许工具与判定方式。
+
 ## 故障排查
 
 | 现象 | 处理 |
@@ -541,6 +579,8 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 | `回灌目标落在安装缓存` | 插件是从 marketplace 安装的；用 `--plugin-root <插件源码仓库>`，或运行一次 `/devflow:init --source-root <插件源码仓库>` |
 | `hub.yaml 解析失败` | 使用 YAML 子集：注释、嵌套 map、块列表、行内 `[a, b]`、标量；检查缩进与冒号 |
 | 投影漂移 / 手改提示 | 改源文件后运行 `node scripts/devflow-gen.mjs`，不要改投影 |
+| 编辑投影/账本被拒绝 | `guard-generated` 阻止手改生成物；改 `.claude/hub/stages/` 后重新生成，或重跑 `/devflow:init` 刷新 loader |
+| Stop 提示 hub 源改动未生成 | 运行 `node scripts/devflow-gen.mjs` 重新生成投影；之后提醒会自动消失 |
 | 账本中有过期技能 | 运行 `node scripts/devflow-gen.mjs` 自动清理 |
 | doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
 | doctor 报测试命令依赖缺失 | `testCommand` 用到的工具不在 `PATH`；安装工具或修正命令 |
@@ -558,7 +598,7 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 
 `plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.3.3`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.4.0`）
 - 包元数据：`package.json` 的 `version`
 - 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.0
+
+### 增强
+
+- 新增 `guard-generated` 钩子：编辑 `.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.devflow.json` 与 `scripts/devflow-*.mjs` loader 时直接拒绝，避免生成物与账本漂移
+- `guard-dangerous` 从仅 `Bash` 扩展到 `PowerShell` 与 `Monitor`，覆盖 Windows 终端与后台监控命令
+- `track-changes` 区分流程数据与业务改动：`docs/devflow/**` 完全忽略，`.claude/hub/**` 标记为 hub 改动；`check-tests` 在 hub 源改动未重新生成投影时提醒，但不再计为测试待验证
+- 新增 `bin/devflow` 统一 CLI，`devflow <init|gen|doctor|sync|upstream|ship|test>` 参数透传给对应脚本
+- 阶段入口由 `commands/*.md` 迁移为 `skills/<name>/SKILL.md`，调用方式不变；`init` / `upstream` / `ship` / `sync` 禁止模型自动调用
+- 新增 `evals/` 行为评测用例（阶段路由、生成物保护、危险命令拒绝），`claude plugin eval` 仍为 early access，用例结构由测试校验
+- `.claude-plugin/plugin.json` 与 marketplace 条目补充 `homepage` / `repository` 元数据
+
+### 文档
+
+- README 更新目录结构、hooks 事件、生成物写保护、CLI、评测用法与版本号
+- `docs/design.md` 更新分层与 hooks 表，补充 1.4.0 里程碑
+- `SECURITY.md` 更新支持版本、shell 类工具覆盖范围与 `guard-generated` 边界说明
+
+### 测试
+
+- 回归测试增至 143 项，新增 PowerShell / Monitor 拦截、生成物写保护、hub 改动分流、CLI 与评测用例结构等用例
+
 ## 1.3.3
 
 ### 修复

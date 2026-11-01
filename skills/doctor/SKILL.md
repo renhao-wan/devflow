@@ -1,4 +1,5 @@
 ---
+name: doctor
 description: 体检：校验 hub 配置、版本兼容、投影一致性与 hooks 状态
 argument-hint: [--json]
 allowed-tools: Bash(node:*), Read, Glob, Grep

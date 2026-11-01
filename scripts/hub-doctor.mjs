@@ -276,7 +276,7 @@ export async function main(argv = process.argv.slice(2)) {
       const h = readJson(pluginHooks, {});
       const count = Object.values(h.hooks || {}).reduce((n, arr) => n + arr.length, 0);
       add('ok', `插件 hooks 已注册 ${count} 组`);
-      for (const script of ['guard-dangerous.mjs', 'track-changes.mjs', 'check-tests.mjs', 'load-hub.mjs']) {
+      for (const script of ['guard-dangerous.mjs', 'guard-generated.mjs', 'track-changes.mjs', 'check-tests.mjs', 'load-hub.mjs']) {
         const p = join(pluginRoot, 'hooks', 'scripts', script);
         if (!existsSync(p)) add('error', `缺少 hooks 脚本 ${script}`);
       }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse(Bash)：危险命令硬门禁。deny 直接阻止，ask 交给用户确认。
+// PreToolUse(Bash|PowerShell|Monitor)：危险命令硬门禁。deny 直接阻止，ask 交给用户确认。
 // 只在命令位置匹配命令类规则，引号内文本不参与匹配；嵌套 shell、xargs、find -exec 会递归检查。
 import { readStdin } from './lib.mjs';
 
@@ -439,8 +439,8 @@ try {
   let payload = {};
   try { payload = JSON.parse(raw || '{}'); } catch { process.exit(0); }
 
-  if (payload.tool_name !== 'Bash') process.exit(0);
-  const command = payload.tool_input?.command;
+  if (!['Bash', 'PowerShell', 'Monitor'].includes(payload.tool_name)) process.exit(0);
+  const command = payload.tool_input?.command ?? payload.tool_input?.cmd;
   if (typeof command !== 'string' || !command.trim()) process.exit(0);
 
   const hit = decide(command);

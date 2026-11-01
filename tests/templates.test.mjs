@@ -71,13 +71,13 @@ test('debug 阶段支持可选的已知问题检索', () => {
   assert.match(tpl, /本地验证结果/);
 });
 
-test('调研相关命令与子代理具备检索工具', () => {
-  for (const rel of ['commands/plan.md', 'commands/review.md', 'commands/debug.md']) {
+test('调研相关技能入口与子代理具备检索工具', () => {
+  for (const rel of ['skills/plan/SKILL.md', 'skills/review/SKILL.md', 'skills/debug/SKILL.md']) {
     const body = read(rel);
     assert.match(body, /WebSearch/, `${rel} 缺少 WebSearch`);
     assert.match(body, /WebFetch/, `${rel} 缺少 WebFetch`);
   }
-  assert.match(read('commands/plan.md'), /Bash\(gh:\*\)/);
+  assert.match(read('skills/plan/SKILL.md'), /Bash\(gh:\*\)/);
   for (const rel of ['agents/devflow-code-reviewer.md', 'agents/devflow-debug-investigator.md']) {
     const front = read(rel).split('---')[1] || '';
     assert.match(front, /WebSearch/, `${rel} 的 tools 缺少 WebSearch`);
@@ -85,7 +85,7 @@ test('调研相关命令与子代理具备检索工具', () => {
   }
 });
 
-test('命令 allowed-tools 覆盖子代理与技能调用', () => {
+test('阶段入口技能 allowed-tools 覆盖子代理与技能调用', () => {
   const expected = {
     plan: ['Skill'],
     implement: ['Skill'],
@@ -94,15 +94,15 @@ test('命令 allowed-tools 覆盖子代理与技能调用', () => {
     review: ['Task', 'Skill'],
   };
   for (const [stage, tools] of Object.entries(expected)) {
-    const front = read(`commands/${stage}.md`).split('---')[1] || '';
+    const front = read(`skills/${stage}/SKILL.md`).split('---')[1] || '';
     for (const tool of tools) {
       assert.match(front, new RegExp(`allowed-tools:[^\\n]*\\b${tool}\\b`), `${stage} 缺少 ${tool}`);
     }
   }
 });
 
-test('review 命令与技能引用 superpowers 的实际技能名', () => {
-  for (const rel of ['commands/review.md', 'skills/devflow-code-review/SKILL.md',
+test('review 入口与技能引用 superpowers 的实际技能名', () => {
+  for (const rel of ['skills/review/SKILL.md', 'skills/devflow-code-review/SKILL.md',
     'skills/devflow-engineering-flow/SKILL.md', 'templates/stages/review/SKILL.md']) {
     const body = read(rel);
     assert.match(body, /requesting-code-review/, `${rel} 缺少 requesting-code-review`);
@@ -125,7 +125,7 @@ test('流程技能说明与 superpowers 的协作边界', () => {
   assert.match(skill, /fallback/);
 });
 
-test('命令入口以阶段 SKILL 为准并引用对应技能与子代理', () => {
+test('阶段入口技能以阶段 SKILL 为准并引用对应技能与子代理', () => {
   const refs = {
     req: [],
     plan: [/brainstorming/, /writing-plans/],
@@ -135,7 +135,7 @@ test('命令入口以阶段 SKILL 为准并引用对应技能与子代理', () =
     review: [/devflow-code-review/],
   };
   for (const [stage, patterns] of Object.entries(refs)) {
-    const body = read(`commands/${stage}.md`);
+    const body = read(`skills/${stage}/SKILL.md`);
     assert.match(body, /以 SKILL 为准/, `${stage} 缺少“以 SKILL 为准”说明`);
     for (const re of patterns) assert.match(body, re, `${stage} 缺少 ${re}`);
   }

@@ -1,4 +1,5 @@
 ---
+name: review
 description: 审查阶段：以缺陷为导向检查 diff，输出阻断项与建议项
 argument-hint: [范围或 slug]
 allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, Bash(git status:*), Bash(git diff:*), Bash(git log:*)

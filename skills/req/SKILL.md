@@ -1,4 +1,5 @@
 ---
+name: req
 description: 需求阶段：澄清目标、验收标准与边界，产出 req.md
 argument-hint: <需求描述或 slug>
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash(ls:*), Bash(git status:*), Bash(node:*)

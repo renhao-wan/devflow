@@ -1,7 +1,9 @@
 ---
+name: upstream
 description: 回灌：把项目里改进过的阶段模板回馈到插件（默认只预览）
 argument-hint: --stage <stage> [--apply] [--bump patch|minor|major] [--plugin-root <插件源码仓库>]
 allowed-tools: Bash(node:*), Bash(git diff:*), Read, Glob, Grep, Write, Edit
+disable-model-invocation: true
 ---
 
 执行 devflow 回灌：**$ARGUMENTS**

@@ -1,4 +1,5 @@
 ---
+name: test
 description: 测试阶段：运行测试、补齐覆盖、记录可验证的结果
 argument-hint: [slug]
 allowed-tools: Read, Write, Edit, Glob, Grep, Task, Bash(*)
