@@ -52,7 +52,7 @@
 | review | 评审结论 | 高危未修不得通过 |
 | debug | 根因与回归 | 无复现不下结论 |
 
-小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都保留测试与审查门禁，只压缩文档。命中依赖、公共接口、迁移、安全、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
+小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中依赖、公共接口、迁移、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
 
 ## hooks
 

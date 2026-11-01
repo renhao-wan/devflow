@@ -69,7 +69,7 @@
 
 ## 不适合谁
 
-- **只想“把需求变成代码”的人**：Spec Kit、BMAD、Spec Workflow 的启动成本更低；devflow 的 `--light` 与 `debug` 轻量路径缓解了这个问题，但仍保留测试与审查门禁。
+- **只想“把需求变成代码”的人**：Spec Kit、BMAD、Spec Workflow 的启动成本更低；devflow 的 `--light` 与 `debug` 轻量路径缓解了这个问题，但仍保留测试证据，小功能保留 review、小 bug 按风险补审。
 - **不做流程定制、只用一个项目的人**：`hub + 投影 + 回灌` 的复杂度换不来等量收益。
 - **需要全自动编排、状态机或 dashboard 的人**：cc-spec-driven 或 Spec Workflow 更合适。
 - **希望零维护的人**：阶段规则、slug 与测试命令仍需要人工确认。

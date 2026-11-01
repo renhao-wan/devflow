@@ -15,11 +15,11 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, 
    - `suggest`：说明候选工具与理由并询问；用户未同意时继续 devflow。
    - `delegate`：在技能上下文中用 `Skill` 工具调用 `invoke`（去掉前导 `/`，如 `superpowers:requesting-code-review`）；无法调用时说明原因并询问是否继续 devflow。阶段顺序、门禁与 `docs/devflow/<slug>/` 产物仍由本阶段负责。
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
-2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替。
+2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`，按 slug 去重：只有一个候选就采用；多个时列出候选让用户选择，不要自行挑选，也不要用 `latest` 代替；没有候选时提示先运行 `/devflow:status` 或确认 slug。
 3. 查看全量 diff（`git status`、`git diff`、必要时 `git diff --staged`），确认改动范围。
 4. 按验收来源逐条对照：完整任务读 `req.md` 与 `plan.md`；轻量功能读 `brief.md`；轻量修复读 `debug.md` 的「正确行为依据」。每条验收标准是否有实现或测试支撑，未覆盖项是否已明确接受。结果写入 review 的「验收对照」表。
 5. 核对复用与依赖：完整任务读 `plan.md` 的「调研与复用判断」；确认来源可核对、许可证与技术约束不冲突、依赖维护状态与已知漏洞、搜索失败或未验证项已披露。轻量任务未涉及依赖与调研时写“不适用”，涉及新增依赖则必须已升级完整流程。结果写入「复用与依赖检查」表。
-6. 核对轻量任务的「升级判断」：实际 diff 是否命中硬触发（依赖、公共接口、数据迁移、安全、不可逆、>200 行、>10 文件、>2 子项目）；命中却未记录时列为阻断项。
+6. 核对轻量任务的「升级判断」：轻量功能按 req 的硬触发（依赖、公共接口/契约、数据结构/迁移、安全边界、不可逆、>200 行、>10 文件、>2 子项目）；轻量修复按 debug 的硬触发（无法复现、根因跨 >2 文件、公共契约、数据结构/迁移、依赖、不可逆、规模），并核对安全/数据/认证/并发风险是否已标记 `review: required`。命中却未记录、或该升级却只补 review 时，列为阻断项。
 7. 按 SKILL 的顺序检查：正确性 → 安全 → 兼容 → 可维护 → 测试缺口 → 复用与依赖。
 8. 需要独立视角时，调用 `devflow-code-reviewer` 子代理审查，再合并判断；子代理结论也要自己核实。
 9. 每条问题给出 `文件:行号`、触发条件、建议；区分阻断项与建议项。

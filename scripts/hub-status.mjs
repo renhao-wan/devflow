@@ -8,7 +8,7 @@ import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
 
-const ARTIFACTS = ['req.md', 'plan.md', 'test.md', 'review.md', 'brief.md', 'debug.md'];
+const ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md', 'test.md', 'review.md'];
 
 const FLOW_LABEL = {
   'light-feature': '轻量功能',
@@ -66,13 +66,13 @@ function flowOf(files) {
 }
 
 // 只读 debug.md 前 10 行判断是否需要独立 review；读取失败按普通小 bug 处理。
-// 只接受顶部 frontmatter 中的小写标记；写在正文后面不生效。
+// 只接受顶部 frontmatter 中的小写标记，可带引号；写在正文后面不生效。
 function needsReview(root, slug) {
   const file = join(root, 'docs', 'devflow', slug, 'debug.md');
   if (!existsSync(file)) return false;
   try {
     const head = readText(file).split(/\r?\n/).slice(0, 10).join('\n');
-    return /^review:\s*required\s*$/m.test(head);
+    return /^review:\s*['"]?required['"]?\s*$/m.test(head);
   } catch {
     return false;
   }
@@ -135,7 +135,8 @@ export async function main(argv = process.argv.slice(2)) {
   const rows = slugs.map((item) => {
     const pending = testsPending && item.slug === activeSlug;
     const flow = flowOf(item.files);
-    const reviewRequired = needsReview(root, item.slug);
+    // reviewRequired 只对轻量修复有意义：轻量功能始终 review，完整流程也会 review。
+    const reviewRequired = flow === 'light-bug' && needsReview(root, item.slug);
     const stage = stageOf(item.files, pending, reviewRequired);
     return {
       slug: item.slug,
@@ -202,8 +203,9 @@ export async function main(argv = process.argv.slice(2)) {
     for (const row of rows) {
       const produced = row.artifacts.length ? row.artifacts.join(', ') : '（无）';
       const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
+      const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
       const gap = row.gap ? `，缺少 ${row.gap}` : '';
-      console.log(`  ${row.slug}  阶段：${row.stage}${flow}  产物：${produced}${gap}`);
+      console.log(`  ${row.slug}  阶段：${row.stage}${flow}${review}  产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }
     if (activeSlug && !wanted && slugs.length === 1) {
