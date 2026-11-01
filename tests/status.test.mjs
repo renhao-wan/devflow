@@ -110,6 +110,76 @@ test('status 在多个任务时不擅自选择，也不套用全局测试状态'
   }
 });
 
+test('status 汇总工具路由与可用工具', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-route-'));
+  try {
+    const dir = makeTask(root, 'with-route');
+    writeFileSync(join(dir, 'req.md'), '# req\n');
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), 'version: 1\nrouting:\n  mode: auto\n');
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: new Date().toISOString(),
+      tools: { superpowers: { available: true, signals: ['skill:brainstorming'] } },
+    }));
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.routing.configured, true);
+    assert.equal(r.json.routing.mode, 'auto');
+    assert.deepEqual(r.json.routing.availableTools, ['superpowers']);
+    assert.equal(r.json.routing.stale, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 不把已禁用的工具列为可用', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-disabled-'));
+  try {
+    const dir = makeTask(root, 'disabled-tool');
+    writeFileSync(join(dir, 'req.md'), '# req\n');
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), [
+      'version: 1',
+      'routing:',
+      '  mode: auto',
+      'tools:',
+      '  superpowers:',
+      '    enabled: false',
+      '  bmad:',
+      '    kind: workflow',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: new Date().toISOString(),
+      tools: {
+        superpowers: { available: true, signals: ['skill:brainstorming'] },
+        bmad: { available: true, signals: ['skill:bmad'] },
+      },
+    }));
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.json.routing.availableTools, ['bmad']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 在缺少生态索引时给出提示', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-no-route-'));
+  try {
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.routing.configured, false);
+    assert.ok(r.json.suggestions.some((s) => s.includes('ecosystem.yaml')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('status 支持 --slug 过滤，未知 slug 报错', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-filter-'));
   try {

@@ -110,11 +110,13 @@ devflow init
 devflow gen
 devflow doctor --json
 devflow status --json
+devflow route --stage plan
+devflow route --detect
 devflow sync --dry-run
 devflow ship --stage review --dry-run
 ```
 
-等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。
+等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
 
 ## 六个阶段
 
@@ -159,6 +161,27 @@ devflow 与 superpowers 主题重叠但不冲突：devflow 管**阶段与门禁*
 - 冲突时以 devflow 的阶段门禁与产物路径为准。
 - 已有的 superpowers 设计或计划吸收进 `plan.md`，不并存两份。
 - 未安装 superpowers 时，devflow 自带的 TDD、系统排障、代码评审技能作为 fallback。
+
+## 工具路由
+
+项目可以在 `.claude/hub/ecosystem.yaml` 登记同类工具（superpowers、BMAD、Spec Kit、OpenSpec 等）。阶段入口会先运行 `devflow route --stage <stage>`，判断是否有更合适的工具执行本阶段技法：
+
+```bash
+devflow route --stage plan        # 输出 use-devflow / suggest / delegate
+devflow route --detect            # 重新检测已安装工具
+devflow route --list              # 查看模式与检测结果
+devflow route --stage plan --force-devflow
+devflow route --stage plan --tool superpowers
+```
+
+- 默认 `routing.mode: ask`：命中时说明候选并询问，用户未同意就继续 devflow。
+- `auto` 只自动委派 `kind: technique` 的工具；`workflow` 类工具仍只建议，避免整个流程被静默替换。
+- 路由只决定“谁执行技法”；阶段顺序、门禁与 `docs/devflow/<slug>/` 产物始终由 devflow 负责。
+- 检测只检查技能目录与 `settings.json` 的 `enabledPlugins` 键，不读技能内容、不执行外部工具；结果写入 `.claude/.ecosystem-state.json`（已 gitignore）。`enabled: false` 的工具不参与检测。
+- 新克隆或状态缺失时，`devflow route --stage <stage>` 会自动检测一次；`--list` 保持只读。检测读写都会校验真实路径，拒绝写到项目外。
+- 配置缺失、解析失败或未检测到工具时回退 devflow，不阻塞开发。显式 `--tool <id>` 未知、禁用或阶段不匹配时退出码 1。
+
+详见 [docs/tool-routing.md](docs/tool-routing.md)。
 
 ## hub.yaml 配置
 
@@ -491,17 +514,18 @@ gh auth login --web
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
-| `scripts/hub-init.mjs` | 初始化工作区 | `--root` `--force` `--plugin-root` `--source-root` |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
+| `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具 | `--root` `--force` `--plugin-root` `--source-root` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
-| `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与 cd 目标 | `--root` `--json` |
-| `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令 | `--root` `--slug` `--json` |
+| `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与工具检测 | `--root` `--json` |
+| `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
+| `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--bump` `--root` `--plugin-root` |
 | `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR | `--stage` `--plugin-root` `--base` `--bump` `--dry-run` `--no-pr` |
 | `scripts/hub-sync.mjs` | 插件升级后同步阶段模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` |
 | `scripts/mark-test.mjs` | 记录测试通过时间与命令 | `--root` `--command` |
 
-项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
 
 ## 目录结构
 
@@ -515,14 +539,15 @@ agents/                # 评审、测试、排障三个子代理
 hooks/                 # 五个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
-scripts/               # init / gen / doctor / upstream / ship / sync / mark-test
-scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver
+scripts/               # init / gen / doctor / route / upstream / ship / sync / mark-test
+scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/design.md         # 设计文档
 docs/comparison.md     # 与同类工作流插件的对比与定位
 docs/value-and-limits.md  # 价值、适用边界与验证方法
+docs/tool-routing.md   # 工具生态索引、检测与路由
 SECURITY.md            # 漏洞报告与安全边界
 LICENSE                # MIT
 package.json           # 发布元数据与 npm test 脚本
@@ -533,6 +558,7 @@ package.json           # 发布元数据与 npm test 脚本
 ```
 .claude/hub/           # 项目真源
 ├─ hub.yaml            # 子项目、阶段、测试命令
+├─ ecosystem.yaml      # 同类工具索引与路由模式
 ├─ stages/<stage>/     # 六个阶段的正文与资源
 │  ├─ SKILL.md
 │  ├─ references/      # 按需读取的细则（可选）
@@ -544,6 +570,7 @@ package.json           # 发布元数据与 npm test 脚本
 .claude/.hub-manifest.json   # 生成账本（哈希与资源清单）
 .claude/.hub-sources.json    # 阶段源文件账本，供 sync 判断是否手改
 .claude/.devflow-state.json  # 测试状态
+.claude/.ecosystem-state.json # 工具检测结果（gitignore）
 scripts/               # 薄 loader，指向插件内的真实脚本
 .devflow.json          # 插件位置、版本与回灌源码根
 ```
@@ -556,7 +583,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 149 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 180 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -601,6 +628,10 @@ claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep
 | 升级后模板还是旧的 | 运行 `/devflow:sync --dry-run` 查看是否有冲突；手改文件需确认后加 `--force` |
 | 老项目没有新阶段资源 | 运行 `/devflow:sync` 补充模板新增的资源；`--force` 重跑 init 会覆盖 `hub.yaml`，不推荐 |
 | 子项目识别错误 | 检查 `hub.yaml` 的 `subprojects`。含 `.git` 的容器目录会阻止下钻，深层项目需按「多根工作区」小节手动补充或改指向 |
+| 工具路由总是 `use-devflow` | 运行 `devflow route --detect` 刷新检测；确认 `ecosystem.yaml` 的 `routing.mode` 不是 `off`，且工具已安装 |
+| 检测结果过期 | doctor 会提醒；运行 `devflow route --detect` 更新 `.claude/.ecosystem-state.json` |
+| 想临时不用其他工具 | 阶段命令加 `--force-devflow`，或把 `routing.forceDevflowStages` 加入该阶段；全局关闭用 `routing.mode: off` |
+| route 报未知工具 | `--tool` 的值必须匹配 `.claude/hub/ecosystem.yaml` 的 `tools` 键；未知、禁用或阶段不匹配都会退出码 1 |
 
 ## 版本与兼容
 

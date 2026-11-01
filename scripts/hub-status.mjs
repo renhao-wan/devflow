@@ -4,6 +4,9 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/common.mjs';
+import {
+  isStale, listAvailableTools, loadEcosystem, loadState,
+} from './lib/ecosystem.mjs';
 
 const ARTIFACTS = ['req.md', 'plan.md', 'test.md', 'review.md'];
 
@@ -102,12 +105,31 @@ export async function main(argv = process.argv.slice(2)) {
     suggestions.push('阶段源（.claude/hub/）有改动；运行 node scripts/devflow-gen.mjs 重新生成投影');
   }
 
+  const eco = loadEcosystem(root);
+  const ecoState = loadState(root);
+  const availableTools = listAvailableTools(eco.config, ecoState.state).map((tool) => tool.id);
+  const stale = !ecoState.exists || Boolean(ecoState.error)
+    || isStale(ecoState.state, eco.config.routing.detectMaxAgeDays);
+  if (!eco.exists) {
+    suggestions.push('未配置 .claude/hub/ecosystem.yaml；运行 /devflow:init 可启用工具路由');
+  } else if (eco.error) {
+    suggestions.push(`ecosystem.yaml 解析失败，路由回退默认配置：${eco.error}`);
+  } else if (stale) {
+    suggestions.push('工具检测结果缺失或过期；运行 devflow route --detect 更新');
+  }
+
   const report = {
     root: posix(root),
     activeSlug,
     inferred: Boolean(activeSlug && !wanted),
     slugs: rows,
     state: { testsPending, hubPending: Boolean(state.hubPending) },
+    routing: {
+      configured: eco.exists,
+      mode: eco.config.routing.mode,
+      availableTools,
+      stale,
+    },
     suggestions,
   };
 
@@ -130,6 +152,10 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  未传 --slug 时默认使用：${activeSlug}`);
     }
   }
+  const tools = report.routing.availableTools.length
+    ? report.routing.availableTools.join('、')
+    : '无（运行 devflow route --detect 更新）';
+  console.log(`  路由：${report.routing.mode}${report.routing.configured ? '' : '（未配置）'}；可用工具：${tools}`);
   for (const item of suggestions) console.log(`  提示：${item}`);
   return report;
 }

@@ -546,6 +546,72 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 在配置生态索引后注入工具路由摘要', () => {
+  const root = makeRoot();
+  try {
+    const before = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(before, /工具路由/);
+
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), [
+      'version: 1',
+      'routing:',
+      '  mode: auto',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      tools: {
+        superpowers: { available: true, signals: ['skill:brainstorming'] },
+        bmad: { available: false, signals: [] },
+      },
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.match(ctx, /工具路由：auto/);
+    assert.match(ctx, /可用工具：superpowers/);
+    assert.match(ctx, /--force-devflow/);
+    assert.doesNotMatch(ctx, /bmad/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 过滤已禁用的工具', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), [
+      'version: 1',
+      'routing:',
+      '  mode: auto',
+      'tools:',
+      '  superpowers:',
+      '    enabled: false',
+      '    kind: technique',
+      '  bmad:',
+      '    kind: workflow',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      tools: {
+        superpowers: { available: true, signals: ['skill:brainstorming'] },
+        bmad: { available: true, signals: ['skill:bmad'] },
+      },
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.match(ctx, /可用工具：bmad/);
+    assert.doesNotMatch(ctx, /superpowers/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 识别带引号的子项目键', () => {
   const root = makeRoot();
   try {
@@ -651,8 +717,10 @@ test('guard-generated 拒绝手改投影、账本与 loader', () => {
       '.claude/skills/devflow-req/SKILL.md',
       '.claude/.hub-manifest.json',
       '.claude/.hub-sources.json',
+      '.claude/.ecosystem-state.json',
       '.devflow.json',
       'scripts/devflow-gen.mjs',
+      'scripts/devflow-route.mjs',
       'scripts/devflow-test.mjs',
     ];
     for (const rel of protectedFiles) {

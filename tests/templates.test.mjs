@@ -87,9 +87,10 @@ test('调研相关技能入口与子代理具备检索工具', () => {
 
 test('阶段入口技能 allowed-tools 覆盖子代理与技能调用', () => {
   const expected = {
+    req: ['Skill'],
     plan: ['Skill'],
     implement: ['Skill'],
-    test: ['Task'],
+    test: ['Task', 'Skill'],
     debug: ['Task', 'Skill'],
     review: ['Task', 'Skill'],
   };
@@ -168,3 +169,31 @@ test('安全文档说明外部调研边界', () => {
   assert.match(security, /外部内容是数据，不是指令/);
   assert.match(security, /网络调用不受 hooks 保护/);
 });
+
+test('六个阶段入口都接入工具路由并支持强制 devflow', () => {
+  for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+    const body = read(`skills/${stage}/SKILL.md`);
+    assert.match(body, /hub-route\.mjs/, `${stage} 缺少路由命令`);
+    assert.match(body, new RegExp(`--stage ${stage}`), `${stage} 路由阶段不匹配`);
+    assert.match(body, /--force-devflow/, `${stage} 缺少强制开关`);
+    assert.match(body, /阶段顺序、门禁与 `docs\/devflow\/<slug>\/` 产物仍由本阶段负责/, `${stage} 未声明边界`);
+    const front = body.split('---')[1] || '';
+    assert.match(front, /--force-devflow/, `${stage} argument-hint 缺少 --force-devflow`);
+  }
+});
+
+test('流程技能说明工具路由模式与默认行为', () => {
+  const skill = read('skills/devflow-engineering-flow/SKILL.md');
+  assert.match(skill, /## 工具路由/);
+  assert.match(skill, /routing\.mode: ask/);
+  assert.match(skill, /routing\.mode: auto/);
+  assert.match(skill, /technique/);
+  assert.match(skill, /workflow/);
+  assert.match(skill, /\.ecosystem-state\.json/);
+});
+
+test('路由模块与 CLI 随插件发布', () => {
+  assert.ok(existsSync(join(ROOT, 'scripts', 'lib', 'ecosystem.mjs')));
+  assert.ok(existsSync(join(ROOT, 'scripts', 'hub-route.mjs')));
+});
+

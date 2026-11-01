@@ -8,6 +8,7 @@ const COMMANDS = {
   gen: ['gen-claude-skills.mjs', '从 .claude/hub 生成阶段投影'],
   doctor: ['hub-doctor.mjs', '体检配置、版本、投影与 hooks'],
   status: ['hub-status.mjs', '只读查看进度、产物缺口与下一步命令'],
+  route: ['hub-route.mjs', '判断当前阶段是否应先用其他工具（--detect 自动检测）'],
   sync: ['hub-sync.mjs', '把插件新版阶段模板同步到项目（默认预览）'],
   upstream: ['hub-upstream.mjs', '预览或回灌阶段模板到插件（默认预览）'],
   ship: ['hub-ship.mjs', '回灌、提交并创建 PR'],
@@ -27,6 +28,8 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow init
   devflow gen
   devflow doctor --json
+  devflow route --stage plan
+  devflow route --detect
   devflow sync --dry-run
   devflow ship --stage review --dry-run
 

@@ -99,6 +99,21 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 
 冲突时以 devflow 的阶段门禁与产物路径为准；已有的 superpowers 设计或计划吸收进 `plan.md`，不维护两份。devflow 自带的 TDD、排障、评审技能作为未安装 superpowers 时的 fallback。
 
+## 工具生态与路由
+
+项目可以在 `.claude/hub/ecosystem.yaml` 声明同类工具。配置提交到仓库、可手改；检测结果写入 `.claude/.ecosystem-state.json` 并加入 `.gitignore`，避免每次检测重写用户配置。
+
+路由只决定**谁执行当前阶段的技法**，不接管阶段门禁与产物：
+
+- `technique` 工具只接管执行技法（brainstorming、TDD、排障、评审）；阶段顺序、门禁与 `docs/devflow/<slug>/` 仍由 devflow 负责。
+- `workflow` 工具会替换整个流程，所以 `mode: auto` 也只建议，不自动委派。
+- 默认 `mode: ask`；`off` 关闭路由；`forceDevflowStages` 与 `--force-devflow` 提供强制出口。
+- 决策优先级：强制 devflow > `--tool <id>` > `mode: off` > 强制阶段 > 自动匹配。
+
+检测是启发式的，只检查技能目录与 `settings.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具、不在状态里记录绝对路径；`enabled: false` 的工具不参与检测。状态缺失或过期时，`devflow route --stage` 会自动检测一次（`--list` 保持只读）。配置缺失、解析失败或检测结果缺失时回退 devflow，不阻塞开发；只有显式指定的工具不可用时才报错。
+
+路由命令：`devflow route --stage <stage> [--tool <id>] [--force-devflow] [--json]`，以及 `--detect` / `--list`。阶段入口技能在执行前自动调用；`init` 创建配置并首次检测，`doctor` 校验配置与检测时效，`status` 展示当前模式与可用工具。详见 `docs/tool-routing.md`。
+
 ## 安全边界
 
 `guard-dangerous` 是基于正则的尽力拦截，不是沙箱；五个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
@@ -115,4 +130,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新
 - [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
-- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则
+- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）

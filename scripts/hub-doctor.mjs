@@ -7,6 +7,10 @@ import {
   readMeta, isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
+import {
+  ECOSYSTEM_FILE, STATE_FILE, isStale, loadEcosystem, loadState,
+  summarizeState, validateConfig,
+} from './lib/ecosystem.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -107,6 +111,29 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const blocked = config.upstream?.blocklist;
     if (blocked != null && !Array.isArray(blocked)) add('warn', 'hub.yaml upstream.blocklist 应为列表');
+  }
+
+  const eco = loadEcosystem(root);
+  if (!eco.exists) {
+    add('warn', `缺少 ${ECOSYSTEM_FILE}，运行 /devflow:init 可生成；不影响 devflow 阶段流程`);
+  } else if (eco.error) {
+    add('warn', `${ECOSYSTEM_FILE} 解析失败，路由会回退默认配置：${eco.error}`);
+  } else {
+    add('ok', `${ECOSYSTEM_FILE} 语法有效（mode=${eco.config.routing.mode}）`);
+    const { errors, warnings } = validateConfig(eco.raw);
+    for (const err of errors) add('error', `${ECOSYSTEM_FILE}：${err}`);
+    for (const warning of warnings) add('warn', `${ECOSYSTEM_FILE}：${warning}`);
+  }
+  const ecoState = loadState(root);
+  if (!ecoState.exists) {
+    add('warn', `缺少 ${STATE_FILE}，运行 devflow route --detect 生成检测结果`);
+  } else if (ecoState.error) {
+    add('warn', `${STATE_FILE} 损坏：${ecoState.error}，运行 devflow route --detect 重建`);
+  } else if (isStale(ecoState.state, eco.config.routing.detectMaxAgeDays)) {
+    add('warn', `工具检测结果已过期（${ecoState.state.detectedAt || '无时间'}），运行 devflow route --detect 更新`);
+  } else {
+    const available = summarizeState(ecoState.state, eco.config).available;
+    add('ok', available.length ? `工具检测：${available.join('、')}` : '工具检测：未发现已知工具');
   }
 
   let pluginRoot = null;

@@ -35,9 +35,12 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'templates', 'review.template.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'prior-art-research.md')));
     assert.ok(existsSync(join(root, '.devflow.json')));
-    for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs']) {
+    for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-route.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs']) {
       assert.ok(existsSync(join(root, 'scripts', file)), `缺少 loader ${file}`);
     }
+    assert.ok(existsSync(join(root, '.claude', 'hub', 'ecosystem.yaml')));
+    assert.ok(existsSync(join(root, '.claude', '.ecosystem-state.json')));
+    assert.match(readFileSync(join(root, '.gitignore'), 'utf8'), /\.ecosystem-state\.json/);
 
     const yaml = readFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'utf8');
     assert.match(yaml, /subprojects:/);
@@ -65,6 +68,14 @@ test('init → gen → doctor → mark-test 全链路', () => {
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
     assert.match(doctor.stdout, /0 个错误/);
+
+    const home = join(root, 'empty-home');
+    mkdirSync(home, { recursive: true });
+    const detect = run('hub-route.mjs', ['--root', root, '--detect', '--home', home], root);
+    assert.equal(detect.status, 0, detect.stderr);
+    const route = run('hub-route.mjs', ['--root', root, '--home', home, '--stage', 'plan', '--json'], root);
+    assert.equal(route.status, 0, route.stderr);
+    assert.ok(['use-devflow', 'suggest', 'delegate'].includes(JSON.parse(route.stdout).decision));
 
     const mark = run('mark-test.mjs', ['--root', root, '--command', 'npm test'], root);
     assert.equal(mark.status, 0, mark.stderr);

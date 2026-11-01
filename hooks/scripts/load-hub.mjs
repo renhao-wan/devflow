@@ -47,6 +47,30 @@ try {
   lines.push('- 流程：req → plan → implement → test → review；test 或 implement 失败时进入 debug，修复后回到 test。');
   lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');
 
+  // 只在项目显式配置生态索引时注入，避免给未启用的项目增加噪音。
+  const ecoFile = join(root, '.claude', 'hub', 'ecosystem.yaml');
+  if (existsSync(ecoFile)) {
+    let mode = 'ask';
+    const disabled = new Set();
+    try {
+      const eco = parseYaml(readFileSync(ecoFile, 'utf8'));
+      const declared = eco?.routing?.mode;
+      if (['off', 'ask', 'auto'].includes(declared)) mode = declared;
+      for (const [id, tool] of Object.entries(eco?.tools || {})) {
+        if (tool && tool.enabled === false) disabled.add(id);
+      }
+    } catch { /* 配置损坏时按默认 ask 展示，路由命令自身会回退 */ }
+    let available = [];
+    try {
+      const ecoState = JSON.parse(readFileSync(join(root, '.claude', '.ecosystem-state.json'), 'utf8'));
+      available = Object.entries(ecoState.tools || {})
+        .filter(([id, value]) => value?.available === true && !disabled.has(id))
+        .map(([id]) => id);
+    } catch { /* 未检测过 */ }
+    const toolsText = available.length ? `；可用工具：${available.join('、')}` : '；可用工具：未检测到';
+    lines.push(`- 工具路由：${mode}${toolsText}。进入阶段先运行 devflow route --stage <stage>；auto 仅自动委派 technique，workflow 只建议；--force-devflow 强制使用 devflow。`);
+  }
+
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',

@@ -13,9 +13,12 @@ const LEDGERS = new Set([
 const LOADERS = new Set([
   'scripts/devflow-gen.mjs',
   'scripts/devflow-doctor.mjs',
+  'scripts/devflow-route.mjs',
   'scripts/devflow-upstream.mjs',
   'scripts/devflow-test.mjs',
 ]);
+
+const ECOSYSTEM_STATE = '.claude/.ecosystem-state.json';
 
 function projectFileRel(payload) {
   const input = payload.tool_input || {};
@@ -32,6 +35,9 @@ function projectFileRel(payload) {
 }
 
 function reason(rel) {
+  if (rel === ECOSYSTEM_STATE) {
+    return '工具检测结果是生成物。请运行 devflow route --detect 刷新，而不是手改。';
+  }
   if (LEDGERS.has(rel)) {
     return 'devflow 账本由脚本维护，手改会造成投影或同步漂移。'
       + '请运行 node scripts/devflow-gen.mjs（或 node scripts/devflow-doctor.mjs）重建。';
