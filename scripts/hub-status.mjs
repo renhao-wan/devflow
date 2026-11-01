@@ -8,7 +8,12 @@ import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
 
-const ARTIFACTS = ['req.md', 'plan.md', 'test.md', 'review.md'];
+const ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md', 'test.md', 'review.md'];
+
+const FLOW_LABEL = {
+  'light-feature': '轻量功能',
+  'light-bug': '轻量修复',
+};
 
 const NEXT = {
   req: (slug) => `/devflow:req <需求描述>（slug：${slug}）`,
@@ -52,15 +57,60 @@ function scanSlugs(root) {
   return slugs.sort((a, b) => b.latest - a.latest);
 }
 
-function stageOf(files, testsPending) {
+function flowOf(files) {
   const has = (name) => files.includes(name);
-  if (!has('req.md')) return 'req';
-  if (!has('plan.md')) return 'plan';
-  // 代码改动晚于最近一次测试时，即使已有 review.md 也应回到 test。
-  if (testsPending) return 'test';
-  if (has('review.md')) return 'done';
-  if (has('test.md')) return 'review';
-  return 'implement';
+  if (has('req.md') || has('plan.md')) return 'full';
+  if (has('brief.md')) return 'light-feature';
+  if (has('debug.md')) return 'light-bug';
+  return 'unknown';
+}
+
+// 只读 debug.md 前 10 行判断是否需要独立 review；读取失败按普通小 bug 处理。
+// 只接受顶部 frontmatter 中的小写标记，可带引号；写在正文后面不生效。
+function needsReview(root, slug) {
+  const file = join(root, 'docs', 'devflow', slug, 'debug.md');
+  if (!existsSync(file)) return false;
+  try {
+    const head = readText(file).split(/\r?\n/).slice(0, 10).join('\n');
+    return /^review:\s*['"]?required['"]?\s*$/m.test(head);
+  } catch {
+    return false;
+  }
+}
+
+function stageOf(files, testsPending, reviewRequired = false) {
+  const has = (name) => files.includes(name);
+
+  // 完整流程优先：一旦出现 req.md / plan.md，原有四产物推断保持不变。
+  if (has('req.md') || has('plan.md')) {
+    if (!has('req.md')) return 'req';
+    if (!has('plan.md')) return 'plan';
+    // 代码改动晚于最近一次测试时，即使已有 review.md 也应回到 test。
+    if (testsPending) return 'test';
+    if (has('review.md')) return 'done';
+    if (has('test.md')) return 'review';
+    return 'implement';
+  }
+
+  // 轻量功能：brief 替代 req + plan，review 始终保留。
+  if (has('brief.md')) {
+    if (testsPending) return 'test';
+    if (has('test.md')) return has('review.md') ? 'done' : 'review';
+    if (has('review.md')) return 'test';
+    return 'implement';
+  }
+
+  // 轻量修复：debug 替代 req + plan + implement。
+  if (has('debug.md')) {
+    if (testsPending) return 'test';
+    if (has('test.md')) {
+      if (!has('review.md') && reviewRequired) return 'review';
+      return 'done';
+    }
+    return 'test';
+  }
+
+  return 'req';
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -83,10 +133,16 @@ export async function main(argv = process.argv.slice(2)) {
   const activeSlug = wanted || (slugs.length === 1 ? slugs[0].slug : null);
   const testsPending = Boolean(state.testsPending);
   const rows = slugs.map((item) => {
-    const stage = stageOf(item.files, testsPending && item.slug === activeSlug);
+    const pending = testsPending && item.slug === activeSlug;
+    const flow = flowOf(item.files);
+    // reviewRequired 只对轻量修复有意义：轻量功能始终 review，完整流程也会 review。
+    const reviewRequired = flow === 'light-bug' && needsReview(root, item.slug);
+    const stage = stageOf(item.files, pending, reviewRequired);
     return {
       slug: item.slug,
       stage,
+      flow,
+      reviewRequired,
       artifacts: item.files,
       gap: GAP[stage],
       next: NEXT[stage](item.slug),
@@ -94,7 +150,9 @@ export async function main(argv = process.argv.slice(2)) {
   });
 
   const suggestions = [];
-  if (!rows.length) suggestions.push('未发现进行中的任务；开始新需求：/devflow:req <需求描述>');
+  if (!rows.length) {
+    suggestions.push('未发现进行中的任务；新功能：/devflow:req <需求描述>（小改动加 --light）；修复缺陷：/devflow:debug <问题>');
+  }
   if (!wanted && slugs.length > 1) {
     suggestions.push(`存在 ${slugs.length} 个任务；执行工作流命令时请显式带上 slug，或先运行 /devflow:status --slug <slug>`);
   }
@@ -144,8 +202,10 @@ export async function main(argv = process.argv.slice(2)) {
   } else {
     for (const row of rows) {
       const produced = row.artifacts.length ? row.artifacts.join(', ') : '（无）';
+      const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
+      const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
       const gap = row.gap ? `，缺少 ${row.gap}` : '';
-      console.log(`  ${row.slug}  阶段：${row.stage}  产物：${produced}${gap}`);
+      console.log(`  ${row.slug}  阶段：${row.stage}${flow}${review}  产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }
     if (activeSlug && !wanted && slugs.length === 1) {

@@ -132,6 +132,15 @@ tools:
 
 `auto` 只对 `technique` 自动产生 `delegate`；`workflow` 始终是 `suggest`。
 
+## 轻量入口（`--light`）
+
+轻量功能（`/devflow:req --light`）与轻量修复（`/devflow:debug`）同样遵守上面的路由顺序，但有两个额外约束：
+
+- `--light` 表示用户已选定轻量路径，**不切换 workflow 工具**：req 入口会给路由命令附加 `--force-devflow`，避免 BMAD、Spec Kit、OpenSpec 等接管 req 阶段。若同时显式传 `--tool <id>`，轻量优先、该参数不生效；需要改用其他工具或完整规格流程时，去掉 `--light` 后重新执行。
+- 轻量修复仍可委派 `technique` 工具执行排障技法（如 superpowers 的系统化排障），但 `docs/devflow/<slug>/debug.md` 是唯一产物，不并存第二份报告；`review: required` 与升级判断也只写在该文件顶部。
+
+轻量任务的 implement / test / review 阶段不受影响：按普通路由执行，阶段顺序、门禁与产物仍由 devflow 负责。
+
 ## 命令参考
 
 ```

@@ -56,6 +56,9 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.deepEqual(reviewEntry.resources, ['references/severity.md', 'templates/review.template.md']);
     const planEntry = manifest.skills.find((s) => s.name === 'devflow-plan');
     assert.ok(planEntry.resources.includes('references/prior-art-research.md'));
+    const reqEntry = manifest.skills.find((s) => s.name === 'devflow-req');
+    assert.ok(reqEntry.resources.includes('templates/brief.template.md'));
+    assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'req', 'templates', 'brief.template.md')));
 
     const reviewProjection = readFileSync(join(root, '.claude', 'skills', 'devflow-review', 'SKILL.md'), 'utf8');
     assert.match(reviewProjection, /## 阶段资源/);

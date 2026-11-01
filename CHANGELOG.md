@@ -4,6 +4,13 @@
 
 ### 增强
 
+- 新增轻量流程：小功能用 `/devflow:req --light` 产出 `brief.md`（合并需求与计划），小 bug 由 `/devflow:debug` 直接产出 `debug.md`；只压缩文档、不跳过测试，小功能保留 review，小 bug 按风险补审
+- `hub-status` 识别 `brief.md` 与 `debug.md`：显示「轻量功能 / 轻量修复」及下一步；独立 `debug.md` 不再被误判为 req
+- 小 bug 按风险补审查：`debug.md` 顶部的 `review: required` 用于不触发升级的安全、数据、认证/权限/并发风险，测试通过后提示 `/devflow:review`；公共接口、迁移与依赖必须升级完整流程
+- 轻量流程显式升级：新增依赖、公共接口/契约、数据结构/迁移、不可逆操作，或非测试/文档改动 >200 行 / >10 文件 / >2 子项目时，写 `## 升级判断` 并补 `req.md` / `plan.md`；80–200 行或 5–10 文件先询问。计数口径统一为 `git diff --numstat`，排除 `docs/devflow/**`、测试文件、lockfile 与生成物
+- 新增 `brief.template.md` 与 `debug-report.template.md`（正确行为依据、改动范围、回归证据、现成实现检索、升级判断）
+- req、debug、implement、test、review 阶段与入口技能同步轻量输入、验收来源优先级、升级判断核对、slug 去重与零候选提示；`hub-status` 文本对风险修复提示「需补审查」，`needsReview` 兼容引号与 CRLF
+- `req --light` 不切换 workflow 工具：入口附加 `--force-devflow`，与 `--tool <id>` 同时出现时轻量优先；`debug` 轻量仍可委派 `technique` 排障技法，但 `debug.md` 是唯一产物
 - 新增只读 `/devflow:status`（及 `devflow status`）：扫描 `docs/devflow/` 的产物，推导各任务所处阶段、缺口与下一步命令，不写入任何状态
 - 阶段入口补充下一步命令提示；统一 slug 推断规则：只有一个候选时自动采用，多个候选时列出让用户选择，不再回落到 `latest`
 - 新增工具生态索引与路由：`.claude/hub/ecosystem.yaml` 登记同类工具，`devflow route --stage <stage>` 返回 `use-devflow` / `suggest` / `delegate`；支持 `--detect`、`--list`、`--tool <id>` 与 `--force-devflow`
@@ -26,6 +33,7 @@
 ### 测试
 
 - 新增 `tests/status.test.mjs`，覆盖无任务、单任务推断、完成态、多任务不擅自选择与 `--slug` 过滤
+- 状态测试补充轻量功能与轻量修复的 implement/test/review/done 分支、`review: required` 风险标记与完整流程优先级
 - 新增 `tests/route.test.mjs`，覆盖 22 种路由决策：未配置回退、mode、ask/auto、强制与指定工具、阶段不匹配、forceDevflowStages、检测与插件键、检测结果缺失时自动检测、禁用工具不参与检测、`--detect` 与阶段/列表组合、解析失败 fail-open、`--list`、非法阶段名、检测名路径穿越与默认配置渲染往返
 - 更新 CLI、端到端、状态视图、模板约定与 hooks 测试，覆盖 `route` 命令、生态配置生成、入口路由步骤、禁用工具过滤与检测状态保护
 

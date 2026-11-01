@@ -91,6 +91,30 @@ test('sync 更新未改文件、保留手改、加入新资源', () => {
   }
 });
 
+test('sync 为老项目补入新增的 brief 模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-light-'));
+  try {
+    const repo = makePlugin(base, {});
+    const root = makeProject(base, repo);
+
+    mkdirSync(join(repo, 'templates', 'stages', 'req', 'templates'), { recursive: true });
+    writeFileSync(
+      join(repo, 'templates', 'stages', 'req', 'templates', 'brief.template.md'),
+      '---\nmode: light\n---\n\n# 轻量功能\n',
+    );
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    const target = join(root, '.claude', 'hub', 'stages', 'req', 'templates', 'brief.template.md');
+    assert.ok(existsSync(target));
+    assert.match(readFileSync(target, 'utf8'), /mode: light/);
+    const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.ok(sources.files['.claude/hub/stages/req/templates/brief.template.md']);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('sync --force 覆盖时生成 .bak 备份', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-sync-force-'));
   try {
