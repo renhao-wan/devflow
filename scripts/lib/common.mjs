@@ -52,12 +52,16 @@ export function writeText(file, text) {
   writeFileSync(file, text, 'utf8');
 }
 
-/** 先写临时文件再替换，避免半成品。 */
+/** 先写临时文件再替换，避免半成品；失败时清理临时文件。 */
 export function writeAtomic(file, text) {
   ensureDir(dirname(file));
   const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, text, 'utf8');
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, text, 'utf8');
+    renameSync(tmp, file);
+  } finally {
+    if (existsSync(tmp)) rmSync(tmp, { force: true });
+  }
 }
 
 export function sha256(text) {
@@ -78,6 +82,22 @@ export function contentHash(text) {
 export function isPathInside(parent, child) {
   const rel = relative(resolve(parent), resolve(child));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * 真实路径判断：解析 junction/符号链接后 child 是否仍在 parent 内。
+ * 目标尚不存在时，用最近的已存在祖先判断，避免链接把写入引到目录外。
+ */
+export function isRealPathInside(parent, child) {
+  const parentReal = canonicalPath(parent);
+  let anchor = resolve(child);
+  while (!existsSync(anchor)) {
+    const up = dirname(anchor);
+    if (up === anchor) break;
+    anchor = up;
+  }
+  const anchorReal = canonicalPath(anchor);
+  return anchorReal === parentReal || anchorReal.startsWith(`${parentReal}/`);
 }
 
 export function walk(dir, suffix = '') {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const HOOKS = resolve(import.meta.dirname, '..', 'hooks', 'scripts');
 const NODE = process.execPath;
@@ -577,5 +578,70 @@ test('load-hub 在无 hub 时静默', () => {
     assert.equal(r.stdout, '');
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('guard 回显命令时脱敏环境变量凭据', () => {
+  const command = 'DB_PASSWORD=hunter2 API_TOKEN=abc123 git push --force origin main';
+  const out = JSON.parse(runHook('guard-dangerous.mjs', {
+    tool_name: 'Bash',
+    tool_input: { command },
+  }).stdout);
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  const reason = out.hookSpecificOutput.permissionDecisionReason;
+  assert.doesNotMatch(reason, /hunter2|abc123/);
+  assert.match(reason, /\*\*\*/);
+});
+
+test('guard 在 stdin 截断时要求确认而不是放行半截命令', async () => {
+  const child = spawn(NODE, [join(HOOKS, 'guard-dangerous.mjs')], {
+    env: { ...process.env, DEVFLOW_STDIN_TIMEOUT_MS: '50' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (c) => { out += c; });
+  child.stdin.on('error', () => {});
+  // 只写半截 JSON，保持 stdin 打开，模拟读取超时。
+  child.stdin.write('{"tool_name":"Bash","tool_input":{"command":"rm -rf /');
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 0);
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, 'ask');
+  assert.match(parsed.hookSpecificOutput.permissionDecisionReason, /未完整读取/);
+});
+
+test('load-hub 用归一化哈希，CRLF 不误报漂移', () => {
+  const root = makeRoot();
+  try {
+    const skillDir = join(root, '.claude', 'skills', 'devflow-req');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), 'line1\r\nline2\r\n');
+    const hash = createHash('sha256').update('line1\nline2\n').digest('hex');
+    writeFileSync(join(root, '.claude', '.hub-manifest.json'), JSON.stringify({
+      skills: [{ name: 'devflow-req', target: '.claude/skills/devflow-req/SKILL.md', hash }],
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /投影漂移/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 忽略指向投影目录之外的账本条目', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.hub-manifest.json'), JSON.stringify({
+      skills: [
+        { name: 'devflow-evil', target: '../outside/SKILL.md', hash: 'deadbeef' },
+        { name: 'devflow-other', target: 'C:/Windows/win.ini', hash: 'deadbeef' },
+      ],
+    }));
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /devflow-evil|devflow-other|缺失/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

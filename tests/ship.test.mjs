@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildPrBody } from '../scripts/hub-ship.mjs';
+import { buildPrBody, redactText } from '../scripts/hub-ship.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -334,4 +334,59 @@ test('ship 拒绝非 git 仓库作为插件目录', () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('ship 的版本号来自 --base 分支而非当前分支', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-basever-'));
+  try {
+    const root = makeProject();
+    const { repo } = makePluginRepo(base);
+
+    git(repo, ['checkout', '-b', 'feature']);
+    writeFileSync(join(repo, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'devflow', version: '1.1.0' }, null, 2));
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'devflow', version: '1.1.0' }, null, 2));
+    writeFileSync(join(repo, '.claude-plugin', 'marketplace.json'), JSON.stringify({
+      name: 'devflow-marketplace',
+      metadata: { version: '1.1.0' },
+    }, null, 2));
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-m', 'chore: 当前分支预发布版本']);
+
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main'], repo);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+
+    const branches = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n');
+    const branch = branches.find((b) => b.startsWith('devflow/upstream-review'));
+    assert.ok(branch, `未找到回灌分支：${branches.join('、')}`);
+
+    const message = git(repo, ['log', '-1', '--format=%B', branch]);
+    assert.match(message, /版本：1\.0\.0 → 1\.0\.1/);
+    assert.doesNotMatch(message, /1\.1\.0/);
+    const plugin = JSON.parse(git(repo, ['show', `${branch}:.claude-plugin/plugin.json`]));
+    assert.equal(plugin.version, '1.0.1');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('push 失败时不回显 URL 中的凭据', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-pusherr-'));
+  try {
+    const root = makeProject();
+    const { repo } = makePluginRepo(base);
+    git(repo, ['remote', 'set-url', '--push', 'origin', 'https://user:supersecret@127.0.0.1:1/devflow.git']);
+
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo], repo);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /push 失败/);
+    assert.doesNotMatch(r.stderr, /supersecret/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('redactText 覆盖 URL 凭据与查询参数 token', () => {
+  const text = redactText('fatal: https://user:tok3n@example.com/x?access_token=abc123&token=def456');
+  assert.doesNotMatch(text, /tok3n@|abc123|def456/);
+  assert.match(text, /\*\*\*/);
 });

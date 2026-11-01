@@ -521,7 +521,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 119 项，覆盖脚本、hooks、清单一致性、模板约定与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 131 项，覆盖脚本、hooks、清单一致性、模板约定与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -558,7 +558,7 @@ CI 由 `.github/workflows/test.yml` 驱动，在 push 到 `main` 和 PR 时运�
 
 `plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.3.2`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.3.3`）
 - 包元数据：`package.json` 的 `version`
 - 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 

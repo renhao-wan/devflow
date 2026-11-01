@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // PostToolUse(Edit|Write|MultiEdit|NotebookEdit|Bash)：记录改动文件，标记测试待验证。
 // Bash 可能通过 sed -i、格式化器、代码生成等间接改文件，用 git status 兜底发现。
-import { existsSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, isAbsolute, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readStdin, findHubRoot } from './lib.mjs';
+import { readStdin, findHubRoot, writeJsonAtomic } from './lib.mjs';
 
 const LEDGERS = new Set([
   '.claude/.devflow-state.json',
@@ -47,7 +47,7 @@ function gitChanged(root) {
   return files;
 }
 
-const raw = await readStdin();
+const { text: raw } = await readStdin();
 let payload = {};
 try { payload = JSON.parse(raw || '{}'); } catch { process.exit(0); }
 
@@ -96,9 +96,7 @@ try {
   state.lastTrackAt = state.lastChangeAt;
   state.testsPending = true;
 
-  const tmp = `${stateFile}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-  renameSync(tmp, stateFile);
+  writeJsonAtomic(stateFile, state);
 } catch {
   // 记录失败不应影响文件编辑本身。
 }

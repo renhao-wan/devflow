@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
-  walk, relPosix, isGeneratedArtifact,
+  walk, relPosix, isGeneratedArtifact, isPathInside, isRealPathInside,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -90,6 +90,8 @@ function expandMavenModules(root, dir, depth = 0) {
   const out = [];
   for (const mod of readMavenModules(dir)) {
     const modDir = resolve(dir, mod);
+    // <module> 可写成 ../x 或绝对路径；只接受工作区内的真实路径。
+    if (!isPathInside(root, modDir) || !isRealPathInside(root, modDir)) continue;
     if (!existsSync(modDir)) continue;
     const rel = relative(root, modDir).split(sep).join('/');
     const nested = expandMavenModules(root, modDir, depth + 1);

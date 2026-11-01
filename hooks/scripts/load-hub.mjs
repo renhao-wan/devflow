@@ -2,9 +2,8 @@
 // SessionStart：注入 hub 摘要，让模型一开始就知道本项目的流程与漂移状态。
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { readStdin, findHubRoot } from './lib.mjs';
-import { parseYaml } from '../../scripts/lib/common.mjs';
+import { parseYaml, contentHash } from '../../scripts/lib/common.mjs';
 
 await readStdin();
 try {
@@ -24,13 +23,16 @@ try {
       const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
       for (const s of manifest.skills || []) {
         if (!s.hash || !s.target) continue;
-        const target = join(root, ...String(s.target).split('/'));
-        if (!existsSync(target)) {
+        const target = String(s.target);
+        // 只读取生成器管辖的投影，避免账本把钩子引到项目外。
+        if (!target.startsWith('.claude/skills/devflow-') || !target.endsWith('/SKILL.md') || target.includes('..')) continue;
+        const targetAbs = join(root, ...target.split('/'));
+        if (!existsSync(targetAbs)) {
           drift.push(`${s.name}（缺失）`);
           continue;
         }
-        const hash = createHash('sha256').update(readFileSync(target, 'utf8')).digest('hex');
-        if (hash !== s.hash) drift.push(`${s.name}（已改）`);
+        // 与生成器使用同一套行尾归一化哈希，否则 CRLF 会被误报为手改。
+        if (contentHash(readFileSync(targetAbs, 'utf8')) !== s.hash) drift.push(`${s.name}（已改）`);
       }
     } catch { /* ignore */ }
   }

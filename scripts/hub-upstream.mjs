@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import { existsSync, copyFileSync } from 'node:fs';
+import { existsSync, copyFileSync, rmSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   pluginInfo, argValue, hasFlag, readText, writeText,
   writeAtomic, log, posix, isMain, projectRoot, ensureDir, normalizeEol,
   walk, relPosix, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
-  isGeneratedArtifact, loadHub, bumpVersion, isValidStageName, isPathInside,
+  isGeneratedArtifact, loadHub, bumpVersion, isValidStageName, isPathInside, isRealPathInside,
 } from './lib/common.mjs';
+
+const JOURNAL = '.devflow-upstream-apply.json';
 
 const PRIVATE_PATTERNS = [
   /(?<![A-Za-z])[A-Za-z]:[\\/]/, // Windows 盘符路径（负向后行断言排除 URL 中的 ://）
@@ -30,7 +32,7 @@ const SECRET_PATTERNS = [
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\bBearer\s+[A-Za-z0-9._\-]{20,}/,
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*['"]?[^\s'"]{6,}/i,
+  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, // URL 中 user:pass@
 ];
 
@@ -98,8 +100,8 @@ function updateVersionFiles(pluginRoot, next) {
     let data;
     try {
       data = JSON.parse(readText(file));
-    } catch {
-      continue;
+    } catch (err) {
+      throw new Error(`无法解析版本文件 ${posix(file)}：${err.message}。请修复后再回灌。`);
     }
     if (file.endsWith('marketplace.json')) {
       data.metadata = { ...(data.metadata || {}), version: next };
@@ -134,10 +136,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   const srcDir = join(root, '.claude', 'hub', 'stages', stage);
   const dstDir = join(pluginRoot, 'templates', 'stages', stage);
-  if (!isPathInside(join(root, '.claude', 'hub', 'stages'), srcDir)) {
+  if (!isPathInside(join(root, '.claude', 'hub', 'stages'), srcDir) || !isRealPathInside(root, srcDir)) {
     throw new Error(`阶段源目录越界：${posix(srcDir)}`);
   }
-  if (!isPathInside(join(pluginRoot, 'templates', 'stages'), dstDir)) {
+  if (!isPathInside(join(pluginRoot, 'templates', 'stages'), dstDir)
+    || !isRealPathInside(pluginRoot, dstDir)) {
     throw new Error(`回灌目标越界：${posix(dstDir)}`);
   }
   if (!existsSync(srcDir)) throw new Error(`项目里没有该阶段：${posix(srcDir)}`);
@@ -174,21 +177,66 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (cacheTarget) throw new Error(cacheGuardMessage(pluginRoot));
 
-  if (!pending.length) {
-    console.log(reusable.length ? '可回灌文件与插件模板一致，未修改插件。' : '没有可回灌内容，未修改插件。');
-    return { stage, reusable: reusable.length, pending: 0, local: localCount, applied: false };
+  // 上次中断可能停在“文件已复制、版本未升级”：先记账再写入，重跑时续做而不是提前返回。
+  const journalFile = join(pluginRoot, JOURNAL);
+  let journal = null;
+  if (existsSync(journalFile)) {
+    try {
+      journal = JSON.parse(readText(journalFile));
+    } catch {
+      throw new Error(`无法解析上次中断的回灌记录：${posix(journalFile)}。请检查或删除后重试。`);
+    }
+    if (journal?.stage && journal.stage !== stage) {
+      throw new Error(`上次未完成的回灌属于阶段 ${journal.stage}，请先完成或删除 ${posix(journalFile)}。`);
+    }
   }
 
+  let oldVersion;
+  let nextVersion;
+  if (journal) {
+    oldVersion = String(journal.oldVersion);
+    nextVersion = String(journal.nextVersion);
+    if (info.version !== oldVersion && info.version !== nextVersion) {
+      throw new Error(
+        `插件版本 ${info.version} 与未完成回灌记录的 ${oldVersion} → ${nextVersion} 不一致，`
+        + `请检查后删除 ${posix(journalFile)}。`,
+      );
+    }
+    log('warn', `检测到上次未完成的回灌，继续完成 ${oldVersion} → ${nextVersion}`);
+  } else {
+    if (!pending.length) {
+      console.log(reusable.length ? '可回灌文件与插件模板一致，未修改插件。' : '没有可回灌内容，未修改插件。');
+      return { stage, reusable: reusable.length, pending: 0, local: localCount, applied: false };
+    }
+    oldVersion = info.version;
+    nextVersion = bumpVersion(oldVersion, kind);
+    writeAtomic(journalFile, `${JSON.stringify({
+      stage,
+      oldVersion,
+      nextVersion,
+      files: pending.map((f) => f.name),
+      createdAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+  }
+
+  for (const f of pending) {
+    if (!isPathInside(dstDir, f.dst) || !isRealPathInside(dstDir, f.dst)) {
+      throw new Error(`回灌目标越界：${posix(f.dst)}`);
+    }
+  }
   ensureDir(dstDir);
   for (const f of pending) {
     ensureDir(dirname(f.dst));
     copyFileSync(f.src, f.dst);
   }
 
-  const nextVersion = bumpVersion(info.version, kind);
   const logFile = join(pluginRoot, 'templates', 'stages', '_feedback-log.md');
-  const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n- 回灌文件：${pending.map((f) => f.name).join('、')}\n- 项目：${basename(root)}（本地路径不记录）\n- 插件版本：${info.version} → ${nextVersion}\n`;
-  writeText(logFile, `${existsSync(logFile) ? readText(logFile) : '# 回灌日志\n'}${entry}`);
+  const marker = `<!-- devflow-apply:${stage}:${nextVersion} -->`;
+  const existingLog = existsSync(logFile) ? readText(logFile) : '# 回灌日志\n';
+  if (!existingLog.includes(marker)) {
+    const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n${marker}\n\n- 回灌文件：${pending.map((f) => f.name).join('、')}\n- 项目：${basename(root)}（本地路径不记录）\n- 插件版本：${oldVersion} → ${nextVersion}\n`;
+    writeText(logFile, `${existingLog.endsWith('\n') ? existingLog : `${existingLog}\n`}${entry}`);
+  }
 
   updateVersionFiles(pluginRoot, nextVersion);
 
@@ -206,7 +254,9 @@ export async function main(argv = process.argv.slice(2)) {
       : `${withTitle}${block}`;
   writeAtomic(changelog, updated);
 
-  log('ok', `已回灌 ${pending.length} 个文件，插件版本 ${info.version} → ${nextVersion}`);
+  rmSync(journalFile, { force: true });
+
+  log('ok', `已回灌 ${pending.length} 个文件，插件版本 ${oldVersion} → ${nextVersion}`);
   log('ok', `回灌日志：${posix(logFile)}`);
   return { stage, reusable: reusable.length, pending: pending.length, local: localCount, applied: true, version: nextVersion };
 }

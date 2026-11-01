@@ -409,13 +409,14 @@ function decide(command) {
     || null;
 }
 
-/** 回显命令前脱敏：URL 凭据、常见 token 查询参数与 Authorization 头。 */
+/** 回显命令前脱敏：URL 凭据、环境变量赋值、常见 token 参数与 Authorization 头。 */
 function redact(text) {
   return String(text)
     .replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s/@:]+):([^\s/@]+)@/gi, '$1$2:***@')
+    .replace(/(\b[A-Za-z_][A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi, '$1***')
     .replace(/([?&](?:token|access_token|api[_-]?key|key|secret|password|passwd|pwd)=)[^&\s]+/gi, '$1***')
     .replace(/(\bAuthorization\s*[:=]\s*Bearer\s+)[^\s"']+/gi, '$1***')
-    .replace(/(--?(?:token|api-key|apikey|secret|password|passwd|pwd)\s+)([^\s]+)/gi, '$1***');
+    .replace(/(--?(?:token|api-key|apikey|secret|password|passwd|pwd|client-secret)(?:\s+|=))("[^"]*"|'[^']*'|\S+)/gi, '$1***');
 }
 
 function emit(decision, reason) {
@@ -429,7 +430,12 @@ function emit(decision, reason) {
 }
 
 try {
-  const raw = await readStdin();
+  const { text: raw, complete } = await readStdin();
+  // 输入被截断时无法可靠判断，交给用户确认，而不是静默放行半截命令。
+  if (!complete) {
+    emit('ask', 'devflow 安全门禁：命令输入未完整读取，无法可靠检查，请确认后再执行。');
+    process.exit(0);
+  }
   let payload = {};
   try { payload = JSON.parse(raw || '{}'); } catch { process.exit(0); }
 

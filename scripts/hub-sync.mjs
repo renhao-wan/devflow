@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub,
   readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir, walk, relPosix,
-  readMeta, isGeneratedArtifact,
+  readMeta, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
@@ -96,6 +96,14 @@ export async function main(argv = process.argv.slice(2)) {
   const counts = { add: 0, update: 0, overwrite: 0, conflict: 0, same: 0 };
   for (const a of actions) counts[a.type] += 1;
 
+  // 写入前校验真实路径：目标目录可能被 junction/符号链接指向项目外。
+  for (const a of actions) {
+    if (!a.dest || a.type === 'same') continue;
+    if (!isRealPathInside(root, a.dest)) {
+      throw new Error(`同步目标越界（可能被 junction/符号链接引到项目外）：${posix(a.dest)}`);
+    }
+  }
+
   if (dryRun) {
     for (const a of actions) {
       if (a.type !== 'same') log(a.type === 'conflict' ? 'warn' : '..', `${label(a.type)} ${a.rel}`);
@@ -128,6 +136,10 @@ export async function main(argv = process.argv.slice(2)) {
     if (a.type === 'conflict') {
       log('warn', `跳过冲突 ${a.rel}（本地改动未记录在账本中）`);
       continue;
+    }
+    // 检查与写入之间可能被替换；写入前再确认一次。
+    if (!isRealPathInside(root, a.dest)) {
+      throw new Error(`同步目标越界（可能被 junction/符号链接引到项目外）：${posix(a.dest)}`);
     }
     ensureDir(dirname(a.dest));
     if (a.type === 'overwrite') {

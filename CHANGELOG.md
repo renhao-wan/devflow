@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.3
+
+### 修复
+
+- 边界不变量：`hub-upstream`、`hub-sync`、`hub-init` 与生成器统一按真实路径校验，拒绝 junction / 符号链接把写入带到项目或插件目录之外；Maven `<module>` 指向工作区外时跳过
+- 失败原子性：`hub-upstream` 新增回灌 journal，在文件复制、版本升级、CHANGELOG 写入之间中断后重跑可续做；版本文件无法解析时直接报错而不是半途退出；`writeAtomic` 与 hooks 的 JSON 写入在 `finally` 中清理临时文件
+- 外发内容控制：密钥检测覆盖未加引号的环境变量式赋值（如 `DB_PASSWORD=...`、`AWS_SECRET_ACCESS_KEY=...`、`MYSQL_ROOT_PASSWORD: ...`），`ship` / `upstream` 的日志与错误统一脱敏；`guard-dangerous` 补充环境变量与 `--token` 形式的凭据脱敏
+- hooks：stdin 未在超时内读完时改为 `ask`，不再静默放行；`load-hub` 跳过账本中的越界条目，CRLF 差异不再误报漂移；`track-changes` / `check-tests` 改用并发安全的原子写入
+- `ship` 的版本基线取自 `--base` 分支，避免把当前分支的预发布版本带进回灌 PR
+
+### 测试
+
+- 回归测试增至 131 项，新增 junction 越界、回灌中断恢复、损坏版本文件、stdin 截断、CRLF 漂移、环境变量式密钥与凭据脱敏等用例
+
 ## 1.3.2
 
 ### 修复

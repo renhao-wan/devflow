@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Stop：仅提醒，从不阻止。测试未跑或改动晚于测试时提示；同一批改动只提醒一次。
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readStdin, findHubRoot } from './lib.mjs';
+import { readStdin, findHubRoot, writeJsonAtomic } from './lib.mjs';
 
 await readStdin();
 try {
@@ -27,9 +27,7 @@ try {
 
   state.lastReminderAt = new Date().toISOString();
   try {
-    const tmp = `${stateFile}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-    renameSync(tmp, stateFile);
+    writeJsonAtomic(stateFile, state);
   } catch { /* 写失败不影响提醒 */ }
 
   const files = (state.changedFiles || []).slice(-8);
