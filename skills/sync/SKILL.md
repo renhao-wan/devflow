@@ -1,7 +1,9 @@
 ---
+name: sync
 description: 同步：把插件新版阶段模板非破坏性升级到项目 hub，保留本地手改
 argument-hint: [--dry-run] [--force] [--no-gen] [--plugin-root <插件目录>]
 allowed-tools: Bash(node:*), Read, Write, Edit, Glob, Grep
+disable-model-invocation: true
 ---
 
 执行 devflow 模板同步：**$ARGUMENTS**

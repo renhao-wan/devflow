@@ -34,12 +34,19 @@ test('hooks.json 引用的脚本真实存在', () => {
   }
 });
 
-test('命令均带 description 前置元数据', () => {
-  const dir = join(ROOT, 'commands');
-  for (const file of readdirSync(dir).filter((f) => f.endsWith('.md'))) {
-    const fm = parseFrontmatter(read(`commands/${file}`));
-    assert.ok(fm.description, `${file} 缺少 description`);
+test('阶段入口技能均带 name 与 description，危险命令禁止模型自动调用', () => {
+  const entries = ['req', 'plan', 'implement', 'test', 'review', 'debug',
+    'init', 'doctor', 'status', 'upstream', 'ship', 'sync'];
+  for (const name of entries) {
+    const fm = parseFrontmatter(read(`skills/${name}/SKILL.md`));
+    assert.equal(fm.name, name, `${name} 的 name 应为 ${name}`);
+    assert.ok(fm.description, `${name} 缺少 description`);
   }
+  for (const name of ['init', 'upstream', 'ship', 'sync']) {
+    const fm = parseFrontmatter(read(`skills/${name}/SKILL.md`));
+    assert.equal(fm['disable-model-invocation'], 'true', `${name} 应禁止模型自动调用`);
+  }
+  assert.equal(existsSync(join(ROOT, 'commands')), false, 'commands 已迁移为 skills');
 });
 
 test('技能与子代理均带 name 与 description', () => {

@@ -18,14 +18,14 @@
 | hub 位置 | `<根>/.claude/hub/` |
 | hooks | 关键项阻止：危险命令拦，未测试提醒 |
 | 回灌 | 手动触发 |
-| 命令归属 | 插件统一提供 `/devflow:*` |
+| 命令归属 | 插件统一提供 `/devflow:*`，入口以 `skills/<name>/SKILL.md` 实现 |
 | 初始化 | 内置模板 + 自动探测 |
 
 ## 分层
 
 ```
 插件（出厂默认）
-  commands/ + skills/ + agents/ + hooks/ + templates/
+  skills/ + agents/ + hooks/ + templates/ + bin/ + evals/
         │ init 时复制模板
         ▼
 项目 .claude/hub/（项目真源）
@@ -37,7 +37,7 @@
 
 ## 职责边界
 
-- 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。
+- 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。阶段入口（req…sync）同样是 skills，只是带上了 `disable-model-invocation` 等调用约束，不再是独立的 `commands/`。
 - `templates/stages/` 是**项目级阶段规则**，init 复制为 `.claude/hub/`，描述“本项目每个阶段的具体规范”。
 - 两者主题相近但用途不同，不互相替代：修改阶段规范只动项目 hub，修改通用方法论才动插件 skills。
 
@@ -54,14 +54,24 @@
 
 ## hooks
 
-`guard-dangerous` 对所有项目生效；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
+`guard-dangerous` 对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 阻止手改生成物；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
 
 | 事件 | 行为 |
 | --- | --- |
-| PreToolUse(Bash) | 危险命令阻止 |
-| PostToolUse(Edit/Write) | 记录改动文件 |
-| Stop | 有改动但未测试则提醒 |
+| PreToolUse(Bash/PowerShell/Monitor) | 危险命令阻止 |
+| PreToolUse(Edit/Write/MultiEdit/NotebookEdit) | 阻止手改投影、账本与 loader |
+| PostToolUse(Edit/Write/Bash… ) | 记录改动文件；hub 源改动单独标记 |
+| Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
+
+## 进度与命令衔接
+
+阶段产物 `docs/devflow/<slug>/{req,plan,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
+
+- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
+- 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
+- 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
+- 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。
 
 ## 回灌与升级
 
@@ -89,9 +99,24 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 
 冲突时以 devflow 的阶段门禁与产物路径为准；已有的 superpowers 设计或计划吸收进 `plan.md`，不维护两份。devflow 自带的 TDD、排障、评审技能作为未安装 superpowers 时的 fallback。
 
+## 工具生态与路由
+
+项目可以在 `.claude/hub/ecosystem.yaml` 声明同类工具。配置提交到仓库、可手改；检测结果写入 `.claude/.ecosystem-state.json` 并加入 `.gitignore`，避免每次检测重写用户配置。
+
+路由只决定**谁执行当前阶段的技法**，不接管阶段门禁与产物：
+
+- `technique` 工具只接管执行技法（brainstorming、TDD、排障、评审）；阶段顺序、门禁与 `docs/devflow/<slug>/` 仍由 devflow 负责。
+- `workflow` 工具会替换整个流程，所以 `mode: auto` 也只建议，不自动委派。
+- 默认 `mode: ask`；`off` 关闭路由；`forceDevflowStages` 与 `--force-devflow` 提供强制出口。
+- 决策优先级：强制 devflow > `--tool <id>` > `mode: off` > 强制阶段 > 自动匹配。
+
+检测是启发式的，只检查技能目录与 `settings.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具、不在状态里记录绝对路径；`enabled: false` 的工具不参与检测。状态缺失或过期时，`devflow route --stage` 会自动检测一次（`--list` 保持只读）。配置缺失、解析失败或检测结果缺失时回退 devflow，不阻塞开发；只有显式指定的工具不可用时才报错。
+
+路由命令：`devflow route --stage <stage> [--tool <id>] [--force-devflow] [--json]`，以及 `--detect` / `--list`。阶段入口技能在执行前自动调用；`init` 创建配置并首次检测，`doctor` 校验配置与检测时效，`status` 展示当前模式与可用工具。详见 `docs/tool-routing.md`。
+
 ## 安全边界
 
-`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；四个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
+`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；五个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
 
 ## 里程碑
 
@@ -103,3 +128,6 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.0：plan 方案前调研与搜索失败降级、req 技术约束、review 依赖核对、debug 已知问题检索、superpowers 边界
 - [x] 1.3.1：修复生成器账本与 `--json`、ship 基分支、track-changes 误报、Windows 递归删除拦截，统一命令与阶段技能引用
 - [x] 1.3.2：路径与阶段名校验、ship 临时 worktree、hooks 时间与包装器绕过修复、`_shared/` 共享规则、CRLF 兼容与 loader 自动刷新
+- [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
+- [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
+- [x] 1.4.1（未发布）：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）

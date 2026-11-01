@@ -5,14 +5,16 @@
   },
   "metadata": {
     "description": "Local marketplace for the devflow plugin",
-    "version": "1.3.2"
+    "version": "1.4.0"
   },
   "plugins": [
     {
       "name": "devflow",
-      "version": "1.3.2",
+      "version": "1.4.0",
       "description": "Six-stage engineering workflow with a project-level hub, thin projections and non-destructive template sync",
       "source": "./",
+      "homepage": "https://github.com/renhao-wan/devflow",
+      "repository": "https://github.com/renhao-wan/devflow.git",
       "strict": false
     }
   ]

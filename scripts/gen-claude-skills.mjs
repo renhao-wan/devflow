@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
   readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
-  walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact,
+  ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
@@ -286,7 +286,15 @@ export async function main(argv = process.argv.slice(2)) {
         continue;
       }
     }
-    writeAtomic(target, r.content);
+    // 创建目录后再次校验，缩小检查与写入之间被替换成链接的窗口。
+    ensureDir(dirname(target));
+    const verified = safeSkillTarget(root, r.target);
+    if (!verified) {
+      errors.push({ stage: r.stage, error: `目标路径越界，跳过：${r.target}` });
+      skipped.push(r.target);
+      continue;
+    }
+    writeAtomic(verified, r.content);
     written.push(r);
     emit('ok', `写入 ${r.target}`);
   }
@@ -301,6 +309,10 @@ export async function main(argv = process.argv.slice(2)) {
     if (existsSync(target)) {
       const parts = s.target.split('/');
       const dir = join(root, ...parts.slice(0, -1));
+      if (!isRealPathInside(root, dir)) {
+        emit('warn', `过期目标越界，跳过清理：${s.target}`);
+        continue;
+      }
       const siblings = readdirSync(dir);
       if (siblings.length === 1 && siblings[0] === 'SKILL.md') {
         const { rmSync } = await import('node:fs');

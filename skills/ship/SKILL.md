@@ -1,7 +1,9 @@
 ---
+name: ship
 description: 回灌并提交：把项目改进写回插件模板，提交到分支并生成 PR 链接
 argument-hint: --stage <stage> [--plugin-root <插件源码仓库>] [--base main] [--bump patch|minor|major] [--no-pr] [--dry-run]
 allowed-tools: Bash(node:*), Bash(git:*), Bash(gh:*), Read, Glob, Grep
+disable-model-invocation: true
 ---
 
 执行 devflow 回灌并提交：**$ARGUMENTS**

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const HOOKS = resolve(import.meta.dirname, '..', 'hooks', 'scripts');
 const NODE = process.execPath;
@@ -446,7 +447,7 @@ test('track-changes 忽略 Bash 产生的依赖与构建产物', (t) => {
     const stateFile = join(root, '.claude', '.devflow-state.json');
     if (existsSync(stateFile)) {
       const state = JSON.parse(readFileSync(stateFile, 'utf8'));
-      assert.ok(!state.changedFiles.some((f) => f.startsWith('node_modules/') || f.startsWith('build/')));
+      assert.ok(!(state.changedFiles || []).some((f) => f.startsWith('node_modules/') || f.startsWith('build/')));
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -545,6 +546,72 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 在配置生态索引后注入工具路由摘要', () => {
+  const root = makeRoot();
+  try {
+    const before = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(before, /工具路由/);
+
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), [
+      'version: 1',
+      'routing:',
+      '  mode: auto',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      tools: {
+        superpowers: { available: true, signals: ['skill:brainstorming'] },
+        bmad: { available: false, signals: [] },
+      },
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.match(ctx, /工具路由：auto/);
+    assert.match(ctx, /可用工具：superpowers/);
+    assert.match(ctx, /--force-devflow/);
+    assert.doesNotMatch(ctx, /bmad/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 过滤已禁用的工具', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'ecosystem.yaml'), [
+      'version: 1',
+      'routing:',
+      '  mode: auto',
+      'tools:',
+      '  superpowers:',
+      '    enabled: false',
+      '    kind: technique',
+      '  bmad:',
+      '    kind: workflow',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.ecosystem-state.json'), JSON.stringify({
+      schemaVersion: 1,
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      tools: {
+        superpowers: { available: true, signals: ['skill:brainstorming'] },
+        bmad: { available: true, signals: ['skill:bmad'] },
+      },
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.match(ctx, /可用工具：bmad/);
+    assert.doesNotMatch(ctx, /superpowers/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 识别带引号的子项目键', () => {
   const root = makeRoot();
   try {
@@ -577,5 +644,252 @@ test('load-hub 在无 hub 时静默', () => {
     assert.equal(r.stdout, '');
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('guard 回显命令时脱敏环境变量凭据', () => {
+  const command = 'DB_PASSWORD=hunter2 API_TOKEN=abc123 git push --force origin main';
+  const out = JSON.parse(runHook('guard-dangerous.mjs', {
+    tool_name: 'Bash',
+    tool_input: { command },
+  }).stdout);
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  const reason = out.hookSpecificOutput.permissionDecisionReason;
+  assert.doesNotMatch(reason, /hunter2|abc123/);
+  assert.match(reason, /\*\*\*/);
+});
+
+test('guard 在 stdin 截断时要求确认而不是放行半截命令', async () => {
+  const child = spawn(NODE, [join(HOOKS, 'guard-dangerous.mjs')], {
+    env: { ...process.env, DEVFLOW_STDIN_TIMEOUT_MS: '50' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (c) => { out += c; });
+  child.stdin.on('error', () => {});
+  // 只写半截 JSON，保持 stdin 打开，模拟读取超时。
+  child.stdin.write('{"tool_name":"Bash","tool_input":{"command":"rm -rf /');
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 0);
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, 'ask');
+  assert.match(parsed.hookSpecificOutput.permissionDecisionReason, /未完整读取/);
+});
+
+test('load-hub 用归一化哈希，CRLF 不误报漂移', () => {
+  const root = makeRoot();
+  try {
+    const skillDir = join(root, '.claude', 'skills', 'devflow-req');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), 'line1\r\nline2\r\n');
+    const hash = createHash('sha256').update('line1\nline2\n').digest('hex');
+    writeFileSync(join(root, '.claude', '.hub-manifest.json'), JSON.stringify({
+      skills: [{ name: 'devflow-req', target: '.claude/skills/devflow-req/SKILL.md', hash }],
+    }));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /投影漂移/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('guard 覆盖 PowerShell 与 Monitor 工具', () => {
+  for (const tool_name of ['PowerShell', 'Monitor']) {
+    const deny = JSON.parse(runHook('guard-dangerous.mjs', {
+      tool_name,
+      tool_input: { command: 'Remove-Item -Recurse -Force C:\\' },
+    }).stdout);
+    assert.equal(deny.hookSpecificOutput.permissionDecision, 'deny', tool_name);
+
+    assert.equal(runHook('guard-dangerous.mjs', {
+      tool_name,
+      tool_input: { command: 'git status' },
+    }).stdout, '', tool_name);
+  }
+});
+
+test('guard-generated 拒绝手改投影、账本与 loader', () => {
+  const root = makeRoot();
+  try {
+    const protectedFiles = [
+      '.claude/skills/devflow-req/SKILL.md',
+      '.claude/.hub-manifest.json',
+      '.claude/.hub-sources.json',
+      '.claude/.ecosystem-state.json',
+      '.devflow.json',
+      'scripts/devflow-gen.mjs',
+      'scripts/devflow-route.mjs',
+      'scripts/devflow-test.mjs',
+    ];
+    for (const rel of protectedFiles) {
+      const out = JSON.parse(runHook('guard-generated.mjs', {
+        tool_name: rel.endsWith('.json') ? 'Write' : 'Edit',
+        tool_input: { file_path: join(root, ...rel.split('/')) },
+      }, { CLAUDE_PROJECT_DIR: root }).stdout);
+      assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', rel);
+      assert.match(out.hookSpecificOutput.permissionDecisionReason, /生成物写保护/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('guard-generated 放行源文件与普通代码', () => {
+  const root = makeRoot();
+  try {
+    for (const rel of [
+      '.claude/hub/stages/req/SKILL.md',
+      '.claude/hub/hub.yaml',
+      'src/a.js',
+      '.claude/settings.json',
+    ]) {
+      assert.equal(runHook('guard-generated.mjs', {
+        tool_name: 'Edit',
+        tool_input: { file_path: join(root, ...rel.split('/')) },
+      }, { CLAUDE_PROJECT_DIR: root }).stdout, '', rel);
+    }
+    assert.equal(runHook('guard-generated.mjs', {
+      tool_name: 'Read',
+      tool_input: { file_path: join(root, '.claude', '.hub-manifest.json') },
+    }, { CLAUDE_PROJECT_DIR: root }).stdout, '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 忽略流程文档，hub 源改动不标记测试待验证', () => {
+  const root = makeRoot();
+  try {
+    runHook('track-changes.mjs', {
+      tool_name: 'Write',
+      tool_input: { file_path: join(root, 'docs', 'devflow', 'demo', 'req.md') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(existsSync(join(root, '.claude', '.devflow-state.json')), false);
+
+    runHook('track-changes.mjs', {
+      tool_name: 'Edit',
+      tool_input: { file_path: join(root, '.claude', 'hub', 'stages', 'req', 'SKILL.md') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.equal(state.hubPending, true);
+    assert.deepEqual(state.hubChangedFiles, ['.claude/hub/stages/req/SKILL.md']);
+    assert.ok(!state.testsPending);
+    assert.ok(!state.changedFiles);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 通过 git status 区分 Bash 的代码与 hub 改动', (t) => {
+  if (spawnSync('git', ['--version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('git 不可用');
+    return;
+  }
+  const root = makeRoot();
+  try {
+    if (spawnSync('git', ['init'], { cwd: root, encoding: 'utf8' }).status !== 0) {
+      t.skip('git init 失败');
+      return;
+    }
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'stages:',
+      '  - req',
+      '  - test',
+      'subprojects: {}',
+      'defaults:',
+      '  testCommand: "npm test"',
+      '# touched',
+      '',
+    ].join('\n'));
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: [],
+      lastTrackAt: '2000-01-01T00:00:00.000Z',
+      testsPending: false,
+    }));
+    runHook('track-changes.mjs', {
+      tool_name: 'Bash',
+      tool_input: { command: 'git status' },
+    }, { CLAUDE_PROJECT_DIR: root });
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.equal(state.hubPending, true);
+    assert.ok(state.hubChangedFiles.includes('.claude/hub/hub.yaml'));
+    assert.equal(state.testsPending, false);
+    assert.ok(!state.changedFiles.includes('.claude/hub/hub.yaml'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check-tests 在 hub 源改动未生成时提醒', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      hubChangedFiles: ['.claude/hub/stages/req/SKILL.md'],
+      lastHubChangeAt: '2026-01-01T00:00:00.000Z',
+      hubPending: true,
+      testsPending: false,
+    }));
+    const r = runHook('check-tests.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const out = JSON.parse(r.stdout);
+    assert.match(out.systemMessage, /阶段源/);
+    assert.match(out.systemMessage, /devflow-gen\.mjs/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check-tests 在投影已重新生成后不再提醒 hub', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      hubChangedFiles: ['.claude/hub/stages/req/SKILL.md'],
+      lastHubChangeAt: '2026-01-01T00:00:00.000Z',
+      hubPending: true,
+      testsPending: false,
+    }));
+    writeFileSync(join(root, '.claude', '.hub-manifest.json'), '{"skills":[]}\n');
+    const r = runHook('check-tests.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(r.stdout, '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check-tests 可同时提醒测试与 hub', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      testsPending: true,
+      hubChangedFiles: ['.claude/hub/stages/req/SKILL.md'],
+      lastHubChangeAt: '2026-01-01T00:00:00.000Z',
+      hubPending: true,
+    }));
+    const out = JSON.parse(runHook('check-tests.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout);
+    assert.match(out.systemMessage, /尚未验证通过/);
+    assert.match(out.systemMessage, /阶段源/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 忽略指向投影目录之外的账本条目', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.hub-manifest.json'), JSON.stringify({
+      skills: [
+        { name: 'devflow-evil', target: '../outside/SKILL.md', hash: 'deadbeef' },
+        { name: 'devflow-other', target: 'C:/Windows/win.ini', hash: 'deadbeef' },
+      ],
+    }));
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /devflow-evil|devflow-other|缺失/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

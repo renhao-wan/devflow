@@ -1,7 +1,9 @@
 ---
+name: init
 description: 在项目中初始化 devflow：生成 .claude/hub、薄 loader、投影技能，并探测子项目
 argument-hint: [--force] [--plugin-root <插件目录>] [--source-root <插件源码仓库>]
 allowed-tools: Bash(node:*), Read, Write, Edit, Glob, Grep
+disable-model-invocation: true
 ---
 
 初始化当前项目为 devflow 工作区。项目根为 `$CLAUDE_PROJECT_DIR`（未设置时用当前目录）。

@@ -219,3 +219,40 @@ test('sync 以安装的插件版本为准，不读取回灌源码仓库', () => 
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('sync 拒绝通过 junction 写到项目外', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('仅在 Windows 上验证 junction');
+    return;
+  }
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-junction-'));
+  let junction = null;
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\nreview v1\n',
+    });
+    const root = makeProject(base, repo);
+
+    const outside = join(base, 'outside');
+    mkdirSync(outside);
+    const stageDir = join(root, '.claude', 'hub', 'stages', 'review');
+    rmSync(stageDir, { recursive: true, force: true });
+    const link = spawnSync('cmd', ['/c', 'mklink', '/J', stageDir, outside], { encoding: 'utf8' });
+    if (link.status !== 0) {
+      t.skip('mklink /J 不可用');
+      return;
+    }
+    junction = stageDir;
+
+    writeFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 评审\n---\n\nreview v2\n');
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 1);
+    assert.match(sync.stderr, /越界/);
+    assert.equal(existsSync(join(outside, 'SKILL.md')), false);
+  } finally {
+    if (junction) spawnSync('cmd', ['/c', 'rmdir', junction], { encoding: 'utf8' });
+    rmSync(base, { recursive: true, force: true });
+  }
+});

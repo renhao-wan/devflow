@@ -11,6 +11,8 @@ description: Use when the user asks to build, change, or fix something in a proj
 - 用户提出功能、改造、缺陷，或问“下一步做什么”。
 - 需要判断该跳过还是补齐某个阶段。
 
+不确定当前进度时，先运行 `/devflow:status`：它只读扫描 `docs/devflow/` 的产物，给出各任务的阶段与下一步命令。
+
 ## 流程
 
 ```
@@ -68,6 +70,19 @@ devflow 与 superpowers 都覆盖“计划、TDD、排障、评审”，但职�
 - 已有 superpowers 的 `brainstorming` 结果或 `writing-plans` 计划时，把结论吸收进 `plan.md`，不并存两份设计/计划。
 - 需要发散方案、拆解执行步骤、系统排障时，优先用 superpowers 的技能；需要确认“现在该走哪个阶段、产物落在哪、门禁过没”时，用 devflow。
 - 未安装 superpowers 时，devflow 自带的 TDD、系统排障、代码评审技能作为 fallback。
+
+## 工具路由
+
+项目可能在 `.claude/hub/ecosystem.yaml` 声明同类工具（superpowers、BMAD、Spec Kit、OpenSpec 等）。阶段入口会先运行 `devflow route --stage <stage>` 判断是否应委派；路由只决定“谁执行技法”，不改变阶段顺序、门禁与 `docs/devflow/<slug>/` 产物。
+
+- `routing.mode: ask`（默认）：命中时说明候选并询问；用户未同意就继续 devflow。
+- `routing.mode: auto`：只自动委派 `kind: technique` 的工具（只接管执行技法）；`workflow` 类工具仍只建议，避免整个流程被静默替换。
+- `routing.mode: off`：不路由。
+- `--force-devflow` / `--no-route` / `--tool devflow`：强制使用 devflow。
+- `--tool <id>`：显式指定工具；未安装时仍按指定执行，但会提示风险。
+- 路由返回 `error` 时停止并报告原因，不继续本阶段。
+
+检测结果写在 `.claude/.ecosystem-state.json`（已 gitignore），由 `devflow route --detect` 或 `/devflow:init` 刷新；进入阶段时若结果缺失或过期，`devflow route` 会自动检测一次。它只检查技能目录与 `settings.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具。检测是启发式的，安装或禁用工具后需重新检测。
 
 ## 反模式
 

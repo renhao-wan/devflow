@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
-  walk, relPosix, isGeneratedArtifact,
+  walk, relPosix, isGeneratedArtifact, isPathInside, isRealPathInside,
 } from './lib/common.mjs';
+import {
+  ECOSYSTEM_FILE, STATE_FILE, createDefaultConfig, loadEcosystem, writeDetectedState,
+} from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
@@ -90,6 +93,8 @@ function expandMavenModules(root, dir, depth = 0) {
   const out = [];
   for (const mod of readMavenModules(dir)) {
     const modDir = resolve(dir, mod);
+    // <module> 可写成 ../x 或绝对路径；只接受工作区内的真实路径。
+    if (!isPathInside(root, modDir) || !isRealPathInside(root, modDir)) continue;
     if (!existsSync(modDir)) continue;
     const rel = relative(root, modDir).split(sep).join('/');
     const nested = expandMavenModules(root, modDir, depth + 1);
@@ -186,6 +191,7 @@ function renderHubYaml(subprojects, version, rootTest) {
 export const LOADERS = {
   'devflow-gen.mjs': 'gen-claude-skills',
   'devflow-doctor.mjs': 'hub-doctor',
+  'devflow-route.mjs': 'hub-route',
   'devflow-upstream.mjs': 'hub-upstream',
   'devflow-test.mjs': 'mark-test',
 };
@@ -274,12 +280,14 @@ function writeSourceManifest(root, version) {
 const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
 scripts/devflow-gen.mjs
 scripts/devflow-doctor.mjs
+scripts/devflow-route.mjs
 scripts/devflow-upstream.mjs
 scripts/devflow-test.mjs
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
 .claude/.hub-sources.json
 .claude/.devflow-state.json
+.claude/.ecosystem-state.json
 .devflow.json
 # <<< devflow
 `;
@@ -330,6 +338,23 @@ export async function main(argv = process.argv.slice(2)) {
     const missing = subs.filter((s) => s.stages.includes('test') && !s.testCommand);
     if (missing.length) log('warn', `以下子项目没有可探测的测试命令，请手动补充：${missing.map((s) => s.path).join('、')}`);
   }
+
+  let eco = loadEcosystem(root);
+  if (!eco.exists) {
+    createDefaultConfig(root);
+    eco = loadEcosystem(root);
+    log('ok', `创建 ${ECOSYSTEM_FILE}（工具路由默认 ask）`);
+  }
+  if (eco.error) {
+    log('warn', `${ECOSYSTEM_FILE} 解析失败，检测按默认目录进行：${eco.error}`);
+  }
+  const ecoState = writeDetectedState(root, eco.config);
+  const available = Object.entries(ecoState.tools)
+    .filter(([, value]) => value.available)
+    .map(([id]) => id);
+  log('ok', available.length
+    ? `工具检测：${available.join('、')}（写入 ${STATE_FILE}）`
+    : `工具检测：未发现已知工具（写入 ${STATE_FILE}）`);
 
   const metaFile = join(root, '.devflow.json');
   writeAtomic(metaFile, `${JSON.stringify({

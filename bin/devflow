@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+// 统一 CLI 入口：把常见操作收敛到 `devflow <command>`，参数原样透传给插件脚本。
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const COMMANDS = {
+  init: ['hub-init.mjs', '初始化项目工作区（.claude/hub、loader 与投影）'],
+  gen: ['gen-claude-skills.mjs', '从 .claude/hub 生成阶段投影'],
+  doctor: ['hub-doctor.mjs', '体检配置、版本、投影与 hooks'],
+  status: ['hub-status.mjs', '只读查看进度、产物缺口与下一步命令'],
+  route: ['hub-route.mjs', '判断当前阶段是否应先用其他工具（--detect 自动检测）'],
+  sync: ['hub-sync.mjs', '把插件新版阶段模板同步到项目（默认预览）'],
+  upstream: ['hub-upstream.mjs', '预览或回灌阶段模板到插件（默认预览）'],
+  ship: ['hub-ship.mjs', '回灌、提交并创建 PR'],
+  test: ['mark-test.mjs', '记录一次测试通过'],
+};
+
+const HELP = `devflow CLI
+
+用法：
+  devflow <command> [options]
+
+命令：
+${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc}`).join('\n')}
+  help       显示本帮助
+
+示例：
+  devflow init
+  devflow gen
+  devflow doctor --json
+  devflow route --stage plan
+  devflow route --detect
+  devflow sync --dry-run
+  devflow ship --stage review --dry-run
+
+所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
+
+async function main() {
+  const [command, ...rest] = process.argv.slice(2);
+  if (!command || command === 'help' || command === '--help' || command === '-h') {
+    console.log(HELP);
+    return;
+  }
+  const entry = COMMANDS[command];
+  if (!entry) {
+    console.error(`[ERR] 未知命令：${command}`);
+    console.log(HELP);
+    process.exitCode = 1;
+    return;
+  }
+  const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const mod = await import(pathToFileURL(join(pluginRoot, 'scripts', entry[0])).href);
+  await mod.main(rest);
+}
+
+main().catch((err) => {
+  console.error(`[ERR] ${err.message}`);
+  process.exit(1);
+});

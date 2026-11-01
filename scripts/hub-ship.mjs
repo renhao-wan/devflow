@@ -3,7 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  argValue, hasFlag, projectRoot, pluginInfo,
+  argValue, hasFlag, projectRoot,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
   bumpVersion, samePath, isValidStageName,
 } from './lib/common.mjs';
@@ -23,9 +23,12 @@ function isWhitelisted(path) {
   return WHITELIST.some((match) => match(p));
 }
 
-/** 日志里去掉 URL 中可能存在的用户名/token。 */
-function redactUrl(url) {
-  return String(url).replace(/\/\/([^/@]+)@/, '//***@');
+/** 日志与错误信息里去掉 URL 凭据、查询参数与常见 token，避免把密钥带进终端或日志。 */
+export function redactText(text) {
+  return String(text)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s/@:]+):([^\s/@]+)@/gi, '$1$2:***@')
+    .replace(/(https?:\/\/)([^/\s@]+)@/gi, '$1***@')
+    .replace(/([?&](?:token|access_token|api[_-]?key|key|secret|password|passwd|pwd|signature|x-amz-signature)=)[^&\s"']+/gi, '$1***');
 }
 
 function git(cwd, args, extra = []) {
@@ -35,7 +38,7 @@ function git(cwd, args, extra = []) {
 function gitOut(cwd, args) {
   const r = git(cwd, args);
   if (r.status !== 0) {
-    throw new Error(`git ${args.join(' ')} 失败：${(r.stderr || r.stdout || '').trim()}`);
+    throw new Error(`git ${args.join(' ')} 失败：${redactText((r.stderr || r.stdout || '').trim())}`);
   }
   return r.stdout.trim();
 }
@@ -43,7 +46,7 @@ function gitOut(cwd, args) {
 function dirty(cwd) {
   const r = git(cwd, ['status', '--porcelain=v1', '-z']);
   if (r.status !== 0) {
-    throw new Error(`git status 失败：${(r.stderr || '').trim()}`);
+    throw new Error(`git status 失败：${redactText((r.stderr || '').trim())}`);
   }
   const entries = r.stdout.split('\0').filter(Boolean);
   const out = [];
@@ -65,6 +68,18 @@ function dirty(cwd) {
 function githubRemote(url) {
   const m = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
   return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+/** 版本号必须来自实际建分支的基分支，而不是主工作区当前分支。 */
+function versionAtRef(cwd, ref) {
+  const r = git(cwd, ['show', `${ref}:.claude-plugin/plugin.json`]);
+  if (r.status !== 0) return null;
+  try {
+    const version = JSON.parse(r.stdout).version;
+    return typeof version === 'string' && version ? version : null;
+  } catch {
+    return null;
+  }
 }
 
 function uniqueBranch(cwd, base) {
@@ -202,8 +217,6 @@ export async function main(argv = process.argv.slice(2)) {
   const baseline = dirty(pluginRoot);
   const conflicts = baseline.filter((f) => isWhitelisted(f.path));
 
-  const info = pluginInfo(pluginRoot);
-  const oldVersion = info.version;
   const branch = uniqueBranch(pluginRoot, `devflow/upstream-${stage}-${stamp()}`);
 
   // 先确认基分支存在，避免回灌写入后才发现无法建分支。
@@ -214,6 +227,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (baseRef.startsWith('origin/')) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
+  }
+
+  const oldVersion = versionAtRef(pluginRoot, baseRef);
+  if (!oldVersion) {
+    throw new Error(`基分支 ${baseRef} 缺少可解析的 .claude-plugin/plugin.json 版本，无法回灌。`);
   }
 
   if (dryRun) {
@@ -281,7 +299,7 @@ export async function main(argv = process.argv.slice(2)) {
     const pushed = git(worktreeDir, ['push', '-u', 'origin', branch]);
     if (pushed.status !== 0) {
       throw new Error(
-        `push 失败，分支和提交已保留在本地：${branch}，主工作区未切换。\n${(pushed.stderr || '').trim()}`,
+        `push 失败，分支和提交已保留在本地：${branch}，主工作区未切换。\n${redactText((pushed.stderr || '').trim())}`,
       );
     }
     log('ok', `已推送到 origin/${branch}`);
@@ -291,7 +309,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     if (noPr || !ghRepo) {
-      if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactUrl(remoteUrl)}`);
+      if (!ghRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactText(remoteUrl)}`);
       return { stage, branch, applied: true, version: newVersion, prUrl: null };
     }
 
@@ -310,7 +328,7 @@ export async function main(argv = process.argv.slice(2)) {
         log('ok', `已创建 PR：${prUrl}`);
         return { stage, branch, applied: true, version: newVersion, prUrl };
       }
-      console.error(`[WARN] gh pr create 失败：${(created.stderr || '').trim()}`);
+      console.error(`[WARN] gh pr create 失败：${redactText((created.stderr || '').trim())}`);
     }
 
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;

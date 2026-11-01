@@ -297,6 +297,11 @@ test('回灌把疑似密钥或凭据判为项目专属', () => {
       'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345',
       'DATABASE_URL=postgres://user:secret@db.example.com/app',
       '-----BEGIN RSA PRIVATE KEY-----',
+      // 带下划线的环境变量名不能被 \b 漏判
+      'DB_PASSWORD=hunter2secret',
+      'AWS_SECRET_ACCESS_KEY=abcdefghijklmnop',
+      'MYSQL_ROOT_PASSWORD: rootpass123',
+      'CLIENT_SECRET = abcdef123456',
     ];
     for (const line of cases) {
       writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), [
@@ -340,6 +345,102 @@ test('回灌把含 URL 的通用内容判为可回灌，不误伤 http(s)://', (
     const template = readFileSync(join(pluginCopy, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
     assert.match(template, /https:\/\/example\.com\/guide/);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌中途失败后重跑会补齐版本，不重复升级', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    // 让 CHANGELOG 无法写入：模拟“模板已复制、版本已升级、收尾失败”。
+    const changelog = join(pluginCopy, 'CHANGELOG.md');
+    rmSync(changelog, { force: true });
+    mkdirSync(changelog);
+
+    const first = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(first.status, 1);
+    assert.match(first.stderr, /EISDIR/);
+    assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.1');
+    assert.ok(existsSync(join(pluginCopy, '.devflow-upstream-apply.json')), '应保留中断记录');
+
+    rmSync(changelog, { recursive: true, force: true });
+    const second = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(second.status, 0, second.stderr);
+
+    // 重跑只补齐收尾，不会把 1.0.1 再升到 1.0.2
+    assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.1');
+    assert.equal(existsSync(join(pluginCopy, '.devflow-upstream-apply.json')), false);
+    assert.match(readFileSync(changelog, 'utf8'), /## 1\.0\.1/);
+
+    const log = readFileSync(join(pluginCopy, 'templates', 'stages', '_feedback-log.md'), 'utf8');
+    assert.equal((log.match(/devflow-apply:review:1\.0\.1/g) || []).length, 1, '回灌日志不应重复');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌遇到损坏的版本文件时报错而不是静默跳过', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+    writeFileSync(join(pluginCopy, '.claude-plugin', 'marketplace.json'), '{ 损坏的 JSON');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /无法解析版本文件/);
+    assert.match(result.stderr, /marketplace\.json/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌拒绝通过 junction 写到插件目录外', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('仅在 Windows 上验证 junction');
+    return;
+  }
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  let junction = null;
+  try {
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
+      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
+    ].join('\n'));
+
+    const outside = join(root, 'outside');
+    mkdirSync(outside);
+    const stageTpl = join(pluginCopy, 'templates', 'stages', 'review');
+    rmSync(stageTpl, { recursive: true, force: true });
+    const link = spawnSync('cmd', ['/c', 'mklink', '/J', stageTpl, outside], { encoding: 'utf8' });
+    if (link.status !== 0) {
+      t.skip('mklink /J 不可用');
+      return;
+    }
+    junction = stageTpl;
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /越界/);
+    assert.equal(existsSync(join(outside, 'SKILL.md')), false);
+  } finally {
+    if (junction) spawnSync('cmd', ['/c', 'rmdir', junction], { encoding: 'utf8' });
     rmSync(root, { recursive: true, force: true });
   }
 });

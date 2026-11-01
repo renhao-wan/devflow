@@ -1,5 +1,77 @@
 # Changelog
 
+## 未发布
+
+### 增强
+
+- 新增只读 `/devflow:status`（及 `devflow status`）：扫描 `docs/devflow/` 的产物，推导各任务所处阶段、缺口与下一步命令，不写入任何状态
+- 阶段入口补充下一步命令提示；统一 slug 推断规则：只有一个候选时自动采用，多个候选时列出让用户选择，不再回落到 `latest`
+- 新增工具生态索引与路由：`.claude/hub/ecosystem.yaml` 登记同类工具，`devflow route --stage <stage>` 返回 `use-devflow` / `suggest` / `delegate`；支持 `--detect`、`--list`、`--tool <id>` 与 `--force-devflow`
+- 路由只委派执行技法：`technique` 工具可被 `auto` 自动委派，`workflow` 工具只建议；阶段顺序、门禁与 `docs/devflow/<slug>/` 产物仍由 devflow 负责
+- `init` 自动创建生态索引并检测；检测结果写入 `.claude/.ecosystem-state.json` 并加入 `.gitignore`，与可提交配置分离
+- `doctor` 校验生态配置、检测结果缺失/过期；`status` 展示路由模式与可用工具；`load-hub` 在 SessionStart 注入路由摘要
+- 六个阶段入口接入路由步骤，`argument-hint` 支持 `--force-devflow`；新增项目内 `scripts/devflow-route.mjs` loader
+- `guard-generated` 保护 `devflow-route.mjs` 与 `.claude/.ecosystem-state.json`
+- 检测结果缺失或过期时，`devflow route --stage` 自动检测一次后再决策，避免新克隆项目首次进入阶段总是回退；`--list` 保持只读
+- `enabled: false` 的工具不参与检测，也不出现在 SessionStart 注入的可用工具中
+- `--detect` 可与 `--stage` / `--list` 组合，组合命令的 stdout 始终只有一份 JSON
+- `detectSkills` / `detectPlugins` 必须是单段名称，拒绝 `../` 等路径穿越；检测读写均校验真实路径在项目内
+
+### 修复
+
+- 修复阶段入口缺少 `Skill` 权限导致无法委派路由候选工具的问题（req、test 补齐，六个入口统一 `delegate` / `error` 处理）
+- 修复多行 `note` 渲染为 YAML 时破坏配置结构的问题
+- 路由错误结果统一包含 `constraints`，避免调用方读取空字段
+
+### 测试
+
+- 新增 `tests/status.test.mjs`，覆盖无任务、单任务推断、完成态、多任务不擅自选择与 `--slug` 过滤
+- 新增 `tests/route.test.mjs`，覆盖 22 种路由决策：未配置回退、mode、ask/auto、强制与指定工具、阶段不匹配、forceDevflowStages、检测与插件键、检测结果缺失时自动检测、禁用工具不参与检测、`--detect` 与阶段/列表组合、解析失败 fail-open、`--list`、非法阶段名、检测名路径穿越与默认配置渲染往返
+- 更新 CLI、端到端、状态视图、模板约定与 hooks 测试，覆盖 `route` 命令、生态配置生成、入口路由步骤、禁用工具过滤与检测状态保护
+
+### 文档
+
+- 新增 `docs/comparison.md`，对比 devflow 与 BMAD、cc-spec-driven、Spec Workflow、OpenSpec、ucai、Spec Kit、superpowers 的定位、重叠与优缺点
+- 新增 `docs/value-and-limits.md`，说明适用人群、当前限制与真实项目验证方法
+- 新增 `docs/tool-routing.md`，说明配置、检测范围、决策优先级、命令、安全边界与 fail-open 行为
+- README、设计文档、对比、价值与限制、SECURITY、CHANGELOG 同步更新工具路由说明
+
+## 1.4.0
+
+### 增强
+
+- 新增 `guard-generated` 钩子：编辑 `.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.devflow.json` 与 `scripts/devflow-*.mjs` loader 时直接拒绝，避免生成物与账本漂移
+- `guard-dangerous` 从仅 `Bash` 扩展到 `PowerShell` 与 `Monitor`，覆盖 Windows 终端与后台监控命令
+- `track-changes` 区分流程数据与业务改动：`docs/devflow/**` 完全忽略，`.claude/hub/**` 标记为 hub 改动；`check-tests` 在 hub 源改动未重新生成投影时提醒，但不再计为测试待验证
+- 新增 `bin/devflow` 统一 CLI，`devflow <init|gen|doctor|sync|upstream|ship|test>` 参数透传给对应脚本
+- 阶段入口由 `commands/*.md` 迁移为 `skills/<name>/SKILL.md`，调用方式不变；`init` / `upstream` / `ship` / `sync` 禁止模型自动调用
+- 新增 `evals/` 行为评测用例（阶段路由、生成物保护、危险命令拒绝），`claude plugin eval` 仍为 early access，用例结构由测试校验
+- `.claude-plugin/plugin.json` 与 marketplace 条目补充 `homepage` / `repository` 元数据
+
+### 文档
+
+- README 更新目录结构、hooks 事件、生成物写保护、CLI、评测用法与版本号
+- `docs/design.md` 更新分层与 hooks 表，补充 1.4.0 里程碑
+- `SECURITY.md` 更新支持版本、shell 类工具覆盖范围与 `guard-generated` 边界说明
+
+### 测试
+
+- 回归测试增至 143 项，新增 PowerShell / Monitor 拦截、生成物写保护、hub 改动分流、CLI 与评测用例结构等用例
+
+## 1.3.3
+
+### 修复
+
+- 边界不变量：`hub-upstream`、`hub-sync`、`hub-init` 与生成器统一按真实路径校验，拒绝 junction / 符号链接把写入带到项目或插件目录之外；Maven `<module>` 指向工作区外时跳过
+- 失败原子性：`hub-upstream` 新增回灌 journal，在文件复制、版本升级、CHANGELOG 写入之间中断后重跑可续做；版本文件无法解析时直接报错而不是半途退出；`writeAtomic` 与 hooks 的 JSON 写入在 `finally` 中清理临时文件
+- 外发内容控制：密钥检测覆盖未加引号的环境变量式赋值（如 `DB_PASSWORD=...`、`AWS_SECRET_ACCESS_KEY=...`、`MYSQL_ROOT_PASSWORD: ...`），`ship` / `upstream` 的日志与错误统一脱敏；`guard-dangerous` 补充环境变量与 `--token` 形式的凭据脱敏
+- hooks：stdin 未在超时内读完时改为 `ask`，不再静默放行；`load-hub` 跳过账本中的越界条目，CRLF 差异不再误报漂移；`track-changes` / `check-tests` 改用并发安全的原子写入
+- `ship` 的版本基线取自 `--base` 分支，避免把当前分支的预发布版本带进回灌 PR
+
+### 测试
+
+- 回归测试增至 131 项，新增 junction 越界、回灌中断恢复、损坏版本文件、stdin 截断、CRLF 漂移、环境变量式密钥与凭据脱敏等用例
+
 ## 1.3.2
 
 ### 修复
