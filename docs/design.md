@@ -142,3 +142,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.3.3：真实路径边界校验、回灌 journal 与中断续做、环境变量式凭据识别与统一脱敏、hooks stdin 截断与账本越界防护
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
 - [x] 1.4.1：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）、轻量功能与小 bug 双通道（`brief.md` / `debug.md`）
+- [x] 1.5.0（未发布）：`/devflow:onboard` 项目概览；`init` 生成简版，重扫只刷新标记块内自动段

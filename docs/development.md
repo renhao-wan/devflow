@@ -6,8 +6,9 @@
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具 | `--root` `--force` `--plugin-root` `--source-root` |
+| `scripts/hub-onboard.mjs` | 扫描项目并生成/更新 `.claude/hub/project-overview.md` | `--root` `--print` `--json` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与工具检测 | `--root` `--json` |
 | `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
@@ -27,12 +28,12 @@
 ```
 .claude-plugin/        # plugin.json + marketplace.json
 bin/devflow            # 统一 CLI，参数透传给 scripts/
-skills/                # 十二个入口技能（req…sync、status）+ 六个通用技能
+skills/                # 十三个入口技能（req…sync、status、onboard）+ 六个通用技能
 agents/                # 评审、测试、排障三个子代理
 hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
-scripts/               # init / gen / doctor / status / statusline / route / upstream / ship / sync / mark-test
+scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test
 scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
@@ -58,6 +59,7 @@ package.json           # 发布元数据与 npm test 脚本
 .claude/hub/           # 项目真源
 ├─ hub.yaml            # 子项目、阶段、测试命令
 ├─ ecosystem.yaml      # 同类工具索引与路由模式
+├─ project-overview.md # 项目概览：自动段 + 人工补充（onboard 生成）
 ├─ stages/<stage>/     # 六个阶段的正文与资源
 │  ├─ SKILL.md
 │  ├─ references/      # 按需读取的细则（可选）

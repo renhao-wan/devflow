@@ -1,5 +1,11 @@
 # Changelog
 
+## 未发布
+
+### 增强
+
+- 新增 `/devflow:onboard` 与 `devflow onboard`：扫描技术栈、顶层目录、子项目、入口与 CI，生成 `.claude/hub/project-overview.md`；`init` 生成简版，重扫只刷新标记块内自动段，保留人工补充
+
 ## 1.4.1
 
 ### 增强
