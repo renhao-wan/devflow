@@ -25,7 +25,7 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 5. **核对复用与依赖**：完整任务读取 `plan.md` 的「调研与复用判断」，确认采用/借鉴/自建有可核对来源；新增依赖的许可证、维护状态、已知漏洞与 `req.md` 的技术约束不冲突；搜索失败或未验证项已披露。轻量功能/修复如未涉及依赖与调研，可写“不适用”；轻量修复涉及公共接口/契约、数据结构、迁移或依赖时必须已升级完整流程，`review: required` 只覆盖安全、数据、认证/权限/并发等不触发升级的风险。
 6. **给可执行结论**：每条问题写清文件:行号、问题、触发条件、建议。
 7. **区分阻断与建议**：阻断项必须修复；建议项可记录。
-8. **必要时用子代理**：调用 `devflow-code-reviewer` 获取独立意见，再做合并判断。方法可用 `devflow-code-review` 技能；已安装 superpowers 时也可用其 `requesting-code-review` / `receiving-code-review`，门禁与产物仍以本阶段为准。
+8. **必要时用子代理**：调用 `devflow:devflow-code-reviewer` 获取独立意见（旧版本可能显示为 `devflow-code-reviewer`，以 `/agents` 列表为准），再做合并判断。方法可用 `devflow-code-review` 技能；已安装 superpowers 时也可用其 `requesting-code-review` / `receiving-code-review`，门禁与产物仍以本阶段为准。
 
 ## 门禁（全部满足才能交付）
 

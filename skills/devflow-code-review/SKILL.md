@@ -45,7 +45,7 @@ description: Use when reviewing a diff, a pull request, or freshly written code 
 
 ## 独立性
 
-自己的代码自己审容易漏。需要第二视角时，用 `devflow-code-reviewer` 子代理，但子代理的结论必须自己核实后再采纳。
+自己的代码自己审容易漏。需要第二视角时，用 `devflow:devflow-code-reviewer` 子代理（旧版本可能显示为 `devflow-code-reviewer`，以 `/agents` 列表为准），但子代理的结论必须自己核实后再采纳。
 
 ## 与 superpowers 的关系
 

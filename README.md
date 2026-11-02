@@ -562,6 +562,7 @@ evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/design.md         # 设计文档
+docs/native-capabilities.md  # Claude Code 原生能力接入、版本与降级
 docs/comparison.md     # 与同类工作流插件的对比与定位
 docs/value-and-limits.md  # 价值、适用边界与验证方法
 docs/tool-routing.md   # 工具生态索引、检测与路由
