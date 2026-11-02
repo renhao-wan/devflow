@@ -203,7 +203,7 @@ node scripts/devflow-doctor.mjs
 /devflow:onboard
 ```
 
-概览中 `<!-- devflow:auto:start -->` 与 `<!-- devflow:auto:end -->` 之间是自动段，重扫会刷新；`## 项目补充` 等标记外内容由你维护，重扫不会覆盖。`--print` 只输出不写文件。
+概览中 `<!-- devflow:auto:start -->` 与 `<!-- devflow:auto:end -->` 之间是自动段，重扫会刷新；`## 项目补充` 等标记外内容由你维护，重扫不会覆盖。`--print` 只输出不写文件。自动段记录项目结构指纹，`/devflow:doctor` 会发现概览过期或标记残缺；会话启动时只注入一行摘要，req/plan 会先读概览定位，再以代码与 `hub.yaml` 为准。
 
 ## statusline（可选）
 

@@ -71,6 +71,7 @@ test('init → gen → doctor → mark-test 全链路', () => {
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
     assert.match(doctor.stdout, /0 个错误/);
+    assert.match(doctor.stdout, /项目概览标记块完整/);
 
     const home = join(root, 'empty-home');
     mkdirSync(home, { recursive: true });
@@ -85,6 +86,33 @@ test('init → gen → doctor → mark-test 全链路', () => {
     const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
     assert.equal(state.lastTestCommand, 'npm test');
     assert.ok(state.lastTestPassedAt);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor 发现项目概览标记块残缺', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    writeFileSync(join(root, '.claude', 'hub', 'project-overview.md'), '<!-- devflow:auto:start -->\n残缺\n');
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.match(doctor.stdout, /项目概览自动段标记异常/);
+    assert.match(doctor.stdout, /\/devflow:onboard/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('doctor 发现项目概览过期', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    rmSync(join(root, 'package.json'));
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.match(doctor.stdout, /项目概览可能过期/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -4,6 +4,29 @@ import { readText, isPathInside, isRealPathInside } from './common.mjs';
 
 export const SKIP_DIRS = new Set(['.git', '.claude', '.idea', '.vscode', 'node_modules', 'dist', 'build', 'target', 'scripts', 'templates', 'docs', 'coverage']);
 
+/** 构建文件与项目标记的唯一来源：子项目发现、技术栈识别共用。project 表示可作为子项目根。 */
+export const BUILD_SIGNATURES = [
+  { file: 'package.json', label: 'Node.js', project: true },
+  { file: 'pom.xml', label: 'Java / Maven', project: true },
+  { file: 'build.gradle', label: 'Java / Gradle', project: true },
+  { file: 'settings.gradle', label: 'Java / Gradle' },
+  { file: 'go.mod', label: 'Go', project: true },
+  { file: 'Cargo.toml', label: 'Rust', project: true },
+  { file: 'pyproject.toml', label: 'Python', project: true },
+  { file: 'pytest.ini', label: 'Python / pytest' },
+  { file: 'requirements.txt', label: 'Python' },
+  { file: 'Gemfile', label: 'Ruby' },
+  { file: 'composer.json', label: 'PHP' },
+  { file: 'Makefile', label: 'Make' },
+];
+
+/** 目录内命中的构建文件，按 BUILD_SIGNATURES 顺序返回。 */
+export function detectTechStack(dir) {
+  return BUILD_SIGNATURES
+    .filter(({ file }) => existsSync(join(dir, file)))
+    .map(({ file, label }) => ({ file, label }));
+}
+
 export function detectPackageManager(dir, root = dir) {
   let cur = resolve(dir);
   const stop = resolve(root);
@@ -53,13 +76,8 @@ export function commandFromRoot(root, dir, command) {
 }
 
 export function isProjectDir(dir) {
-  return existsSync(join(dir, '.git'))
-    || existsSync(join(dir, 'package.json'))
-    || existsSync(join(dir, 'pom.xml'))
-    || existsSync(join(dir, 'build.gradle'))
-    || existsSync(join(dir, 'go.mod'))
-    || existsSync(join(dir, 'Cargo.toml'))
-    || existsSync(join(dir, 'pyproject.toml'));
+  if (existsSync(join(dir, '.git'))) return true;
+  return BUILD_SIGNATURES.some((s) => s.project && existsSync(join(dir, s.file)));
 }
 
 export function readMavenModules(dir) {

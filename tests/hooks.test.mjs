@@ -582,6 +582,31 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 有概览时注入项目概览摘要', () => {
+  const root = makeRoot();
+  try {
+    mkdirSync(join(root, 'services', 'api'), { recursive: true });
+    writeFileSync(join(root, 'services', 'api', 'package.json'), '{}');
+    writeFileSync(join(root, '.claude', 'hub', 'project-overview.md'), '<!-- devflow:auto:start -->\n<!-- devflow:auto:end -->\n');
+    const r = runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /项目概览：Node\.js；1 个子项目；0 个入口/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 无概览时不注入概览摘要', () => {
+  const root = makeRoot();
+  try {
+    const r = runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /项目概览：/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 在配置生态索引后注入工具路由摘要', () => {
   const root = makeRoot();
   try {
@@ -813,6 +838,19 @@ test('track-changes 忽略流程文档，hub 源改动不标记测试待验证',
     assert.deepEqual(state.hubChangedFiles, ['.claude/hub/stages/req/SKILL.md']);
     assert.ok(!state.testsPending);
     assert.ok(!state.changedFiles);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('track-changes 不把项目概览当作阶段源改动', () => {
+  const root = makeRoot();
+  try {
+    runHook('track-changes.mjs', {
+      tool_name: 'Write',
+      tool_input: { file_path: join(root, '.claude', 'hub', 'project-overview.md') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(existsSync(join(root, '.claude', '.devflow-state.json')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -13,7 +13,7 @@ import {
 } from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 import { discoverSubprojects, detectTestCommand } from './lib/discover.mjs';
-import { generateOverview } from './lib/overview.mjs';
+import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
 
@@ -202,6 +202,14 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (existsSync(hubFile) && !force) {
     log('warn', `已经初始化：${posix(hubFile)}。使用 --force 覆盖 hub.yaml 与模板；升级模板请用 /devflow:sync。`);
+    if (!existsSync(join(root, OVERVIEW_FILE))) {
+      try {
+        generateOverview(root, { full: false });
+        log('ok', `补生成项目概览 ${OVERVIEW_FILE}（运行 /devflow:onboard 深度重扫）`);
+      } catch (err) {
+        log('warn', `补生成项目概览失败：${err.message}`);
+      }
+    }
   } else {
     ensureDir(join(root, '.claude', 'hub', 'stages'));
     ensureDir(join(root, '.claude', 'hub', '_shared'));
@@ -211,13 +219,13 @@ export async function main(argv = process.argv.slice(2)) {
     const rootTest = detectTestCommand(root);
     writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
     writeSourceManifest(root, info.version, pluginRoot);
+    log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     try {
       generateOverview(root, { full: false });
       log('ok', '生成项目概览 .claude/hub/project-overview.md（运行 /devflow:onboard 深度重扫）');
     } catch (err) {
       log('warn', `生成项目概览失败：${err.message}`);
     }
-    log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     if (expanded.length) {
       log('ok', `Maven 多模块已展开：${expanded.join('、')}。父 pom 不再单独成项，可按需调整。`);
     }
