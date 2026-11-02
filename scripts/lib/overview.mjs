@@ -1,27 +1,13 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol } from './common.mjs';
+import { detectTechStack } from './discover.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
 export const AUTO_START = '<!-- devflow:auto:start -->';
 export const AUTO_END = '<!-- devflow:auto:end -->';
 
 const SKIP_TOP = new Set(['.git', '.claude', 'node_modules', 'dist', 'build', 'target', 'coverage']);
-
-const BUILD_FILES = [
-  ['package.json', 'Node.js'],
-  ['pom.xml', 'Java / Maven'],
-  ['build.gradle', 'Java / Gradle'],
-  ['settings.gradle', 'Java / Gradle'],
-  ['go.mod', 'Go'],
-  ['Cargo.toml', 'Rust'],
-  ['pyproject.toml', 'Python'],
-  ['pytest.ini', 'Python / pytest'],
-  ['requirements.txt', 'Python'],
-  ['Gemfile', 'Ruby'],
-  ['composer.json', 'PHP'],
-  ['Makefile', 'Make'],
-];
 
 const ENTRY_CANDIDATES = [
   'src/index.js', 'src/main.js', 'src/app.js', 'index.js', 'main.js', 'app.js',
@@ -43,14 +29,13 @@ function codeSpan(value) {
   return `${fence}${pad}${s}${pad}${fence}`;
 }
 
-export function scanFacts(root, { full = true, subprojectPaths = [] } = {}) {
+export function scanFacts(root, { subprojectPaths = [] } = {}) {
   const techStack = [];
   const seen = new Set();
-  for (const rel of ['.', ...subprojectPaths]) {
+  for (const rel of ['.', ...new Set(subprojectPaths)]) {
     const dir = resolve(root, rel);
     if (!isPathInside(root, dir)) continue;
-    for (const [file, label] of BUILD_FILES) {
-      if (!existsSync(join(dir, file))) continue;
+    for (const { file, label } of detectTechStack(dir)) {
       const tag = rel === '.'
         ? `${label}（${file}）`
         : `${label}（${String(rel).replace(/\\/g, '/')}/${file}）`;
@@ -64,13 +49,11 @@ export function scanFacts(root, { full = true, subprojectPaths = [] } = {}) {
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_TOP.has(e.name))
     .map((e) => e.name)
     .sort();
-  const entrypoints = full
-    ? ENTRY_CANDIDATES.filter((p) => {
-      try { return statSync(join(root, p)).isFile(); } catch { return false; }
-    })
-    : [];
+  const entrypoints = ENTRY_CANDIDATES.filter((p) => {
+    try { return statSync(join(root, p)).isFile(); } catch { return false; }
+  });
   const workflows = join(root, '.github', 'workflows');
-  const ci = full && existsSync(workflows)
+  const ci = existsSync(workflows)
     ? safeReaddir(workflows).filter((e) => e.isFile() && /\.ya?ml$/i.test(e.name)).map((e) => e.name).sort()
     : [];
   return { techStack, topDirs, entrypoints, ci };
@@ -150,7 +133,7 @@ export function upsertAutoBlock(current, block) {
 
 export function generateOverview(root, { full = true, now = new Date().toISOString(), write = true } = {}) {
   const hub = readHubFacts(root);
-  const facts = scanFacts(root, { full, subprojectPaths: hub.subprojects.map((s) => s.path) });
+  const facts = scanFacts(root, { subprojectPaths: hub.subprojects.map((s) => s.path) });
   const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full });
   const hubDir = join(root, '.claude', 'hub');
   const file = join(root, OVERVIEW_FILE);
