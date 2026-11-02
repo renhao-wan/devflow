@@ -7,6 +7,7 @@ import {
   AUTO_START, AUTO_END, OVERVIEW_FILE, scanFacts, generateOverview, upsertAutoBlock,
 } from '../scripts/lib/overview.mjs';
 import { main as onboardMain } from '../scripts/hub-onboard.mjs';
+import { main as initMain } from '../scripts/hub-init.mjs';
 
 function makeProject() {
   const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-'));
@@ -85,5 +86,17 @@ test('--print 输出内容且不写文件', () => {
   const result = onboardMain(['--root', root, '--print', '--now', 'fixed']);
   assert.match(result.content, /Node\.js/);
   assert.equal(existsSync(join(root, OVERVIEW_FILE)), false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('init 生成简版项目概览', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-init-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));
+  await initMain(['--root', root]);
+  const file = join(root, OVERVIEW_FILE);
+  assert.equal(existsSync(file), true);
+  const text = readFileSync(file, 'utf8');
+  assert.ok(text.includes(AUTO_START));
+  assert.doesNotMatch(text, /### 关键入口/);
   rmSync(root, { recursive: true, force: true });
 });
