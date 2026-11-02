@@ -333,11 +333,34 @@ export async function main(argv = process.argv.slice(2)) {
     const pluginHooks = join(pluginRoot, 'hooks', 'hooks.json');
     if (existsSync(pluginHooks)) {
       const h = readJson(pluginHooks, {});
-      const count = Object.values(h.hooks || {}).reduce((n, arr) => n + arr.length, 0);
+      const hookMap = h.hooks && typeof h.hooks === 'object' ? h.hooks : {};
+      const count = Object.values(hookMap).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
       add('ok', `插件 hooks 已注册 ${count} 组`);
+
+      const requiredEvents = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart'];
+      for (const event of requiredEvents) {
+        if (!Array.isArray(hookMap[event]) || !hookMap[event].length) {
+          add('warn', `hooks.json 缺少事件 ${event}`, '确认插件安装完整：claude plugin list');
+        }
+      }
+
+      const commands = [];
+      for (const groups of Object.values(hookMap)) {
+        if (!Array.isArray(groups)) continue;
+        for (const group of groups) {
+          for (const hook of group?.hooks || []) {
+            if (typeof hook?.command === 'string') commands.push(hook.command);
+          }
+        }
+      }
+
       for (const script of ['guard-dangerous.mjs', 'guard-generated.mjs', 'track-changes.mjs', 'prompt-reminder.mjs', 'subagent-note.mjs', 'check-tests.mjs', 'load-hub.mjs']) {
         const p = join(pluginRoot, 'hooks', 'scripts', script);
-        if (!existsSync(p)) add('error', `缺少 hooks 脚本 ${script}`);
+        if (!existsSync(p)) {
+          add('error', `缺少 hooks 脚本 ${script}`);
+        } else if (!commands.some((command) => command.includes(script))) {
+          add('warn', `hooks.json 未注册 ${script}`, '确认插件安装完整：claude plugin list');
+        }
       }
     } else {
       add('warn', '插件未提供 hooks.json', '确认插件安装完整：claude plugin list');

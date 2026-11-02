@@ -2,7 +2,7 @@
 name: implement
 description: 实现阶段：按 plan.md 小步实现，测试先行，保持每步可运行
 argument-hint: <slug> [任务编号] [--force-devflow]
-allowed-tools: Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(node:*), Bash(devflow:*), Bash(npx:*), Bash(npm:*), Bash(pnpm:*), Bash(yarn:*), Bash(bun:*), Bash(mvn:*), Bash(gradle:*), Bash(./gradlew:*), Bash(gradlew.bat:*), Bash(go:*), Bash(cargo:*), Bash(dotnet:*), Bash(make:*), Bash(python:*), Bash(python3:*), Bash(pytest:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, Task, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(node:*), Bash(devflow:*), Bash(npx:*), Bash(npm:*), Bash(pnpm:*), Bash(yarn:*), Bash(bun:*), Bash(mvn:*), Bash(gradle:*), Bash(./gradlew:*), Bash(gradlew.bat:*), Bash(go:*), Bash(cargo:*), Bash(dotnet:*), Bash(make:*), Bash(python:*), Bash(python3:*), Bash(pytest:*)
 ---
 
 执行 devflow 实现阶段：**$ARGUMENTS**
@@ -23,6 +23,6 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion, Skill, Bas
 5. 每个任务完成后运行该子项目的测试命令（`hub.yaml` 中的 `testCommand`，否则 `defaults.testCommand`）。
 6. 计划与实际偏离时，先更新 `plan.md`（轻量功能更新 `brief.md` 的「实施记录」）再继续；轻量功能命中硬触发（非测试/文档改动超过 200 行、10 个文件或 2 个子项目，或涉及依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界、不可逆操作）时，停止轻量流程并升级完整流程；完整任务范围明显扩大时说明并更新 `plan.md`。80–200 行或 5–10 个文件时先用 `AskUserQuestion` 询问一次，无法提问时回退为文本询问。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
 7. 结束时报告：实际 slug、任务目录、已完成任务、未完成任务及原因、新增/修改的测试、运行过的验证命令与真实结果。没有运行的不要说已通过。
-8. 可选：任务跨多回合时，用原生 `/goal` 设置本阶段完成条件（任务全部完成、测试真实通过、计划与改动一致；模板见 `.claude/hub/stages/implement/SKILL.md`）。goal 不替代门禁；需求或计划尚未确认时不要启用。
+8. 可选：任务跨多回合时，提示用户运行 `/goal` 设置本阶段完成条件（任务全部完成、测试真实通过、计划与改动一致；模板见 `.claude/hub/stages/implement/SKILL.md`）。插件不会自动设置 goal；goal 不替代门禁；需求或计划尚未确认时不要建议启用。
 9. 可选：实验性改动失败时可用 `/rewind` 回到检查点（会丢弃当前会话改动，先确认范围）；需要隔离并行工作时用 `/worktree`，不把实验代码留在主工作区。
 10. 实现完成且自测通过后进入测试阶段：`/devflow:test <实际 slug>`。

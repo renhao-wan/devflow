@@ -299,7 +299,7 @@ upstream:
 
 ## 安全门禁与 hooks
 
-`guard-dangerous` 在安装插件后对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 只在包含 `.claude/hub/hub.yaml` 的工作区生效；`track-changes`、`prompt-reminder`、`subagent-note`、`check-tests`、`load-hub` 也只在 hub 工作区生效，不会向其他项目写入状态或注入上下文。
+`guard-dangerous` 在安装插件后对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 只在包含 `.claude/hub/hub.yaml` 的工作区生效；`track-changes`、`prompt-reminder`、`check-tests`、`load-hub` 也只在 hub 工作区生效，不会向其他项目写入状态；`subagent-note` 在任意项目使用 devflow 子代理时向主上下文注入核对提醒并显示给用户，不写状态。
 
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
@@ -307,7 +307,7 @@ upstream:
 | `PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` | `guard-generated.mjs` | 阻止手改投影、账本（含 `.claude/.devflow-state.json`）与 loader |
 | `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash/PowerShell/Monitor)` | `track-changes.mjs` | 记录改动文件；hub 源改动单独标记 |
 | `UserPromptSubmit` | `prompt-reminder.mjs` | 有未验证改动时注入一次提醒，从不阻止 |
-| `SubagentStop` | `subagent-note.mjs` | devflow 子代理结束时提示核对结论，从不阻止 |
+| `PostToolUse(Agent/Task)` | `subagent-note.mjs` | devflow 子代理结束后向主上下文注入核对提醒，同时显示给用户，从不阻止 |
 | `Stop` | `check-tests.mjs` | 有改动但未验证通过、或 hub 源改动未重新生成时提醒，从不阻止 |
 | `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
 
@@ -319,16 +319,16 @@ upstream:
 {
   "statusLine": {
     "type": "command",
-    "command": "node \"<插件根>/scripts/statusline.mjs\""
+    "command": "devflow statusline"
   }
 }
 ```
 
-把 `<插件根>` 换成实际插件目录；也可以用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
+优先使用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。如果未安装 CLI，可改成 `node "<插件根>/scripts/statusline.mjs"`，但 `<插件根>` 需要换成实际插件目录；插件升级或切换安装方式后该路径可能失效，届时重新配置。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
 
 ### 原生命令协作
 
-- `/goal`：implement、test、debug 跨多回合时可设置完成条件，但不替代门禁；阶段模板给出了建议条件。
+- `/goal`：implement、test、debug 跨多回合时可提示用户运行 `/goal` 设置完成条件；插件不会自动设置，也不替代门禁；阶段模板给出了建议条件。
 - `/rewind`：回到检查点，会丢弃当前会话改动；执行前先确认范围。
 - `/worktree`：隔离并行实验，避免把实验代码留在主工作区。
 - `/code-review`：可选的本地第二视角；`/security-review`、`/ultrareview` 可能上传代码，必须先征得用户同意；`/simplify` 若应用修改，回到 implement 并重新 test。
@@ -628,7 +628,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 232 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 240 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

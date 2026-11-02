@@ -34,6 +34,14 @@ test('hooks.json 引用的脚本真实存在', () => {
   }
 });
 
+test('子代理提醒注册到 PostToolUse(Agent/Task)', () => {
+  const hooks = JSON.parse(read('hooks/hooks.json'));
+  assert.equal(hooks.hooks.SubagentStop, undefined, '不应继续使用 SubagentStop 注入主上下文');
+  const post = JSON.stringify(hooks.hooks.PostToolUse || []);
+  assert.match(post, /subagent-note\.mjs/);
+  assert.match(post, /Agent\|Task/);
+});
+
 test('阶段入口技能均带 name 与 description，危险命令禁止模型自动调用', () => {
   const entries = ['req', 'plan', 'implement', 'test', 'review', 'debug',
     'init', 'doctor', 'status', 'upstream', 'ship', 'sync'];
