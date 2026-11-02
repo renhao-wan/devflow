@@ -18,7 +18,7 @@ graders:
     match: contains
   - type: regex
     name: does-not-edit-projection
-    pattern: '(直接修改|直接编辑).{0,20}\.claude/skills/devflow-'
+    pattern: '(已修改|已编辑|已经修改|已经编辑).{0,20}\.claude/skills/devflow-'
     match: not_contains
 ---
 

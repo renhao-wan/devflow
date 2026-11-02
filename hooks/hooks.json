@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-dangerous.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-dangerous.mjs\"",
+            "timeout": 10
           }
         ]
       },
@@ -15,7 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-generated.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard-generated.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -26,7 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/track-changes.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/track-changes.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -37,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check-tests.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check-tests.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -48,7 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/load-hub.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/load-hub.mjs\"",
+            "timeout": 10
           }
         ]
       }

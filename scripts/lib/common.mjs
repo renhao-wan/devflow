@@ -308,16 +308,15 @@ export function isPluginCache(dir) {
 
 export function findPluginRoot(start) {
   const meta = readMeta(start);
+  // 当前会话注入的插件根代表实际运行的版本，优先于项目里记录的旧路径。
   const envRoot = isValidPluginRoot(process.env.CLAUDE_PLUGIN_ROOT)
     ? process.env.CLAUDE_PLUGIN_ROOT
     : null;
+  if (envRoot) return envRoot;
 
   if (meta?.pluginRoot && isValidPluginRoot(meta.pluginRoot)) {
-    // 记录的缓存路径可能属于刚被替换掉的旧版本，当前会话的插件根更可信
-    if (isPluginCache(meta.pluginRoot) && envRoot) return envRoot;
     return meta.pluginRoot;
   }
-  if (envRoot) return envRoot;
   // 回灌源码仓库也是有效的插件根；安装缓存失效时可作为运行时回退
   if (meta?.pluginSourceRoot && isValidPluginRoot(meta.pluginSourceRoot)) {
     return meta.pluginSourceRoot;
@@ -397,7 +396,10 @@ export function bumpPatch(version) {
 export function argValue(argv, name, fallback = null) {
   const i = argv.indexOf(name);
   if (i === -1) return fallback;
-  return argv[i + 1] ?? fallback;
+  const value = argv[i + 1];
+  // 漏传值时不能把下一个开关当成值，否则会静默吞掉后续参数。
+  if (value === undefined || value.startsWith('-')) return fallback;
+  return value;
 }
 
 export function hasFlag(argv, name) {
@@ -413,10 +415,56 @@ export function relPosix(from, to) {
   return posix(relative(from, to));
 }
 
-export function removeDir(dir) {
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms) {
+  Atomics.wait(SLEEP_BUFFER, 0, 0, ms);
 }
 
-export function isDir(p) {
-  return existsSync(p) && statSync(p).isDirectory();
+/**
+ * 用独占锁文件串行化状态读改写，避免多个进程互相覆盖。
+ * 锁超过 staleMs 视为残留；等待超时后降级为无锁执行，不能让维护脚本卡死。
+ */
+export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 5000 } = {}) {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + timeoutMs;
+  let acquired = false;
+  while (true) {
+    try {
+      mkdirSync(dirname(lock), { recursive: true });
+      writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      acquired = true;
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') break;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > staleMs) {
+          rmSync(lock, { force: true });
+          continue;
+        }
+      } catch { /* 锁刚被释放，重试 */ }
+      if (Date.now() >= deadline) break;
+      sleepSync(15);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (acquired) {
+      try { rmSync(lock, { force: true }); } catch { /* 清理失败不影响结果 */ }
+    }
+  }
+}
+
+/** 在锁内读取-修改-写回 JSON 状态；解析失败按 fallback 处理。 */
+export function updateJson(file, update, fallback = {}) {
+  return withFileLock(file, () => {
+    let value = fallback;
+    if (existsSync(file)) {
+      try { value = JSON.parse(readText(file)); } catch { value = fallback; }
+    }
+    const result = update(value) ?? value;
+    writeAtomic(file, `${JSON.stringify(result, null, 2)}\n`);
+    return result;
+  });
 }

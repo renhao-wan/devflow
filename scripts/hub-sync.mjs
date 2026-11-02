@@ -2,7 +2,7 @@
 import { existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import {
-  argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub,
+  argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub, satisfies,
   readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir, walk, relPosix,
   readMeta, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
@@ -48,10 +48,15 @@ export async function main(argv = process.argv.slice(2)) {
   const force = hasFlag(argv, '--force');
   const noGen = hasFlag(argv, '--no-gen');
 
-  loadHub(root);
+  const hub = loadHub(root);
   // 同步读的是“当前安装的插件版本”，不是回灌源码仓库；否则会把未发布的模板拉进项目。
   const pluginRoot = argValue(argv, '--plugin-root', null) || findPluginRoot(root);
   const info = pluginInfo(pluginRoot);
+  // 先校验版本约束，避免模板已复制、投影却因 requiresPlugin 不满足而生成失败。
+  const requires = hub.config.requiresPlugin || '*';
+  if (!satisfies(info.version, requires)) {
+    throw new Error(`插件版本 ${info.version} 不满足 hub.yaml 的 requiresPlugin ${requires}。请先升级插件。`);
+  }
   const sources = readSources(root);
   if (!sources) {
     log('warn', '缺少 .claude/.hub-sources.json：已有文件一律按“可能手改”处理，冲突时需 --force 才会覆盖。');
@@ -128,13 +133,18 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
+  const sourcesFile = join(root, '.claude', '.hub-sources.json');
+  const persist = () => writeAtomic(sourcesFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  // 先落一次账本（移除项与一致项），再逐文件更新；中途失败时账本最多落后一个已复制的文件，
+  // 而该文件内容已等于模板哈希，下次同步会按“一致”自动修正。
   for (const a of actions) {
-    if (a.type === 'same') {
-      manifest.files[a.rel] = a.templateHash;
-      continue;
-    }
-    if (a.type === 'conflict') {
-      log('warn', `跳过冲突 ${a.rel}（本地改动未记录在账本中）`);
+    if (a.type === 'same') manifest.files[a.rel] = a.templateHash;
+  }
+  persist();
+
+  for (const a of actions) {
+    if (a.type === 'same' || a.type === 'conflict') {
+      if (a.type === 'conflict') log('warn', `跳过冲突 ${a.rel}（本地改动未记录在账本中）`);
       continue;
     }
     // 检查与写入之间可能被替换；写入前再确认一次。
@@ -149,12 +159,13 @@ export async function main(argv = process.argv.slice(2)) {
     }
     copyFileSync(a.src, a.dest);
     manifest.files[a.rel] = a.templateHash;
+    persist();
     log('ok', `${label(a.type)} ${a.rel}`);
   }
 
   for (const rel of removed) log('..', `模板已移除，本地保留 ${STAGE_PREFIX}${rel}`);
 
-  writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  persist();
   if (meta) {
     writeAtomic(join(root, '.devflow.json'), `${JSON.stringify({
       ...meta,

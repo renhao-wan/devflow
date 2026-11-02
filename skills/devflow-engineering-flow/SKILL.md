@@ -48,11 +48,11 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 轻量只压缩文档，不减测试：小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中以下任一硬触发时，停止轻量、在 `brief.md` / `debug.md` 写 `## 升级判断`，补 `req.md` / `plan.md` 后继续完整流程：
 
-- 新增/升级依赖，公共 API、数据结构或迁移，不可逆操作。
+- 新增/升级依赖，公共 API、数据结构或迁移，权限/认证/支付/并发/安全边界，不可逆操作。
 - 非测试/文档 diff 超过 200 行、10 个文件或 2 个子项目。
-- 小 bug 无法稳定复现、根因跨 >2 文件/模块、连续 2 轮假设未收敛、修复要改公共契约。
+- 小 bug 根因跨 >2 文件/模块、连续 2 轮假设未收敛、修复要改公共契约。
 
-安全、数据、认证/权限/并发风险若不触发上述升级，用 `debug.md` 顶部的 `review: required` 补审，而不是只靠对话记录。
+小 bug 的安全、数据、认证/权限/并发风险若不触发上述升级，用 `debug.md` 顶部的 `review: required` 补审，而不是只靠对话记录；小功能命中这些风险时必须升级完整流程，不能只补 review。无法稳定复现不是升级条件：停在 debug 记录证据与盲区。
 
 80–200 行或 5–10 个文件属于软提示：先询问一次，记录后继续。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
 
@@ -104,7 +104,7 @@ devflow 与 superpowers 都覆盖“计划、TDD、排障、评审”，但职�
 - `--tool <id>`：显式指定工具；未安装时仍按指定执行，但会提示风险。
 - 路由返回 `error` 时停止并报告原因，不继续本阶段。
 
-检测结果写在 `.claude/.ecosystem-state.json`（已 gitignore），由 `devflow route --detect` 或 `/devflow:init` 刷新；进入阶段时若结果缺失或过期，`devflow route` 会自动检测一次。它只检查技能目录与 `settings.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具。检测是启发式的，安装或禁用工具后需重新检测。
+检测结果写在 `.claude/.ecosystem-state.json`（已 gitignore），由 `devflow route --detect` 或 `/devflow:init` 刷新；进入阶段时若结果缺失或过期，`devflow route` 会自动检测一次。它只检查技能目录与项目/用户 `settings.json`、`settings.local.json` 的 `enabledPlugins` 是否存在，不读取技能内容、不执行外部工具。检测是启发式的，安装或禁用工具后需重新检测。
 
 ## 反模式
 
