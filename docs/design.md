@@ -63,6 +63,8 @@
 | PreToolUse(Bash/PowerShell/Monitor) | 危险命令阻止 |
 | PreToolUse(Edit/Write/MultiEdit/NotebookEdit) | 阻止手改投影、账本与 loader |
 | PostToolUse(Edit/Write/Bash… ) | 记录改动文件；hub 源改动单独标记 |
+| UserPromptSubmit | 有未验证改动时注入一次提醒 |
+| SubagentStop | devflow 子代理结束时提示核对结论 |
 | Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 
@@ -71,6 +73,7 @@
 阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
 
 - `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
+- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
 - 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
 - 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。
@@ -118,7 +121,7 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 
 ## 安全边界
 
-`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；五个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
+`guard-dangerous` 是基于正则的尽力拦截，不是沙箱；七个钩子一律 fail-open。安全模型、凭据处理与加固建议见 `SECURITY.md`。这个取舍保证正常的开发操作不会因钩子本身出错而被卡死。
 
 ## 里程碑
 

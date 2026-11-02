@@ -1,6 +1,7 @@
 ---
 name: devflow-debug-investigator
 description: 排障调查代理。当问题原因不明、需要复现与缩小范围、或需要并行验证多个假设时使用。先调查后建议，不直接改代码。
+model: inherit
 tools: Read, Grep, Glob, WebSearch, WebFetch, Bash(*)
 ---
 

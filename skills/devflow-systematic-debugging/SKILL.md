@@ -42,4 +42,4 @@ description: Use when something fails, errors, or behaves unexpectedly. Enforces
 ## 与 devflow 阶段配合
 
 - 在 debug 阶段使用；修复后回到 test 验证。轻量修复的普通小 bug 测试通过即结束，是否需要 review 以 `debug.md` 顶部 `review: required` 为准；完整任务与轻量功能在测试通过后进入 review。
-- 需要并行调查时，使用 `devflow-debug-investigator` 子代理。
+- 需要并行调查时，使用 `devflow:devflow-debug-investigator` 子代理（旧版本可能显示为 `devflow-debug-investigator`，以 `/agents` 列表为准）。

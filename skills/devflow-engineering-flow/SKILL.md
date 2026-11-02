@@ -54,7 +54,7 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 小 bug 的安全、数据、认证/权限/并发风险若不触发上述升级，用 `debug.md` 顶部的 `review: required` 补审，而不是只靠对话记录；小功能命中这些风险时必须升级完整流程，不能只补 review。无法稳定复现不是升级条件：停在 debug 记录证据与盲区。
 
-80–200 行或 5–10 个文件属于软提示：先询问一次，记录后继续。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
+80–200 行或 5–10 个文件属于软提示：先用 `AskUserQuestion` 询问一次（不可用时文本询问），记录后继续。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
 
 ## 产物与状态
 
@@ -68,6 +68,15 @@ description: Use when the user asks to build, change, or fix something in a proj
 每个阶段的门禁写在 `.claude/hub/stages/<stage>/SKILL.md`。执行前必须完整读取该文件；项目可能已改成自己的规则。
 
 门禁不满足时，明确说出缺口并停在该阶段，不要口头保证后继续。
+
+## 原生能力协作（可选）
+
+原生能力只加速执行，不改变阶段顺序与门禁；不可用时按文本或串行降级。
+
+- **`/goal`**：implement、test、debug 跨多回合时设置完成条件；不替代门禁，需求/计划未确认或问题未复现时不用。
+- **plan mode**：plan 阶段需要逐条确认时，征得同意后 `EnterPlanMode`；plan mode 内不改代码、不写文件，写 `plan.md` 前先 `ExitPlanMode`。
+- **子代理**：大范围定位优先用 `devflow-plan-research` 技能（只读、`context: fork`），不可用时用 `Explore`（very thorough）；复杂架构方案用 `Plan`；排障有 ≥2 个独立假设时并行 `devflow:devflow-debug-investigator`；高风险 review 并行两个 `devflow:devflow-code-reviewer`（正确性/安全、验收/回归）。子代理结论必须由本地代码与测试证据核实。
+- **结构化提问**：slug 不唯一、轻量软阈值等关键决策用 `AskUserQuestion`；不可用时回退文本询问。
 
 ## 单一真源
 

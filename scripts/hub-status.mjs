@@ -115,20 +115,13 @@ function stageOf(files, testsPending, reviewRequired = false) {
   return 'req';
 }
 
-export async function main(argv = process.argv.slice(2)) {
-  const root = argValue(argv, '--root', projectRoot());
-  const json = hasFlag(argv, '--json');
-  const wanted = argValue(argv, '--slug', null);
+export function buildStatus(root, { wanted = null } = {}) {
   const state = readState(root);
 
   let slugs = scanSlugs(root);
   if (wanted) {
     slugs = slugs.filter((s) => s.slug === wanted);
-    if (!slugs.length) {
-      console.error(`[ERR] 未找到任务：${wanted}（查找 docs/devflow/${wanted}/）`);
-      process.exitCode = 1;
-      return null;
-    }
+    if (!slugs.length) return { missing: true };
   }
 
   // 只有一个任务（或显式指定）时，才能把全局 testsPending 归到它名下。
@@ -196,6 +189,21 @@ export async function main(argv = process.argv.slice(2)) {
     },
     suggestions,
   };
+  return { report };
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  const root = argValue(argv, '--root', projectRoot());
+  const json = hasFlag(argv, '--json');
+  const wanted = argValue(argv, '--slug', null);
+
+  const result = buildStatus(root, { wanted });
+  if (result.missing) {
+    console.error(`[ERR] 未找到任务：${wanted}（查找 docs/devflow/${wanted}/）`);
+    process.exitCode = 1;
+    return null;
+  }
+  const { report } = result;
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
@@ -203,12 +211,12 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   console.log(`devflow 状态（根：${report.root}）`);
-  if (!rows.length) {
+  if (!report.slugs.length) {
     console.log('  未发现 docs/devflow/ 下的任务。');
     console.log('    新功能：/devflow:req <需求>（小改动加 --light）');
     console.log('    修复缺陷：/devflow:debug <问题描述>');
   } else {
-    for (const row of rows) {
+    for (const row of report.slugs) {
       const produced = row.artifacts.length ? row.artifacts.join(', ') : '（无）';
       const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
       const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
@@ -218,17 +226,17 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`    产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }
-    if (activeSlug && !wanted && slugs.length === 1) {
-      console.log(`  未传 --slug 时默认使用：${activeSlug}`);
+    if (report.activeSlug && !wanted && report.slugs.length === 1) {
+      console.log(`  未传 --slug 时默认使用：${report.activeSlug}`);
     }
   }
   const tools = report.routing.availableTools.length
     ? report.routing.availableTools.join('、')
     : '无（运行 devflow route --detect 更新）';
   console.log(`  路由：${report.routing.mode}${report.routing.configured ? '' : '（未配置）'}；可用工具：${tools}`);
-  const visibleSuggestions = rows.length
-    ? suggestions
-    : suggestions.filter((s) => !s.startsWith('未发现进行中的任务'));
+  const visibleSuggestions = report.slugs.length
+    ? report.suggestions
+    : report.suggestions.filter((s) => !s.startsWith('未发现进行中的任务'));
   for (const item of visibleSuggestions) console.log(`  提示：${item}`);
   return report;
 }
