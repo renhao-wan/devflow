@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   AUTO_START, AUTO_END, OVERVIEW_FILE, scanFacts, generateOverview, upsertAutoBlock,
 } from '../scripts/lib/overview.mjs';
@@ -99,4 +100,30 @@ test('init 生成简版项目概览', async () => {
   assert.ok(text.includes(AUTO_START));
   assert.doesNotMatch(text, /### 关键入口/);
   rmSync(root, { recursive: true, force: true });
+});
+
+test('拒绝通过 junction 写到项目外', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('仅在 Windows 上验证 junction');
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-junction-'));
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-onboard-outside-'));
+  let junction = null;
+  try {
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(outside, 'hub.yaml'), 'version: 1\nstages:\n  - req\nsubprojects: {}\ndefaults:\n  testCommand: null\n');
+    junction = join(root, '.claude', 'hub');
+    const link = spawnSync('cmd', ['/c', 'mklink', '/J', junction, outside], { encoding: 'utf8' });
+    if (link.status !== 0) {
+      t.skip('mklink /J 不可用');
+      return;
+    }
+    assert.throws(() => generateOverview(root, { now: 'fixed' }), /越界/);
+    assert.equal(existsSync(join(outside, 'project-overview.md')), false);
+  } finally {
+    if (junction) spawnSync('cmd', ['/c', 'rmdir', junction], { encoding: 'utf8' });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { readText, writeAtomic, ensureDir, loadHub } from './common.mjs';
+import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside } from './common.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
 export const AUTO_START = '<!-- devflow:auto:start -->';
@@ -115,7 +115,12 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
   const hub = readHubFacts(root);
   const facts = scanFacts(root, { full });
   const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full });
+  const hubDir = join(root, '.claude', 'hub');
   const file = join(root, OVERVIEW_FILE);
+  if (write && (!isPathInside(root, hubDir) || !isRealPathInside(root, hubDir)
+    || !isPathInside(root, file) || !isRealPathInside(root, file))) {
+    throw new Error(`.claude/hub 越界（可能被 junction/符号链接引到项目外）：${hubDir}`);
+  }
   const current = existsSync(file) ? readText(file) : '';
   const next = upsertAutoBlock(current, block);
   const changed = next !== current;
