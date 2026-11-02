@@ -41,7 +41,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 ### hooks 失败时放行
 
-五个钩子（`guard-dangerous`、`guard-generated`、`track-changes`、`check-tests`、`load-hub`）遵循 **fail-open**：自身异常、输入非 JSON、超时都会静默放行，避免把正常开发卡死。这意味着钩子**崩溃时不会阻止操作**——这是有意的取舍。
+七个钩子（`guard-dangerous`、`guard-generated`、`track-changes`、`prompt-reminder`、`subagent-note`、`check-tests`、`load-hub`）遵循 **fail-open**：自身异常、输入非 JSON、超时都会静默放行，避免把正常开发卡死。这意味着钩子**崩溃时不会阻止操作**——这是有意的取舍。
 
 ### 凭据处理
 

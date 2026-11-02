@@ -166,3 +166,44 @@ test('review 阶段与内置审查命令协作且限制外发与修改', () => {
   }
   assert.match(read('templates/stages/review/templates/review.template.md'), /内置审查命令/);
 });
+
+test('只读调研技能使用独立上下文并禁用写工具', () => {
+  const fm = parseFrontmatter(read('skills/devflow-plan-research/SKILL.md'));
+  assert.equal(fm.context, 'fork');
+  assert.match(fm['disallowed-tools'] || '', /Write/);
+  assert.match(fm['disallowed-tools'] || '', /Edit/);
+  assert.match(read('skills/devflow-plan-research/SKILL.md'), /不写文件/);
+  assert.match(read('skills/plan/SKILL.md'), /devflow-plan-research/);
+  assert.match(read('templates/stages/plan/SKILL.md'), /devflow-plan-research/);
+});
+
+test('文档说明 MCP 不自动检测、hooks 兼容与可选事件', () => {
+  const routing = read('docs/tool-routing.md');
+  assert.match(routing, /MCP 工具/);
+  assert.match(routing, /不读取.*\.mcp\.json/);
+  assert.match(routing, /不自动检测/);
+
+  const native = read('docs/native-capabilities.md');
+  assert.match(native, /UserPromptSubmit/);
+  assert.match(native, /SubagentStop/);
+  assert.match(native, /Notification/);
+  assert.match(native, /`args` exec/);
+});
+
+test('实现与排障文档提供 rewind/worktree 建议并提示丢弃风险', () => {
+  for (const rel of [
+    'skills/implement/SKILL.md',
+    'templates/stages/implement/SKILL.md',
+    'skills/debug/SKILL.md',
+    'templates/stages/debug/SKILL.md',
+  ]) {
+    const body = read(rel);
+    assert.ok(body.includes('/rewind'), `${rel} 缺少 /rewind`);
+    assert.ok(body.includes('/worktree'), `${rel} 缺少 /worktree`);
+    assert.match(body, /丢弃当前会话改动|丢弃.*改动/, `${rel} 未提示 /rewind 风险`);
+  }
+  assert.match(read('README.md'), /\/rewind/);
+  assert.match(read('README.md'), /\/worktree/);
+  assert.match(read('README.md'), /statusLine/);
+  assert.match(read('README.md'), /scripts\/statusline\.mjs/);
+});

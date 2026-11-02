@@ -299,15 +299,41 @@ upstream:
 
 ## 安全门禁与 hooks
 
-`guard-dangerous` 在安装插件后对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 只在包含 `.claude/hub/hub.yaml` 的工作区生效；`track-changes`、`check-tests`、`load-hub` 也只在 hub 工作区生效，不会向其他项目写入状态或注入上下文。
+`guard-dangerous` 在安装插件后对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 只在包含 `.claude/hub/hub.yaml` 的工作区生效；`track-changes`、`prompt-reminder`、`subagent-note`、`check-tests`、`load-hub` 也只在 hub 工作区生效，不会向其他项目写入状态或注入上下文。
 
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
 | `PreToolUse(Bash/PowerShell/Monitor)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
 | `PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` | `guard-generated.mjs` | 阻止手改投影、账本（含 `.claude/.devflow-state.json`）与 loader |
 | `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash/PowerShell/Monitor)` | `track-changes.mjs` | 记录改动文件；hub 源改动单独标记 |
+| `UserPromptSubmit` | `prompt-reminder.mjs` | 有未验证改动时注入一次提醒，从不阻止 |
+| `SubagentStop` | `subagent-note.mjs` | devflow 子代理结束时提示核对结论，从不阻止 |
 | `Stop` | `check-tests.mjs` | 有改动但未验证通过、或 hub 源改动未重新生成时提醒，从不阻止 |
 | `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
+
+### statusline（可选）
+
+`scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`。在用户或项目 `settings.json` 中配置：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node \"<插件根>/scripts/statusline.mjs\""
+  }
+}
+```
+
+把 `<插件根>` 换成实际插件目录；也可以用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
+
+### 原生命令协作
+
+- `/goal`：implement、test、debug 跨多回合时可设置完成条件，但不替代门禁；阶段模板给出了建议条件。
+- `/rewind`：回到检查点，会丢弃当前会话改动；执行前先确认范围。
+- `/worktree`：隔离并行实验，避免把实验代码留在主工作区。
+- `/code-review`：可选的本地第二视角；`/security-review`、`/ultrareview` 可能上传代码，必须先征得用户同意；`/simplify` 若应用修改，回到 implement 并重新 test。
+
+更完整的版本要求与降级说明见 [`docs/native-capabilities.md`](docs/native-capabilities.md)。
 
 ### 生成物写保护
 
@@ -531,11 +557,12 @@ gh auth login --web
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具 | `--root` `--force` `--plugin-root` `--source-root` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与工具检测 | `--root` `--json` |
 | `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
+| `scripts/statusline.mjs` | 输出单行进度，供 Claude Code `statusLine` 使用 | `--root` `--json` |
 | `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--bump` `--root` `--plugin-root` |
 | `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR | `--stage` `--plugin-root` `--base` `--bump` `--dry-run` `--no-pr` |
@@ -551,12 +578,12 @@ gh auth login --web
 ```
 .claude-plugin/        # plugin.json + marketplace.json
 bin/devflow            # 统一 CLI，参数透传给 scripts/
-skills/                # 十二个入口技能（req…sync、status）+ 五个通用技能
+skills/                # 十二个入口技能（req…sync、status）+ 六个通用技能
 agents/                # 评审、测试、排障三个子代理
-hooks/                 # 五个钩子脚本、hooks.json 与共用 lib.mjs
+hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
-scripts/               # init / gen / doctor / route / upstream / ship / sync / mark-test
+scripts/               # init / gen / doctor / status / statusline / route / upstream / ship / sync / mark-test
 scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
@@ -601,7 +628,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 212 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 232 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

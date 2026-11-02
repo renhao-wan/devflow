@@ -929,3 +929,69 @@ test('load-hub 忽略指向投影目录之外的账本条目', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('prompt-reminder 在有未验证改动时注入一次提醒', () => {
+  const root = makeRoot();
+  try {
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      testsPending: true,
+    }));
+    const first = runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(first.status, 0, first.stderr);
+    const out = JSON.parse(first.stdout);
+    assert.match(out.hookSpecificOutput.additionalContext, /尚未验证通过/);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+
+    const second = runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(second.stdout, '');
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.ok(state.lastPromptReminderAt);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prompt-reminder 在测试已通过或无状态时静默', () => {
+  const root = makeRoot();
+  try {
+    const noState = runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(noState.status, 0);
+    assert.equal(noState.stdout, '');
+
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      lastTestPassedAt: '2026-01-02T00:00:00.000Z',
+      testsPending: true,
+    }));
+    const tested = runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(tested.stdout, '');
+    const state = JSON.parse(readFileSync(join(root, '.claude', '.devflow-state.json'), 'utf8'));
+    assert.equal(state.testsPending, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('subagent-note 提示核对 devflow 子代理结论', () => {
+  const cases = [
+    ['devflow-test-runner', /测试通过证据/],
+    ['devflow:devflow-code-reviewer', /review\.md/],
+    ['devflow-debug-investigator', /本地复现/],
+  ];
+  for (const [agent_type, re] of cases) {
+    const r = runHook('subagent-note.mjs', { agent_type });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(JSON.parse(r.stdout).systemMessage, re, agent_type);
+  }
+});
+
+test('subagent-note 对非 devflow 子代理或异常输入静默', () => {
+  assert.equal(runHook('subagent-note.mjs', { agent_type: 'Explore' }).stdout, '');
+  assert.equal(runHook('subagent-note.mjs', {}).stdout, '');
+  const bad = spawnSync(NODE, [join(HOOKS, 'subagent-note.mjs')], { input: 'not json', encoding: 'utf8' });
+  assert.equal(bad.status, 0);
+  assert.equal(bad.stdout, '');
+});

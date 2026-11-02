@@ -75,7 +75,7 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 - **`/goal`**：implement、test、debug 跨多回合时设置完成条件；不替代门禁，需求/计划未确认或问题未复现时不用。
 - **plan mode**：plan 阶段需要逐条确认时，征得同意后 `EnterPlanMode`；plan mode 内不改代码、不写文件，写 `plan.md` 前先 `ExitPlanMode`。
-- **子代理**：大范围定位用 `Explore`（very thorough）；复杂架构方案用 `Plan`；排障有 ≥2 个独立假设时并行 `devflow:devflow-debug-investigator`；高风险 review 并行两个 `devflow:devflow-code-reviewer`（正确性/安全、验收/回归）。子代理结论必须由本地代码与测试证据核实。
+- **子代理**：大范围定位优先用 `devflow-plan-research` 技能（只读、`context: fork`），不可用时用 `Explore`（very thorough）；复杂架构方案用 `Plan`；排障有 ≥2 个独立假设时并行 `devflow:devflow-debug-investigator`；高风险 review 并行两个 `devflow:devflow-code-reviewer`（正确性/安全、验收/回归）。子代理结论必须由本地代码与测试证据核实。
 - **结构化提问**：slug 不唯一、轻量软阈值等关键决策用 `AskUserQuestion`；不可用时回退文本询问。
 
 ## 单一真源

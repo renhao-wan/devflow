@@ -4,6 +4,15 @@
 
 ### 增强
 
+- 接入 Claude Code 原生能力：关键决策使用 `AskUserQuestion` 并保留文本降级；子代理引用统一为 `devflow:devflow-*`，同时保留 `Task`/裸名兼容说明
+- implement、test、debug 提供可选 `/goal` 完成条件模板，明确 goal 不替代门禁；plan 接入 plan mode 与 `Plan`/`Explore` 子代理，debug 支持并行假设验证，review 高风险时支持双视角子代理交叉审查
+- 子代理按职责设置模型：`test-runner` 使用 `haiku`，reviewer 与 debug-investigator 使用 `inherit`；删除 `model` 行即可回退默认模型
+- review 阶段与内置审查命令协作：`/code-review` 可选，`/security-review`、`/ultrareview` 外发前必须确认，`/simplify` 应用修改后回到 implement 并重新 test
+- 新增可选 `scripts/statusline.mjs` 与 `devflow statusline`，复用 `hub-status` 推导输出单行进度；README 提供 `statusLine` 配置
+- 新增 `UserPromptSubmit` 与 `SubagentStop` hooks：未验证改动提醒与子代理结论核对提示，均 fail-open、从不阻止
+- 新增只读 `devflow-plan-research` 技能，使用 `context: fork` 与 `disallowed-tools` 禁用写工具；plan 阶段优先引用
+- 新增 `docs/native-capabilities.md`，记录能力矩阵、版本要求、命名与降级边界；`docs/tool-routing.md` 说明 MCP 不自动检测、需手动登记
+- implement/debug 与 README 补充 `/rewind`、`/worktree` 使用建议，并提示 `/rewind` 会丢弃当前会话改动
 - 新增轻量流程：小功能用 `/devflow:req --light` 产出 `brief.md`（合并需求与计划），小 bug 由 `/devflow:debug` 直接产出 `debug.md`；只压缩文档、不跳过测试，小功能保留 review，小 bug 按风险补审
 - `hub-status` 识别 `brief.md` 与 `debug.md`：显示「轻量功能 / 轻量修复」及下一步；独立 `debug.md` 不再被误判为 req
 - 小 bug 按风险补审查：`debug.md` 顶部的 `review: required` 用于不触发升级的安全、数据、认证/权限/并发风险，测试通过后提示 `/devflow:review`；公共接口、迁移与依赖必须升级完整流程
@@ -47,6 +56,9 @@
 - 更新 CLI、端到端、状态视图、模板约定与 hooks 测试，覆盖 `route` 命令、生态配置生成、入口路由步骤、禁用工具过滤与检测状态保护
 - 补充完整流程“review 早于 test”回归、`argValue` 不吞开关、eval grader 不误伤否定式回答，以及 git 全局选项/引号命令名、嵌套 shell、PowerShell 盘符删除与磁盘帮助命令的 hooks 用例
 - 补充 UX 回归：`status` 多行输出、`doctor` 按类型建议、`sync` 冲突后续操作、入口技能报告实际 slug、`loadHub` 初始化提示
+- 新增 `tests/native.test.mjs`，覆盖结构化提问、子代理命名、goal/plan mode/并行审查、模型字段、内置审查命令、只读调研技能与文档降级说明
+- 新增 `tests/statusline.test.mjs`，覆盖单行输出、stdin 根推导、无任务与只读不写状态
+- hooks 测试补充 `prompt-reminder` 的一次性提醒与 `subagent-note` 的已知/未知子代理分支
 
 ### 文档
 
