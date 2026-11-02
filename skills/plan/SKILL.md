@@ -25,5 +25,5 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, Bash(g
 6. 按 SKILL 产出方案：推荐方案 + 候选取舍 + 被否方案及原因、任务拆分表、测试策略、回滚、风险。
 7. 已有 superpowers `brainstorming` 结果或 `writing-plans` 计划时，把结论吸收进 `plan.md`，不并存两份设计/计划。
 8. 逐条对照需求验收标准，确认都能映射到任务或测试；不能映射的指出来。
-9. 写入 `docs/devflow/<slug>/plan.md`，并报告任务数、最大风险、复用结论与未验证项。
-10. 方案确认后进入实现阶段：`/devflow:implement <slug>`。
+9. 写入 `docs/devflow/<slug>/plan.md`，并报告实际 slug、写入路径、任务数、最大风险、复用结论与未验证项。
+10. 方案确认后进入实现阶段：`/devflow:implement <实际 slug>`。

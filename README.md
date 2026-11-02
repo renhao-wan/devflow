@@ -52,7 +52,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`）。
 2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令。
-3. 在 `scripts/` 放四个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-upstream` / `devflow-test`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
+3. 在 `scripts/` 放五个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
 4. 生成 `.claude/skills/devflow-*` 投影。
 5. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
@@ -64,6 +64,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ```bash
 /devflow:req 给登录页增加短信验证码
+/devflow:status            # 确认实际 slug 与下一步命令
 /devflow:plan add-login
 /devflow:implement add-login
 /devflow:test add-login
@@ -303,7 +304,7 @@ upstream:
 | 事件 | 脚本 | 行为 |
 | --- | --- | --- |
 | `PreToolUse(Bash/PowerShell/Monitor)` | `guard-dangerous.mjs` | 危险命令 `deny` 或 `ask` |
-| `PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` | `guard-generated.mjs` | 阻止手改投影、账本与 loader |
+| `PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` | `guard-generated.mjs` | 阻止手改投影、账本（含 `.claude/.devflow-state.json`）与 loader |
 | `PostToolUse(Edit/Write/MultiEdit/NotebookEdit/Bash/PowerShell/Monitor)` | `track-changes.mjs` | 记录改动文件；hub 源改动单独标记 |
 | `Stop` | `check-tests.mjs` | 有改动但未验证通过、或 hub 源改动未重新生成时提醒，从不阻止 |
 | `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
@@ -315,7 +316,7 @@ upstream:
 - `.claude/skills/devflow-*/SKILL.md`（阶段投影，改 `.claude/hub/stages/` 后运行 `node scripts/devflow-gen.mjs`）；
 - `.claude/.hub-manifest.json`、`.claude/.hub-sources.json`（生成账本）；
 - `.devflow.json`（init 写入的工作区元数据）；
-- `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`（loader，重跑 `/devflow:init` 刷新）。
+- `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-route.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`（loader，重跑 `/devflow:init` 刷新）。
 
 `docs/devflow/**` 与 `.claude/hub/**` 的改动被视为流程数据而非业务代码：前者不计入待验证改动，后者会提示重新生成投影，但都不会阻止 Stop。
 
@@ -599,7 +600,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 210 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 212 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、工具路由、评测用例结构与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

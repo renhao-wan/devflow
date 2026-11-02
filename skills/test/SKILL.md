@@ -25,6 +25,6 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Skill, Bash(*)
 node scripts/devflow-test.mjs --command "<实际使用的命令>"
 ```
 
-7. 将结果写入 `docs/devflow/<slug>/test.md`，包括：命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
-8. 报告时区分「自动化已通过」「手动验证过」「未验证」，不得混写。
-9. 全部通过后：轻量功能与完整任务进入 `/devflow:review <slug>`；轻量修复读取 `debug.md` 顶部前 10 行，标记 `review: required` 才进入审查，否则到此结束。测试失败按第 5 步转入 `/devflow:debug`。
+7. 将结果写入 `docs/devflow/<slug>/test.md`，包括：实际 slug、命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
+8. 报告时先给出实际 slug 与 `docs/devflow/<实际 slug>/test.md` 路径，再区分「自动化已通过」「手动验证过」「未验证」，不得混写。
+9. 全部通过后：轻量功能与完整任务进入 `/devflow:review <实际 slug>`；轻量修复读取 `debug.md` 顶部前 10 行，标记 `review: required` 才进入审查，否则到此结束。测试失败按第 5 步转入 `/devflow:debug`。

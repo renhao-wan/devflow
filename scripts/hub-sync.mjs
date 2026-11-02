@@ -142,9 +142,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
   persist();
 
+  const conflictCount = actions.filter((a) => a.type === 'conflict').length;
   for (const a of actions) {
-    if (a.type === 'same' || a.type === 'conflict') {
-      if (a.type === 'conflict') log('warn', `跳过冲突 ${a.rel}（本地改动未记录在账本中）`);
+    if (a.type === 'same') continue;
+    if (a.type === 'conflict') {
+      log('warn', `跳过冲突 ${a.rel}（本地改动未记录在账本中）`);
       continue;
     }
     // 检查与写入之间可能被替换；写入前再确认一次。
@@ -161,6 +163,11 @@ export async function main(argv = process.argv.slice(2)) {
     manifest.files[a.rel] = a.templateHash;
     persist();
     log('ok', `${label(a.type)} ${a.rel}`);
+  }
+
+  if (conflictCount) {
+    console.log(`\n${conflictCount} 个冲突文件已保留本地内容：手工合并后重新运行 /devflow:sync；`
+      + '确认以模板覆盖时加 --force，会先生成 .bak 备份。');
   }
 
   for (const rel of removed) log('..', `模板已移除，本地保留 ${STAGE_PREFIX}${rel}`);

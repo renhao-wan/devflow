@@ -43,7 +43,7 @@
 
 ### 5. 可验证的内部质量
 
-- 210 项 `node:test` 测试；
+- 212 项 `node:test` 测试；
 - 覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与端到端链路；
 - `claude plugin validate . --strict` 通过。
 

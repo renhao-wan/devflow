@@ -79,6 +79,9 @@ test('sync 更新未改文件、保留手改、加入新资源', () => {
     assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), 'utf8'), /本地手改/);
     assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'references', 'new.md'), 'utf8'), /新参考/);
     assert.match(sync.stdout, /冲突/);
+    assert.match(sync.stdout, /手工合并后重新运行 \/devflow:sync/);
+    assert.match(sync.stdout, /--force/);
+    assert.match(sync.stdout, /\.bak/);
 
     const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
     assert.ok(sources.files['.claude/hub/stages/review/references/new.md']);

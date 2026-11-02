@@ -205,13 +205,17 @@ export async function main(argv = process.argv.slice(2)) {
   console.log(`devflow 状态（根：${report.root}）`);
   if (!rows.length) {
     console.log('  未发现 docs/devflow/ 下的任务。');
+    console.log('    新功能：/devflow:req <需求>（小改动加 --light）');
+    console.log('    修复缺陷：/devflow:debug <问题描述>');
   } else {
     for (const row of rows) {
       const produced = row.artifacts.length ? row.artifacts.join(', ') : '（无）';
       const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
       const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
-      const gap = row.gap ? `，缺少 ${row.gap}` : '';
-      console.log(`  ${row.slug}  阶段：${row.stage}${flow}${review}  产物：${produced}${gap}`);
+      const gap = row.gap ? `（缺少 ${row.gap}）` : '';
+      console.log(`  ${row.slug}`);
+      console.log(`    阶段：${row.stage}${flow}${review}`);
+      console.log(`    产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }
     if (activeSlug && !wanted && slugs.length === 1) {
@@ -222,7 +226,10 @@ export async function main(argv = process.argv.slice(2)) {
     ? report.routing.availableTools.join('、')
     : '无（运行 devflow route --detect 更新）';
   console.log(`  路由：${report.routing.mode}${report.routing.configured ? '' : '（未配置）'}；可用工具：${tools}`);
-  for (const item of suggestions) console.log(`  提示：${item}`);
+  const visibleSuggestions = rows.length
+    ? suggestions
+    : suggestions.filter((s) => !s.startsWith('未发现进行中的任务'));
+  for (const item of visibleSuggestions) console.log(`  提示：${item}`);
   return report;
 }
 

@@ -105,6 +105,7 @@ test('手改投影后 --check 与 doctor 能发现漂移', () => {
 
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.match(doctor.stdout, /投影被手改或过期/);
+    assert.match(doctor.stdout, /建议：node scripts\/devflow-gen\.mjs/);
 
     const regen = run('gen-claude-skills.mjs', ['--root', root], root);
     assert.equal(regen.status, 0, regen.stderr);
@@ -331,6 +332,7 @@ test('doctor 检查 cd 目标、本地 gradlew、gitignore 与 loader', () => {
     assert.match(doctor.stdout, /cd 目录不存在/);
     assert.match(doctor.stdout, /缺少 \.gitignore/);
     assert.match(doctor.stdout, /缺少 loader/);
+    assert.match(doctor.stdout, /建议：\/devflow:init/);
 
     // gradlew.bat 存在时不应报告本地命令缺失
     assert.doesNotMatch(doctor.stdout, /本地命令不存在：gradlew\.bat/);

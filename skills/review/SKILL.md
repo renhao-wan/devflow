@@ -24,5 +24,5 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, 
 8. 需要独立视角时，调用 `devflow-code-reviewer` 子代理审查，再合并判断；子代理结论也要自己核实。
 9. 每条问题给出 `文件:行号`、触发条件、建议；区分阻断项与建议项。
 10. 结论写入 `docs/devflow/<slug>/review.md`；轻量任务可写短（范围、验收对照、阻断项、结论）。
-11. 报告时先列阻断项；没有阻断项也要说明检查过哪些维度、验收标准的收敛结果与复用判断的核对结果。
+11. 报告时先给出实际 slug 与 `docs/devflow/<实际 slug>/review.md` 路径，再列阻断项；没有阻断项也要说明检查过哪些维度、验收标准的收敛结果与复用判断的核对结果。
 12. 无阻断项后提交或交付；若改过 `.claude/hub/stages/`，运行 `/devflow:upstream --stage <stage>` 回灌插件模板。

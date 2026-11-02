@@ -320,3 +320,9 @@ test('流程技能说明轻量双通道且不跳测试，审查按通道决定',
   assert.match(read('skills/status/SKILL.md'), /轻量功能/);
 });
 
+test('各入口技能要求报告实际 slug 与任务目录', () => {
+  for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+    assert.match(read(`skills/${stage}/SKILL.md`), /实际 slug/, `${stage} 入口未要求报告实际 slug`);
+  }
+});
+
