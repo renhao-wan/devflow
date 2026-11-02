@@ -16,7 +16,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
    - `suggest`：说明候选工具与理由并询问；用户未同意时继续 devflow。
    - `delegate`：在技能上下文中用 `Skill` 工具调用 `invoke`（去掉前导 `/`，如 `superpowers:brainstorming`）；无法调用时说明原因并询问是否继续 devflow。阶段顺序、门禁与 `docs/devflow/<slug>/` 产物仍由本阶段负责。
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
-2. 读取 `.claude/hub/hub.yaml` 了解子项目与阶段划分。
+2. 读取 `.claude/hub/hub.yaml` 了解子项目与阶段划分；若 `.claude/hub/project-overview.md` 存在，读取技术栈、子项目与顶层目录段作为定位起点，以代码和 hub.yaml 为准。
 3. 按 SKILL 中的执行步骤工作：
    - 先复述目标，再只问阻塞性问题（一次最多 3 个）。
    - 能通过读代码确认的事实，先读代码，不反问用户。

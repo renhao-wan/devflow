@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readStdin, findHubRoot } from './lib.mjs';
 import { parseYaml, contentHash } from '../../scripts/lib/common.mjs';
+import { scanFacts } from '../../scripts/lib/overview.mjs';
 
 await readStdin();
 try {
@@ -15,6 +16,10 @@ try {
   try { config = parseYaml(yaml); } catch { config = {}; }
   const stages = Array.isArray(config.stages) ? config.stages.map(String) : [];
   const subs = Object.keys(config.subprojects || {});
+  const rawSubs = config.subprojects;
+  const subprojectPaths = rawSubs && typeof rawSubs === 'object' && !Array.isArray(rawSubs)
+    ? Object.entries(rawSubs).map(([name, value]) => value?.path || name)
+    : [];
 
   const drift = [];
   const manifestFile = join(root, '.claude', '.hub-manifest.json');
@@ -43,6 +48,15 @@ try {
     `- 阶段：${stages.join(', ') || '（未声明）'}`,
     `- 子项目：${subs.join(', ') || '单项目'}`,
   ];
+  const overviewFile = join(root, '.claude', 'hub', 'project-overview.md');
+  if (existsSync(overviewFile)) {
+    const facts = scanFacts(root, { subprojectPaths });
+    const allStacks = [...new Set(facts.techStack.map((t) => t.split('（')[0]))];
+    const stackText = allStacks.length
+      ? `${allStacks.slice(0, 3).join('、')}${allStacks.length > 3 ? ' 等' : ''}`
+      : '未识别技术栈';
+    lines.push(`- 项目概览：${stackText}；${subprojectPaths.length} 个子项目；${facts.entrypoints.length} 个入口；详见 .claude/hub/project-overview.md（启发式，以代码为准）。`);
+  }
   if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
   lines.push('- 流程：req → plan → implement → test → review；test 或 implement 失败时进入 debug，修复后回到 test。');
   lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');

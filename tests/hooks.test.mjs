@@ -582,6 +582,31 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 有概览时注入项目概览摘要', () => {
+  const root = makeRoot();
+  try {
+    mkdirSync(join(root, 'services', 'api'), { recursive: true });
+    writeFileSync(join(root, 'services', 'api', 'package.json'), '{}');
+    writeFileSync(join(root, '.claude', 'hub', 'project-overview.md'), '<!-- devflow:auto:start -->\n<!-- devflow:auto:end -->\n');
+    const r = runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /项目概览：Node\.js；1 个子项目；0 个入口/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 无概览时不注入概览摘要', () => {
+  const root = makeRoot();
+  try {
+    const r = runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root });
+    const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(ctx, /项目概览：/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 在配置生态索引后注入工具路由摘要', () => {
   const root = makeRoot();
   try {

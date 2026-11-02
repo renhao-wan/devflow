@@ -25,10 +25,12 @@ function safeReaddir(dir) {
 
 function findJavaEntries(dir, maxDepth = 8) {
   const out = [];
+  let visited = 0;
   const visit = (cur, depth) => {
-    if (depth > maxDepth || out.length >= ENTRY_LIMIT) return;
+    if (depth > maxDepth || out.length >= ENTRY_LIMIT || visited >= 2000) return;
     for (const entry of safeReaddir(cur)) {
-      if (out.length >= ENTRY_LIMIT) return;
+      if (out.length >= ENTRY_LIMIT || visited >= 2000) return;
+      visited += 1;
       if (entry.isSymbolicLink()) continue;
       const full = join(cur, entry.name);
       if (entry.isDirectory()) visit(full, depth + 1);
