@@ -1,17 +1,20 @@
 # Changelog
 
-## 未发布
+## 1.5.0
 
 ### 增强
 
 - 新增 `/devflow:onboard` 与 `devflow onboard`：扫描技术栈、顶层目录、子项目、入口与 CI，生成 `.claude/hub/project-overview.md`；`init` 生成简版，重扫只刷新标记块内自动段，保留人工补充
+- 概览自动段记录结构指纹，`doctor` 可发现过期或缺失；`init` 在旧工作区补生成概览
+- 入口扫描覆盖子项目、Java `*Application.java` / `*Main.java` 与 Go `cmd/*/main.go`；技术栈识别与子项目发现共用构建签名表
+- SessionStart 注入概览摘要；req/plan 先读概览定位，再以代码与 `hub.yaml` 为准
 
 ### 修复
 
 - 概览写入前校验 `.claude/hub` 真实路径，拒绝通过 junction/符号链接写到项目外
 - 概览内容未变时不重写文件、不刷新时间戳；重扫统一行尾并处理残缺标记块
-- 概览补充子项目构建文件识别，入口候选只接受文件；`onboard` 校验 `--root` 并让 `--print`/`--json` 互斥
-- 项目概览更新不再触发阶段投影重新生成；`doctor` 检查概览标记块完整性，默认输出补充扫描摘要
+- `onboard` 校验 `--root` 并让 `--print`/`--json` 互斥，默认输出补充扫描摘要
+- 项目概览更新不再触发阶段投影重新生成
 
 ## 1.4.1
 

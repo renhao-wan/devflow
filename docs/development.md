@@ -111,7 +111,7 @@ claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep,Bash
 
 `plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.4.1`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.5.0`）
 - 包元数据：`package.json` 的 `version`
 - 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 
