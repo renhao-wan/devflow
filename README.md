@@ -103,12 +103,13 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:review <slug>` | 差异导向审查，输出阻断项与建议项 |
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
+| `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
 | `/devflow:upstream --stage <stage> [--apply] [--bump patch\|minor\|major]` | 把项目经验回灌到插件模板 |
 | `/devflow:ship --stage <stage> [--bump patch\|minor\|major] [--dry-run]` | 回灌后提交到分支、推送并生成 PR |
 | `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段模板 |
 
-命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
+命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
 已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 

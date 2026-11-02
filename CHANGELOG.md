@@ -4,6 +4,12 @@
 
 ### 增强
 
+- 新增 `/devflow:onboard` 与 `devflow onboard`：扫描技术栈、顶层目录、子项目、入口与 CI，生成 `.claude/hub/project-overview.md`；`init` 生成简版，重扫只刷新标记块内自动段，保留人工补充
+
+## 1.4.1
+
+### 增强
+
 - 接入 Claude Code 原生能力：关键决策使用 `AskUserQuestion` 并保留文本降级；子代理引用统一为 `devflow:devflow-*`，同时保留 `Task`/裸名兼容说明
 - implement、test、debug 提供可选 `/goal` 完成条件模板，明确 goal 不替代门禁；plan 接入 plan mode 与 `Plan`/`Explore` 子代理，debug 支持并行假设验证，review 高风险时支持双视角子代理交叉审查
 - 子代理按职责设置模型：`test-runner` 使用 `haiku`，reviewer 与 debug-investigator 使用 `inherit`；删除 `model` 行即可回退默认模型

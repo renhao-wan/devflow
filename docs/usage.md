@@ -195,6 +195,16 @@ node scripts/devflow-doctor.mjs
 
 `doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与五个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
 
+## 项目概览（onboard）
+
+`/devflow:init` 会在 `.claude/hub/project-overview.md` 生成简版概览；需要更完整的技术栈、入口与 CI 信息时运行：
+
+```bash
+/devflow:onboard
+```
+
+概览中 `<!-- devflow:auto:start -->` 与 `<!-- devflow:auto:end -->` 之间是自动段，重扫会刷新；`## 项目补充` 等标记外内容由你维护，重扫不会覆盖。`--print` 只输出不写文件。
+
 ## statusline（可选）
 
 `scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`。在用户或项目 `settings.json` 中配置：
