@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside } from './common.mjs';
+import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol } from './common.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
 export const AUTO_START = '<!-- devflow:auto:start -->';
@@ -103,7 +103,7 @@ export function buildAutoSection({ facts, subprojects, rootTest, now, full }) {
       '### 关键入口',
       ...(facts.entrypoints.length ? facts.entrypoints.map((p) => `- \`${p}\``) : ['- 未识别到常见入口文件']),
       '',
-      '### CI',
+      '### GitHub Actions',
       ...(facts.ci.length ? facts.ci.map((f) => `- \`.github/workflows/${f}\``) : ['- 未发现 GitHub Actions 工作流']),
       '',
       '### 待确认',
@@ -149,7 +149,8 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
     || !isPathInside(root, file) || !isRealPathInside(root, file))) {
     throw new Error(`.claude/hub 越界（可能被 junction/符号链接引到项目外）：${hubDir}`);
   }
-  const current = existsSync(file) ? readText(file) : '';
+  const raw = existsSync(file) ? readText(file) : '';
+  const current = normalizeEol(raw);
   const next = upsertAutoBlock(current, block);
   const changed = withoutStamp(next) !== withoutStamp(current);
   if (write && changed) {
@@ -158,7 +159,7 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
   }
   return {
     file,
-    content: write && !changed ? current : next,
+    content: write && !changed ? raw : next,
     changed,
     facts,
     subprojects: hub.subprojects,

@@ -178,6 +178,17 @@ test('--root 不存在时报错', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('读取 CRLF 文件时统一行尾', () => {
+  const root = makeProject();
+  const file = join(root, OVERVIEW_FILE);
+  writeFileSync(file, '## 项目补充\r\n\r\n人工笔记\r\n');
+  generateOverview(root, { now: 'fixed' });
+  const text = readFileSync(file, 'utf8');
+  assert.doesNotMatch(text, /\r/);
+  assert.match(text, /人工笔记/);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('init 生成简版项目概览', async () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-init-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));
@@ -187,6 +198,25 @@ test('init 生成简版项目概览', async () => {
   const text = readFileSync(file, 'utf8');
   assert.ok(text.includes(AUTO_START));
   assert.doesNotMatch(text, /### 关键入口/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('init 先报告创建工作区再报告生成概览', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-init-order-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    await initMain(['--root', root]);
+  } finally {
+    console.log = original;
+  }
+  const created = logs.findIndex((l) => l.includes('创建') && l.includes('hub.yaml'));
+  const overview = logs.findIndex((l) => l.includes('生成项目概览'));
+  assert.ok(created !== -1, logs.join('\n'));
+  assert.ok(overview !== -1, logs.join('\n'));
+  assert.ok(created < overview, logs.join('\n'));
   rmSync(root, { recursive: true, force: true });
 });
 

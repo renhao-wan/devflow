@@ -211,13 +211,13 @@ export async function main(argv = process.argv.slice(2)) {
     const rootTest = detectTestCommand(root);
     writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
     writeSourceManifest(root, info.version, pluginRoot);
+    log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     try {
       generateOverview(root, { full: false });
       log('ok', '生成项目概览 .claude/hub/project-overview.md（运行 /devflow:onboard 深度重扫）');
     } catch (err) {
       log('warn', `生成项目概览失败：${err.message}`);
     }
-    log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     if (expanded.length) {
       log('ok', `Maven 多模块已展开：${expanded.join('、')}。父 pom 不再单独成项，可按需调整。`);
     }
