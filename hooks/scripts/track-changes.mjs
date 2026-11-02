@@ -52,6 +52,8 @@ function isNoise(rel) {
 /** doc：流程文档，完全忽略；hub：阶段源，只提醒重新生成，不标记测试待验证。 */
 function kindOf(rel) {
   if (rel.startsWith(DOCS_PREFIX)) return 'doc';
+  // 项目概览由 onboard 维护，不是阶段源，更新它不需要重新生成投影。
+  if (rel === '.claude/hub/project-overview.md') return 'doc';
   if (isNoise(rel)) return 'ignore';
   if (rel.startsWith(HUB_PREFIX)) return 'hub';
   return 'code';

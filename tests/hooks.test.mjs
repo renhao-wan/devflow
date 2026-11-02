@@ -818,6 +818,19 @@ test('track-changes 忽略流程文档，hub 源改动不标记测试待验证',
   }
 });
 
+test('track-changes 不把项目概览当作阶段源改动', () => {
+  const root = makeRoot();
+  try {
+    runHook('track-changes.mjs', {
+      tool_name: 'Write',
+      tool_input: { file_path: join(root, '.claude', 'hub', 'project-overview.md') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(existsSync(join(root, '.claude', '.devflow-state.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('track-changes 通过 git status 区分 Bash 的代码与 hub 改动', (t) => {
   if (spawnSync('git', ['--version'], { encoding: 'utf8' }).status !== 0) {
     t.skip('git 不可用');
