@@ -1,0 +1,127 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { readText, writeAtomic, ensureDir, loadHub } from './common.mjs';
+
+export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
+export const AUTO_START = '<!-- devflow:auto:start -->';
+export const AUTO_END = '<!-- devflow:auto:end -->';
+
+const SKIP_TOP = new Set(['.git', '.claude', 'node_modules', 'dist', 'build', 'target', 'coverage']);
+
+const BUILD_FILES = [
+  ['package.json', 'Node.js'],
+  ['pom.xml', 'Java / Maven'],
+  ['build.gradle', 'Java / Gradle'],
+  ['settings.gradle', 'Java / Gradle'],
+  ['go.mod', 'Go'],
+  ['Cargo.toml', 'Rust'],
+  ['pyproject.toml', 'Python'],
+  ['pytest.ini', 'Python / pytest'],
+  ['requirements.txt', 'Python'],
+  ['Gemfile', 'Ruby'],
+  ['composer.json', 'PHP'],
+  ['Makefile', 'Make'],
+];
+
+const ENTRY_CANDIDATES = [
+  'src/index.js', 'src/main.js', 'src/app.js', 'index.js', 'main.js', 'app.js',
+  'src/index.ts', 'src/main.ts', 'src/app.ts',
+  'main.go', 'src/main.rs', 'src/lib.rs',
+  'src/main/java', 'Program.cs', 'manage.py', 'app.py', 'main.py',
+];
+
+function safeReaddir(dir) {
+  try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+}
+
+export function scanFacts(root, { full = true } = {}) {
+  const techStack = BUILD_FILES
+    .filter(([file]) => existsSync(join(root, file)))
+    .map(([file, label]) => `${label}（${file}）`);
+  const topDirs = safeReaddir(root)
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_TOP.has(e.name))
+    .map((e) => e.name)
+    .sort();
+  const entrypoints = full
+    ? ENTRY_CANDIDATES.filter((p) => existsSync(join(root, p)))
+    : [];
+  const workflows = join(root, '.github', 'workflows');
+  const ci = full && existsSync(workflows)
+    ? safeReaddir(workflows).filter((e) => e.isFile() && /\.ya?ml$/i.test(e.name)).map((e) => e.name).sort()
+    : [];
+  return { techStack, topDirs, entrypoints, ci };
+}
+
+export function readHubFacts(root) {
+  const { config } = loadHub(root);
+  const raw = config.subprojects;
+  const subprojects = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? Object.entries(raw).map(([name, value]) => ({
+      name,
+      path: value?.path || name,
+      testCommand: value?.testCommand || null,
+    }))
+    : [];
+  return { subprojects, rootTest: config.defaults?.testCommand || null };
+}
+
+export function buildAutoSection({ facts, subprojects, rootTest, now, full }) {
+  const lines = [
+    AUTO_START,
+    `> 本节由 devflow 自动生成（${now}），运行 \`/devflow:onboard\` 重扫会刷新，请勿手改。`,
+    '',
+    '### 技术栈',
+    ...(facts.techStack.length ? facts.techStack.map((t) => `- ${t}`) : ['- 未识别到常见构建文件']),
+    '',
+    '### 子项目与测试命令',
+    ...(subprojects.length
+      ? subprojects.map((s) => `- \`${s.path}\`${s.testCommand ? ` → \`${s.testCommand}\`` : ' → 未探测到测试命令'}`)
+      : ['- 单项目（无子项目）']),
+    `- 根目录测试：${rootTest ? `\`${rootTest}\`` : '未探测到'}`,
+    '',
+    '### 顶层目录',
+    ...(facts.topDirs.length ? facts.topDirs.map((d) => `- \`${d}/\``) : ['- 无']),
+  ];
+  if (full) {
+    lines.push(
+      '',
+      '### 关键入口',
+      ...(facts.entrypoints.length ? facts.entrypoints.map((p) => `- \`${p}\``) : ['- 未识别到常见入口文件']),
+      '',
+      '### CI',
+      ...(facts.ci.length ? facts.ci.map((f) => `- \`.github/workflows/${f}\``) : ['- 未发现 GitHub Actions 工作流']),
+      '',
+      '### 待确认',
+      '- 以上基于目录与构建文件的启发式结果，请结合代码核对；未识别的技术栈补充到“项目补充”。',
+    );
+  }
+  lines.push(AUTO_END);
+  return lines.join('\n');
+}
+
+const AUTO_RE = new RegExp(
+  `${AUTO_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AUTO_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+);
+
+export function upsertAutoBlock(current, block) {
+  if (!current) {
+    return `${block}\n\n## 项目补充\n\n（在此记录业务背景、领域术语与阅读顺序。重扫不会覆盖本节。）\n`;
+  }
+  if (AUTO_RE.test(current)) return current.replace(AUTO_RE, block);
+  return `${block}\n\n${current}`;
+}
+
+export function generateOverview(root, { full = true, now = new Date().toISOString(), write = true } = {}) {
+  const hub = readHubFacts(root);
+  const facts = scanFacts(root, { full });
+  const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full });
+  const file = join(root, OVERVIEW_FILE);
+  const current = existsSync(file) ? readText(file) : '';
+  const next = upsertAutoBlock(current, block);
+  const changed = next !== current;
+  if (write && changed) {
+    ensureDir(join(root, '.claude', 'hub'));
+    writeAtomic(file, next);
+  }
+  return { file, content: next, changed, facts, subprojects: hub.subprojects };
+}
