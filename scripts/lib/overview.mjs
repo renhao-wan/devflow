@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol } from './common.mjs';
 import { detectTechStack } from './discover.mjs';
 
@@ -13,11 +13,60 @@ const ENTRY_CANDIDATES = [
   'src/index.js', 'src/main.js', 'src/app.js', 'index.js', 'main.js', 'app.js',
   'src/index.ts', 'src/main.ts', 'src/app.ts',
   'main.go', 'src/main.rs', 'src/lib.rs',
-  'src/main/java', 'Program.cs', 'manage.py', 'app.py', 'main.py',
+  'Program.cs', 'manage.py', 'app.py', 'main.py',
 ];
+const ENTRY_LIMIT = 50;
+const JAVA_ENTRY_RE = /(Application|Main)\.java$/;
 
 function safeReaddir(dir) {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+}
+
+function findJavaEntries(dir, maxDepth = 8) {
+  const out = [];
+  const visit = (cur, depth) => {
+    if (depth > maxDepth || out.length >= ENTRY_LIMIT) return;
+    for (const entry of safeReaddir(cur)) {
+      if (out.length >= ENTRY_LIMIT) return;
+      if (entry.isSymbolicLink()) continue;
+      const full = join(cur, entry.name);
+      if (entry.isDirectory()) visit(full, depth + 1);
+      else if (JAVA_ENTRY_RE.test(entry.name)) out.push(full);
+    }
+  };
+  visit(dir, 0);
+  return out;
+}
+
+/** 在根与各子项目内启发式定位入口；输出相对项目根的 POSIX 路径。 */
+export function scanEntrypoints(root, dirs = ['.']) {
+  const out = [];
+  const seen = new Set();
+  const add = (abs) => {
+    if (out.length >= ENTRY_LIMIT) return;
+    const rel = relative(root, abs);
+    if (isAbsolute(rel) || !rel || rel === '.') return;
+    const posix = rel.split(sep).join('/');
+    if (posix.startsWith('../') || seen.has(posix)) return;
+    seen.add(posix);
+    out.push(posix);
+  };
+  for (const relDir of new Set(dirs)) {
+    const dir = resolve(root, relDir);
+    if (!isPathInside(root, dir)) continue;
+    for (const candidate of ENTRY_CANDIDATES) {
+      const abs = join(dir, candidate);
+      try { if (statSync(abs).isFile()) add(abs); } catch { /* 不存在 */ }
+    }
+    const cmdDir = join(dir, 'cmd');
+    for (const entry of safeReaddir(cmdDir)) {
+      if (!entry.isDirectory()) continue;
+      const abs = join(cmdDir, entry.name, 'main.go');
+      try { if (statSync(abs).isFile()) add(abs); } catch { /* 不存在 */ }
+    }
+    for (const abs of findJavaEntries(join(dir, 'src', 'main', 'java'))) add(abs);
+  }
+  return out.sort();
 }
 
 /** 行内代码：围栏比内容中最长的反引号多一个，避免值里的反引号截断 Markdown。 */
@@ -49,9 +98,7 @@ export function scanFacts(root, { subprojectPaths = [] } = {}) {
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_TOP.has(e.name))
     .map((e) => e.name)
     .sort();
-  const entrypoints = ENTRY_CANDIDATES.filter((p) => {
-    try { return statSync(join(root, p)).isFile(); } catch { return false; }
-  });
+  const entrypoints = scanEntrypoints(root, ['.', ...subprojectPaths]);
   const workflows = join(root, '.github', 'workflows');
   const ci = existsSync(workflows)
     ? safeReaddir(workflows).filter((e) => e.isFile() && /\.ya?ml$/i.test(e.name)).map((e) => e.name).sort()

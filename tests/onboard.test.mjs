@@ -70,6 +70,37 @@ test('入口只接受文件，不把目录当作入口', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('入口扫描覆盖子项目', () => {
+  const root = makeProject();
+  mkdirSync(join(root, 'services', 'api', 'src'), { recursive: true });
+  writeFileSync(join(root, 'services', 'api', 'src', 'index.js'), '');
+  const facts = scanFacts(root, { subprojectPaths: ['services/api'] });
+  assert.ok(facts.entrypoints.includes('src/index.js'));
+  assert.ok(facts.entrypoints.includes('services/api/src/index.js'));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('入口扫描识别 Java 与 Go 入口', () => {
+  const root = makeProject();
+  mkdirSync(join(root, 'src', 'main', 'java', 'com', 'demo'), { recursive: true });
+  writeFileSync(join(root, 'src', 'main', 'java', 'com', 'demo', 'DemoApplication.java'), '');
+  writeFileSync(join(root, 'src', 'main', 'java', 'com', 'demo', 'Helper.java'), '');
+  mkdirSync(join(root, 'cmd', 'server'), { recursive: true });
+  writeFileSync(join(root, 'cmd', 'server', 'main.go'), '');
+  const facts = scanFacts(root);
+  assert.ok(facts.entrypoints.includes('src/main/java/com/demo/DemoApplication.java'));
+  assert.ok(!facts.entrypoints.includes('src/main/java/com/demo/Helper.java'));
+  assert.ok(facts.entrypoints.includes('cmd/server/main.go'));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('重复扫描根不会产生重复入口', () => {
+  const root = makeProject();
+  const facts = scanFacts(root, { subprojectPaths: ['src', 'src'] });
+  assert.equal(facts.entrypoints.filter((p) => p === 'src/index.js').length, 1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('generateOverview 写入标记块与事实', () => {
   const root = makeProject();
   const result = generateOverview(root, { full: true, now: '2026-11-02T00:00:00.000Z' });
