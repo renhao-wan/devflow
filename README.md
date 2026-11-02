@@ -12,7 +12,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
 - **安全门禁**：系统级破坏命令直接拒绝，有丢数据风险的操作要求确认，未测试改动只提醒不阻止。
-- **可回灌、可升级**：项目里打磨过的阶段规则可回灌到插件模板；插件升级后用 `/devflow:sync` 非破坏性同步，手改文件保留并可备份。
+- **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到插件模板，本地写入或直接开 PR；插件升级后用 `/devflow:sync` 非破坏性同步，手改文件自动三方合并、冲突时保留并可备份。
 
 ## 前置要求
 
@@ -105,9 +105,9 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
-| `/devflow:upstream --stage <stage> [--apply] [--bump patch\|minor\|major]` | 把项目经验回灌到插件模板 |
-| `/devflow:ship --stage <stage> [--bump patch\|minor\|major] [--dry-run]` | 回灌后提交到分支、推送并生成 PR |
-| `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段模板 |
+| `/devflow:upstream [--stage <stage>] [--shared] [--all] [--to local\|remote] [--apply] [--bump patch\|minor\|major] [--revert <id>]` | 把项目经验回灌到插件模板（本地或远程 PR） |
+| `/devflow:ship [--stage <stage>] [--shared] [--all] [--bump patch\|minor\|major] [--dry-run] [--resume <branch>]` | 回灌后提交到分支、推送并生成 PR |
+| `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段与共享模板，手改内容自动三方合并 |
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
@@ -123,7 +123,9 @@ devflow status --json
 devflow route --stage plan
 devflow route --detect
 devflow sync --dry-run
+devflow upstream --shared --apply
 devflow ship --stage review --dry-run
+devflow upstream --revert <id>
 ```
 
 等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
