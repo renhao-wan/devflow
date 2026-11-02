@@ -67,9 +67,12 @@
 - 新增 `tests/statusline.test.mjs`，覆盖单行输出、stdin 根推导、无任务与只读不写状态，以及多任务 JSON、多任务全局标记、子目录根推导、长 slug 保留阶段与 CLI 分发
 - hooks 测试补充 `prompt-reminder` 的一次性提醒与 `subagent-note` 的已知/未知子代理分支，并覆盖 `PostToolUse(Agent/Task)` 注入主上下文、旧载荷与 JSON 字符串 `tool_input`
 - 补充 `prompt-reminder` 无操作时不重写状态文件、`hub-doctor` 校验 hooks 事件与脚本注册的回归用例
+- 新增 `tests/docs.test.mjs`，校验 README 与 `docs/` 的相对链接、文档索引覆盖率与 README 关键入口
 
 ### 文档
 
+- README 精简为定位、特性、安装、快速开始、命令、阶段概览与文档入口；阶段与配置、hooks、维护、开发细节拆到 `docs/` 主题文档
+- 新增 `docs/README.md` 文档索引，并新增 `docs/usage.md`、`docs/hooks.md`、`docs/maintenance.md`、`docs/development.md`
 - 新增 `docs/comparison.md`，对比 devflow 与 BMAD、cc-spec-driven、Spec Workflow、OpenSpec、ucai、Spec Kit、superpowers 的定位、重叠与优缺点
 - 新增 `docs/value-and-limits.md`，说明适用人群、当前限制与真实项目验证方法
 - 新增 `docs/tool-routing.md`，说明配置、检测范围、决策优先级、命令、安全边界与 fail-open 行为
