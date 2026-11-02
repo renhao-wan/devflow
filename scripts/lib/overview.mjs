@@ -1,5 +1,5 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside } from './common.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
@@ -34,16 +34,31 @@ function safeReaddir(dir) {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }
 
-export function scanFacts(root, { full = true } = {}) {
-  const techStack = BUILD_FILES
-    .filter(([file]) => existsSync(join(root, file)))
-    .map(([file, label]) => `${label}（${file}）`);
+export function scanFacts(root, { full = true, subprojectPaths = [] } = {}) {
+  const techStack = [];
+  const seen = new Set();
+  for (const rel of ['.', ...subprojectPaths]) {
+    const dir = resolve(root, rel);
+    if (!isPathInside(root, dir)) continue;
+    for (const [file, label] of BUILD_FILES) {
+      if (!existsSync(join(dir, file))) continue;
+      const tag = rel === '.'
+        ? `${label}（${file}）`
+        : `${label}（${String(rel).replace(/\\/g, '/')}/${file}）`;
+      if (!seen.has(tag)) {
+        seen.add(tag);
+        techStack.push(tag);
+      }
+    }
+  }
   const topDirs = safeReaddir(root)
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_TOP.has(e.name))
     .map((e) => e.name)
     .sort();
   const entrypoints = full
-    ? ENTRY_CANDIDATES.filter((p) => existsSync(join(root, p)))
+    ? ENTRY_CANDIDATES.filter((p) => {
+      try { return statSync(join(root, p)).isFile(); } catch { return false; }
+    })
     : [];
   const workflows = join(root, '.github', 'workflows');
   const ci = full && existsSync(workflows)
@@ -126,7 +141,7 @@ export function upsertAutoBlock(current, block) {
 
 export function generateOverview(root, { full = true, now = new Date().toISOString(), write = true } = {}) {
   const hub = readHubFacts(root);
-  const facts = scanFacts(root, { full });
+  const facts = scanFacts(root, { full, subprojectPaths: hub.subprojects.map((s) => s.path) });
   const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full });
   const hubDir = join(root, '.claude', 'hub');
   const file = join(root, OVERVIEW_FILE);

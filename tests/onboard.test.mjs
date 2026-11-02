@@ -40,6 +40,36 @@ test('scanFacts 识别构建文件、顶层目录与入口', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('技术栈包含子项目构建文件', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-sub-'));
+  mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+  mkdirSync(join(root, 'services', 'api'), { recursive: true });
+  writeFileSync(join(root, 'services', 'api', 'package.json'), JSON.stringify({ name: 'api' }));
+  writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+    'version: 1',
+    'stages:',
+    '  - req',
+    'subprojects:',
+    '  api:',
+    '    path: services/api',
+    'defaults:',
+    '  testCommand: null',
+    '',
+  ].join('\n'));
+  const result = generateOverview(root, { now: 'fixed' });
+  assert.ok(result.facts.techStack.some((t) => /Node\.js/.test(t) && /services\/api\/package\.json/.test(t)));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('入口只接受文件，不把目录当作入口', () => {
+  const root = makeProject();
+  mkdirSync(join(root, 'src', 'main', 'java'), { recursive: true });
+  const facts = scanFacts(root, { full: true });
+  assert.ok(facts.entrypoints.includes('src/index.js'));
+  assert.ok(!facts.entrypoints.includes('src/main/java'));
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('generateOverview 写入标记块与事实', () => {
   const root = makeProject();
   const result = generateOverview(root, { full: true, now: '2026-11-02T00:00:00.000Z' });
