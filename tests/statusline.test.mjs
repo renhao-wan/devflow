@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SCRIPT = join(ROOT, 'scripts', 'statusline.mjs');
+const BIN = join(ROOT, 'bin', 'devflow');
 
 function makeTask(root, slug, files) {
   const dir = join(root, 'docs', 'devflow', slug);
@@ -66,6 +67,88 @@ test('statusline 无任务或根不存在时安全降级', () => {
     const missing = run(['--root', join(root, 'missing')]);
     assert.equal(missing.status, 0, missing.stderr);
     assert.match(missing.stdout, /无进行中任务/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline --json 多任务不擅自选择当前任务', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-multi-'));
+  try {
+    makeTask(root, 'alpha', ['req.md', 'plan.md']);
+    makeTask(root, 'beta', ['debug.md']);
+
+    const out = JSON.parse(run(['--root', root, '--json']).stdout);
+    assert.equal(out.activeSlug, null);
+    assert.equal(out.slug, null);
+    assert.equal(out.stage, null);
+    assert.equal(out.count, 2);
+    assert.deepEqual(out.slugs.map((row) => row.slug).sort(), ['alpha', 'beta']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline 多任务显示全局待测试与投影标记', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-flags-'));
+  try {
+    makeTask(root, 'alpha', ['req.md', 'plan.md']);
+    makeTask(root, 'beta', ['debug.md']);
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify({
+      testsPending: true,
+      hubPending: true,
+    }));
+
+    const r = run(['--root', root]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /2 个任务/);
+    assert.match(r.stdout, /待测试/);
+    assert.match(r.stdout, /投影待生成/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline 从子目录向上查找 hub 根', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-subdir-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'version: 1\nstages:\n  - req\n');
+    makeTask(root, 'sub-task', ['req.md', 'plan.md']);
+    const sub = join(root, 'services', 'api');
+    mkdirSync(sub, { recursive: true });
+
+    const r = run([], { workspace: { current_dir: sub } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /sub-task/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline 长 slug 截断时保留阶段', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-long-'));
+  try {
+    makeTask(root, 'a'.repeat(120), ['req.md', 'plan.md']);
+
+    const r = run(['--root', root]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /implement/);
+    assert.ok(r.stdout.trim().length <= 80, r.stdout);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('devflow statusline 通过统一 CLI 分发', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-cli-'));
+  try {
+    makeTask(root, 'cli-task', ['req.md', 'plan.md']);
+
+    const r = spawnSync(process.execPath, [BIN, 'statusline', '--root', root], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /cli-task/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

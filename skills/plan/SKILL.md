@@ -2,7 +2,7 @@
 name: plan
 description: 方案阶段：基于 req.md 调研已有实现，产出技术方案、任务拆分与测试策略
 argument-hint: <slug 或任务描述> [--force-devflow]
-allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Agent, AskUserQuestion, EnterPlanMode, ExitPlanMode, Skill, Bash(gh:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(node:*), Bash(devflow:*)
+allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, AskUserQuestion, EnterPlanMode, ExitPlanMode, Skill, Bash(gh:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(node:*), Bash(devflow:*)
 ---
 
 对以下需求执行 devflow 方案阶段：**$ARGUMENTS**
@@ -17,7 +17,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Agent, AskUse
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
 2. 未提供 slug 时，扫描 `docs/devflow/*/req.md`：只有一个候选就采用；多个时用 `AskUserQuestion` 让用户选择，不要自行挑选，也不要用 `latest` 代替；无法提问时列出候选并等待回复。没有 `req.md` 时，说明完整方案阶段需要 `req.md`：若目录只有 `brief.md`，提示直接 `/devflow:implement <slug>`（轻量功能）；若都没有，提示先运行 `/devflow:req`（小改动加 `--light`）。
 3. 找到并完整读取 `docs/devflow/<slug>/req.md`。缺失时：若目录只有 `brief.md`，说明这是轻量功能，提示直接 `/devflow:implement <slug>`；若要完整方案，先升级 `/devflow:req <slug>` 产出 `req.md`。门禁未过时先回到 `/devflow:req`，不要凭空设计方案。
-4. 阅读相关代码，确认真实入口、数据结构与依赖。大范围定位优先用 `devflow-plan-research` 技能（独立上下文、只读）；不可用时用 `Explore` 子代理（very thorough）返回路径、符号与引用关系，再自己读关键文件，不把摘要当结论。
+4. 阅读相关代码，确认真实入口、数据结构与依赖。大范围定位优先用 `devflow:devflow-plan-research` 技能（独立上下文、只读）；不可用时用 `Explore` 子代理（very thorough）返回路径、符号与引用关系，再自己读关键文件，不把摘要当结论。
 5. 按改动规模分级，决定方案深度；新增依赖、新子系统或架构性选择必须调研已有实现：
    - 用外部社区会用的词检索 GitHub、官方文档与开源项目；
    - 候选至少核对来源、许可证、维护状态与项目约束；

@@ -56,7 +56,7 @@
 
 ## hooks
 
-`guard-dangerous` 对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 阻止手改生成物；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效。
+`guard-dangerous` 对所有项目的 shell 类工具（`Bash`、`PowerShell`、`Monitor`）生效；`guard-generated` 阻止手改生成物；状态记录、结束提醒与会话注入只对含 `.claude/hub/hub.yaml` 的项目生效；`subagent-note` 对所有使用 devflow 子代理的项目生效，只向主上下文注入提醒、显示给用户，不写状态。
 
 | 事件 | 行为 |
 | --- | --- |
@@ -64,7 +64,7 @@
 | PreToolUse(Edit/Write/MultiEdit/NotebookEdit) | 阻止手改投影、账本与 loader |
 | PostToolUse(Edit/Write/Bash… ) | 记录改动文件；hub 源改动单独标记 |
 | UserPromptSubmit | 有未验证改动时注入一次提醒 |
-| SubagentStop | devflow 子代理结束时提示核对结论 |
+| PostToolUse(Agent/Task) | devflow 子代理结束时向主上下文注入核对提醒，并显示给用户 |
 | Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 

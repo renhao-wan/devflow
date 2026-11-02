@@ -21,14 +21,14 @@
 | 子代理命名 | 文档使用 `devflow:<agent>`；旧版本可能为裸名 | 取决于插件命名空间 | 以 `/agents` 列表中的名称为准 |
 | 子代理模型 | `devflow-test-runner` 用 `model: haiku`；reviewer 与 debug-investigator 用 `model: inherit` | 支持 agent `model` 字段的版本 | 不支持时删除 `model` 行，按默认模型运行 |
 | `AskUserQuestion` | 多 slug、软阈值、升级与委派确认 | 交互会话 | 非交互模式回退为文本提问 |
-| `/goal` | `implement`、`test`、`debug` 可选完成条件模板与入口提示；不自动设置 | 2.1.139+ | 不使用 goal，按产物与测试门禁推进 |
+| `/goal` | `implement`、`test`、`debug` 可选完成条件模板与入口提示；只提示用户运行，不自动设置 | 2.1.139+ | 不使用 goal，按产物与测试门禁推进 |
 | plan mode | `plan` 阶段在用户同意后用 `EnterPlanMode` / `ExitPlanMode`；plan mode 内不写文件 | 交互会话 | 直接在普通模式调研并写 `plan.md` |
 | `Plan` / `Explore` 子代理 | `plan` 阶段用 `Explore` 定位、`Plan` 设计方案；结论需本地核对 | 内置 agent | 主上下文用 Read/Grep/Glob 调研 |
-| Hooks | `PreToolUse`、`PostToolUse`、`UserPromptSubmit`、`SubagentStop`、`Stop`、`SessionStart` | 基础能力 | 钩子异常时 fail-open |
+| Hooks | `PreToolUse`、`PostToolUse`（含 `Agent/Task` 子代理提醒）、`UserPromptSubmit`、`Stop`、`SessionStart` | 基础能力 | 钩子异常时 fail-open |
 | `SessionStart` 注入 | `additionalContext` + `reloadSkills`，覆盖 compact/fork | 基础能力 | 无注入时仍按产物与 hub 工作 |
 | statusline | `scripts/statusline.mjs` 读取 `hub-status` 推导结果，输出单行进度 | 用户配置 `statusLine` | 不配置时用 `/devflow:status` |
-| `context: fork` | `devflow-plan-research` 在独立上下文运行 | 较新版本 | 不支持时普通技能执行 |
-| `disallowed-tools` | `devflow-plan-research` 显式禁用写工具 | 较新版本 | 不支持时技能自述与 `allowed-tools` 限制 |
+| `context: fork` | `devflow:devflow-plan-research` 在独立上下文运行 | 较新版本 | 不支持时普通技能执行 |
+| `disallowed-tools` | `devflow:devflow-plan-research` 显式禁用写工具 | 较新版本 | 不支持时技能自述与 `allowed-tools` 限制 |
 | 内置审查命令 | review 阶段可选 `/code-review`；`/security-review`、`/ultrareview` 需用户确认；`/simplify` 改动后回 implement | 取决于命令可用性 | 使用 `devflow-code-reviewer`，跳过并记录“未使用” |
 | MCP | 不作为依赖；需手动登记到 `ecosystem.yaml` | 可选 | 未登记时路由看不到 MCP 工具 |
 
@@ -45,7 +45,7 @@
 ## Hooks 兼容与可选事件
 
 - 当前 `hooks.json` 使用 `command` 字符串形式，兼容较旧版本；新版支持的 `args` exec 形式作为可选优化，暂不强制迁移。迁移时必须保留超时、fail-open 与脚本路径校验。
-- `UserPromptSubmit` 只在有未验证改动时注入一次提醒；`SubagentStop` 只在 devflow 子代理结束时提示核对结论，均不阻止操作。
+- `UserPromptSubmit` 只在有未验证改动时注入一次提醒；`PostToolUse(Agent/Task)` 只在 devflow 子代理结束时向主上下文注入核对提醒，同时显示给用户，均不阻止操作。
 - `Notification` 等事件未默认注册，避免噪音；需要时由用户在项目 `settings.json` 中自行添加，devflow 不依赖它。
 
 ## 版本与降级

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
@@ -975,21 +975,65 @@ test('prompt-reminder 在测试已通过或无状态时静默', () => {
   }
 });
 
-test('subagent-note 提示核对 devflow 子代理结论', () => {
-  const cases = [
-    ['devflow-test-runner', /测试通过证据/],
-    ['devflow:devflow-code-reviewer', /review\.md/],
-    ['devflow-debug-investigator', /本地复现/],
-  ];
-  for (const [agent_type, re] of cases) {
-    const r = runHook('subagent-note.mjs', { agent_type });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(JSON.parse(r.stdout).systemMessage, re, agent_type);
+test('prompt-reminder 无操作时不重写状态文件', () => {
+  const root = makeRoot();
+  try {
+    const stateFile = join(root, '.claude', '.devflow-state.json');
+    writeFileSync(stateFile, JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      lastTestPassedAt: '2026-01-02T00:00:00.000Z',
+      testsPending: false,
+    }));
+    utimesSync(stateFile, new Date(1_000_000_000_000), new Date(1_000_000_000_000));
+    const idleMtime = statSync(stateFile).mtimeMs;
+    assert.equal(runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout, '');
+    assert.equal(statSync(stateFile).mtimeMs, idleMtime);
+
+    writeFileSync(stateFile, JSON.stringify({
+      changedFiles: ['src/a.js'],
+      lastChangeAt: '2026-01-01T00:00:00.000Z',
+      lastPromptReminderAt: '2026-01-02T00:00:00.000Z',
+      testsPending: true,
+    }));
+    utimesSync(stateFile, new Date(1_000_000_000_000), new Date(1_000_000_000_000));
+    const remindedMtime = statSync(stateFile).mtimeMs;
+    assert.equal(runHook('prompt-reminder.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout, '');
+    assert.equal(statSync(stateFile).mtimeMs, remindedMtime);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('subagent-note 对非 devflow 子代理或异常输入静默', () => {
-  assert.equal(runHook('subagent-note.mjs', { agent_type: 'Explore' }).stdout, '');
+test('subagent-note 通过 PostToolUse 向主上下文注入核对提醒', () => {
+  const cases = [
+    ['Agent', 'devflow-test-runner', /测试通过证据/],
+    ['Task', 'devflow:devflow-code-reviewer', /review\.md/],
+    ['Agent', 'devflow-debug-investigator', /本地复现/],
+  ];
+  for (const [toolName, subagentType, re] of cases) {
+    const r = runHook('subagent-note.mjs', { tool_name: toolName, tool_input: { subagent_type: subagentType } });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+    assert.match(out.hookSpecificOutput.additionalContext, re, subagentType);
+    assert.match(out.systemMessage, re, subagentType);
+  }
+});
+
+test('subagent-note 兼容旧 SubagentStop 载荷并对非 Agent/Task 静默', () => {
+  const legacy = JSON.parse(runHook('subagent-note.mjs', { agent_type: 'devflow-test-runner' }).stdout);
+  assert.match(legacy.systemMessage, /测试通过证据/);
+  assert.equal(legacy.hookSpecificOutput, undefined);
+
+  const stringInput = JSON.parse(runHook('subagent-note.mjs', {
+    tool_name: 'Agent',
+    tool_input: JSON.stringify({ subagent_type: 'devflow-test-runner' }),
+  }).stdout);
+  assert.equal(stringInput.hookSpecificOutput.hookEventName, 'PostToolUse');
+
+  assert.equal(runHook('subagent-note.mjs', { tool_name: 'Bash', tool_input: {} }).stdout, '');
+  assert.equal(runHook('subagent-note.mjs', { tool_name: 'Agent', tool_input: { subagent_type: 'Explore' } }).stdout, '');
   assert.equal(runHook('subagent-note.mjs', {}).stdout, '');
   const bad = spawnSync(NODE, [join(HOOKS, 'subagent-note.mjs')], { input: 'not json', encoding: 'utf8' });
   assert.equal(bad.status, 0);

@@ -14,7 +14,7 @@ try {
   if (!existsSync(stateFile)) process.exit(0);
 
   updateState(stateFile, (state) => {
-    if (!state.testsPending) return state;
+    if (!state.testsPending) return null;
 
     const lastChange = Date.parse(state.lastChangeAt || '');
     const lastTest = Date.parse(state.lastTestPassedAt || '');
@@ -25,7 +25,7 @@ try {
       state.testsPending = false;
       return state;
     }
-    if (reminded) return state;
+    if (reminded) return null;
 
     const files = (state.changedFiles || []).slice(-5);
     message = 'devflow 提醒：上一轮有代码改动尚未验证通过。继续推进前先运行 /devflow:test 并记录真实结果。'

@@ -9,8 +9,8 @@
 - 子代理按职责设置模型：`test-runner` 使用 `haiku`，reviewer 与 debug-investigator 使用 `inherit`；删除 `model` 行即可回退默认模型
 - review 阶段与内置审查命令协作：`/code-review` 可选，`/security-review`、`/ultrareview` 外发前必须确认，`/simplify` 应用修改后回到 implement 并重新 test
 - 新增可选 `scripts/statusline.mjs` 与 `devflow statusline`，复用 `hub-status` 推导输出单行进度；README 提供 `statusLine` 配置
-- 新增 `UserPromptSubmit` 与 `SubagentStop` hooks：未验证改动提醒与子代理结论核对提示，均 fail-open、从不阻止
-- 新增只读 `devflow-plan-research` 技能，使用 `context: fork` 与 `disallowed-tools` 禁用写工具；plan 阶段优先引用
+- 新增 `UserPromptSubmit` 与 `PostToolUse(Agent/Task)` hooks：未验证改动提醒与子代理结论核对提示，均 fail-open、从不阻止
+- 新增只读 `devflow:devflow-plan-research` 技能，使用 `context: fork` 与 `disallowed-tools` 禁用写工具；plan 阶段优先引用
 - 新增 `docs/native-capabilities.md`，记录能力矩阵、版本要求、命名与降级边界；`docs/tool-routing.md` 说明 MCP 不自动检测、需手动登记
 - implement/debug 与 README 补充 `/rewind`、`/worktree` 使用建议，并提示 `/rewind` 会丢弃当前会话改动
 - 新增轻量流程：小功能用 `/devflow:req --light` 产出 `brief.md`（合并需求与计划），小 bug 由 `/devflow:debug` 直接产出 `debug.md`；只压缩文档、不跳过测试，小功能保留 review，小 bug 按风险补审
@@ -47,6 +47,13 @@
 - `hub-init` / `hub-sync` 校验 `requiresPlugin`、限制写入项目内路径、逐步持久化账本并在中断后自愈；manifest 只记录与插件模板一致的文件。`hub-doctor` 区分缺失与损坏的 `.devflow.json` / 账本；生态检测补充用户 `settings.local.json`
 - `argValue` 不再把后续开关当成参数值；`findPluginRoot` 优先使用当前会话的 `CLAUDE_PLUGIN_ROOT`
 - 修正两处 eval grader：否定式正确回答（“不要直接修改”）不再被误判为违规
+- statusline 多任务时不再擅自选第一个任务，`--json` 输出 `activeSlug: null` 与完整任务列表；根目录支持向上查找，长行优先截断 slug 以保留阶段；改用同步写出并支持 `devflow statusline` CLI 分发
+- 子代理核对提醒改由 `PostToolUse(Agent/Task)` 向主上下文注入，同时保留用户可见提示与旧载荷兼容；不再依赖只作用于子代理自身的 `SubagentStop.additionalContext`
+- `plan`、`implement` 阶段补回 `Task` 工具权限，`Agent` 不可用时仍可委派子代理
+- `/goal` 文案改为提示用户自行运行，明确插件不会自动设置 goal
+- plan-research 技能统一使用 `devflow:devflow-plan-research` 命名空间，避免裸名解析失败
+- `hub-doctor` 校验 `hooks.json` 必需事件与脚本注册，安装不完整时给出明确告警
+- `prompt-reminder` 在无未验证改动或本轮已提醒时跳过状态写回，避免每次提交 prompt 都重写状态文件
 
 ### 测试
 
@@ -57,8 +64,9 @@
 - 补充完整流程“review 早于 test”回归、`argValue` 不吞开关、eval grader 不误伤否定式回答，以及 git 全局选项/引号命令名、嵌套 shell、PowerShell 盘符删除与磁盘帮助命令的 hooks 用例
 - 补充 UX 回归：`status` 多行输出、`doctor` 按类型建议、`sync` 冲突后续操作、入口技能报告实际 slug、`loadHub` 初始化提示
 - 新增 `tests/native.test.mjs`，覆盖结构化提问、子代理命名、goal/plan mode/并行审查、模型字段、内置审查命令、只读调研技能与文档降级说明
-- 新增 `tests/statusline.test.mjs`，覆盖单行输出、stdin 根推导、无任务与只读不写状态
-- hooks 测试补充 `prompt-reminder` 的一次性提醒与 `subagent-note` 的已知/未知子代理分支
+- 新增 `tests/statusline.test.mjs`，覆盖单行输出、stdin 根推导、无任务与只读不写状态，以及多任务 JSON、多任务全局标记、子目录根推导、长 slug 保留阶段与 CLI 分发
+- hooks 测试补充 `prompt-reminder` 的一次性提醒与 `subagent-note` 的已知/未知子代理分支，并覆盖 `PostToolUse(Agent/Task)` 注入主上下文、旧载荷与 JSON 字符串 `tool_input`
+- 补充 `prompt-reminder` 无操作时不重写状态文件、`hub-doctor` 校验 hooks 事件与脚本注册的回归用例
 
 ### 文档
 

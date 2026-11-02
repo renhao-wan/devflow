@@ -491,6 +491,49 @@ test('init 自动刷新旧 loader，doctor 能发现过期 loader', () => {
   }
 });
 
+test('doctor 检查 hooks.json 的事件与脚本注册', () => {
+  const root = makeSandbox();
+  const plugin = mkdtempSync(join(tmpdir(), 'devflow-plugin-hooks-'));
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const version = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    mkdirSync(join(plugin, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'devflow', version }));
+    mkdirSync(join(plugin, 'hooks', 'scripts'), { recursive: true });
+    for (const script of [
+      'guard-dangerous.mjs',
+      'guard-generated.mjs',
+      'track-changes.mjs',
+      'prompt-reminder.mjs',
+      'subagent-note.mjs',
+      'check-tests.mjs',
+      'load-hub.mjs',
+    ]) {
+      writeFileSync(join(plugin, 'hooks', 'scripts', script), '');
+    }
+    writeFileSync(join(plugin, 'hooks', 'hooks.json'), JSON.stringify({
+      hooks: {
+        PostToolUse: [{
+          matcher: 'Edit',
+          hooks: [{ type: 'command', command: 'node hooks/scripts/track-changes.mjs', timeout: 10 }],
+        }],
+      },
+    }));
+
+    const r = spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', 'hub-doctor.mjs'), '--root', root], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: plugin },
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /hooks\.json 缺少事件 UserPromptSubmit/);
+    assert.match(r.stdout, /hooks\.json 未注册 subagent-note\.mjs/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(plugin, { recursive: true, force: true });
+  }
+});
+
 test('doctor 结合 testsPending 与改动时间判断测试状态', () => {
   const root = makeSandbox();
   try {

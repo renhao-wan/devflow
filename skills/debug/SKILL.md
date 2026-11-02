@@ -27,5 +27,5 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
 8. 补一个修复前失败、修复后通过的回归测试。
 9. 清理临时日志与调试代码。
 10. 报告：实际 slug、`docs/devflow/<实际 slug>/debug.md` 路径、现象、根因、修复、验证方式；给出结论（`fixed` / `partial` / `unresolved`）；`partial` 或 `unresolved` 时必须写明未排除的风险与下一步；如做了外部检索，写明来源与本地验证结果。
-11. 可选：排障跨多回合时，用原生 `/goal` 设置本阶段完成条件（稳定复现或失败测试、根因有证据、回归测试修复前失败修复后通过、结论明确；模板见 `.claude/hub/stages/debug/SKILL.md`）。goal 不替代门禁；无法复现或需人工判断风险时不要启用。
+11. 可选：排障跨多回合时，提示用户运行 `/goal` 设置本阶段完成条件（稳定复现或失败测试、根因有证据、回归测试修复前失败修复后通过、结论明确；模板见 `.claude/hub/stages/debug/SKILL.md`）。插件不会自动设置 goal；goal 不替代门禁；无法复现或需人工判断风险时不要建议启用。
 12. 修复并补回归测试后回到测试阶段：`/devflow:test <实际 slug>`；普通小 bug 测试通过即结束，`review: required` 的修复再进入 `/devflow:review <实际 slug>`。

@@ -82,14 +82,16 @@ function withLock(file, fn, { timeoutMs = 1000, staleMs = 5000 } = {}) {
   }
 }
 
-/** 锁内读取-修改-写回状态；返回 mutate 的结果。 */
+/** 锁内读取-修改-写回状态；mutate 返回 null 表示无需写回。 */
 export function updateState(file, mutate) {
   return withLock(file, () => {
     let state = {};
     if (existsSync(file)) {
       try { state = JSON.parse(readFileSync(file, 'utf8')); } catch { state = {}; }
     }
-    const next = mutate(state) || state;
+    const result = mutate(state);
+    if (result === null) return state;
+    const next = result || state;
     writeJsonAtomic(file, next);
     return next;
   });

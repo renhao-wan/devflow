@@ -10,8 +10,8 @@ const read = (rel) => readFileSync(join(ROOT, ...rel.split('/')), 'utf8');
 test('阶段入口声明原生子代理兼容工具与结构化提问', () => {
   const expected = {
     req: ['AskUserQuestion'],
-    plan: ['Agent', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'],
-    implement: ['Agent', 'AskUserQuestion'],
+    plan: ['Task', 'Agent', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'],
+    implement: ['Task', 'Agent', 'AskUserQuestion'],
     test: ['Task', 'Agent', 'AskUserQuestion'],
     debug: ['Task', 'Agent', 'AskUserQuestion'],
     review: ['Task', 'Agent', 'AskUserQuestion'],
@@ -87,6 +87,7 @@ test('实现、测试、排障提供可选 goal 完成条件且不替代门禁',
   for (const stage of ['implement', 'test', 'debug']) {
     const body = read(`skills/${stage}/SKILL.md`);
     assert.match(body, /\/goal/, `skills/${stage} 缺少 goal 提示`);
+    assert.match(body, /提示用户运行 `\/goal`/, `skills/${stage} 应提示用户运行 /goal，而不是假装模型可自行设置`);
     assert.match(body, /不替代门禁/, `skills/${stage} 未声明 goal 不替代门禁`);
   }
 });
@@ -173,8 +174,13 @@ test('只读调研技能使用独立上下文并禁用写工具', () => {
   assert.match(fm['disallowed-tools'] || '', /Write/);
   assert.match(fm['disallowed-tools'] || '', /Edit/);
   assert.match(read('skills/devflow-plan-research/SKILL.md'), /不写文件/);
-  assert.match(read('skills/plan/SKILL.md'), /devflow-plan-research/);
-  assert.match(read('templates/stages/plan/SKILL.md'), /devflow-plan-research/);
+  for (const rel of [
+    'skills/plan/SKILL.md',
+    'templates/stages/plan/SKILL.md',
+    'skills/devflow-engineering-flow/SKILL.md',
+  ]) {
+    assert.match(read(rel), /devflow:devflow-plan-research/, `${rel} 应使用插件命名空间引用调研技能`);
+  }
 });
 
 test('文档说明 MCP 不自动检测、hooks 兼容与可选事件', () => {
@@ -185,7 +191,7 @@ test('文档说明 MCP 不自动检测、hooks 兼容与可选事件', () => {
 
   const native = read('docs/native-capabilities.md');
   assert.match(native, /UserPromptSubmit/);
-  assert.match(native, /SubagentStop/);
+  assert.match(native, /PostToolUse\(Agent\/Task\)/);
   assert.match(native, /Notification/);
   assert.match(native, /`args` exec/);
 });
