@@ -283,3 +283,57 @@ test('sync 拒绝通过 junction 写到项目外', (t) => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('sync 对双方都修改的文件做三方合并', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-merge-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\nreview v1\n',
+    });
+    const root = makeProject(base, repo);
+
+    const local = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+    writeFileSync(local, '---\nname: review\ndescription: 评审\n---\n\nreview v1\n\n本地追加\n');
+    writeFileSync(join(repo, 'templates', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 评审\n---\n\n模板新增\n\nreview v1\n');
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /自动合并/);
+
+    const merged = readFileSync(local, 'utf8');
+    assert.match(merged, /本地追加/);
+    assert.match(merged, /模板新增/);
+
+    const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(sources.schemaVersion, 2);
+    assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].base);
+    assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].local);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 同步共享模板并从模板初始复制', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-shared-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/shared/common.md': '共享 v1\n',
+    });
+    const root = makeProject(base, repo);
+
+    const target = join(root, '.claude', 'hub', '_shared', 'common.md');
+    assert.equal(readFileSync(target, 'utf8'), '共享 v1\n');
+
+    writeFileSync(join(repo, 'templates', 'shared', 'common.md'), '共享 v2\n');
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.equal(readFileSync(target, 'utf8'), '共享 v2\n');
+
+    const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.ok(sources.files['.claude/hub/_shared/common.md']);
+    assert.ok(existsSync(join(root, '.claude', '.hub-bases', '_shared', 'common.md')));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
