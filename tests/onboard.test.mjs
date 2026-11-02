@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   AUTO_START, AUTO_END, OVERVIEW_FILE, scanFacts, generateOverview, upsertAutoBlock,
 } from '../scripts/lib/overview.mjs';
+import { main as onboardMain } from '../scripts/hub-onboard.mjs';
 
 function makeProject() {
   const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-'));
@@ -77,4 +78,12 @@ test('upsertAutoBlock 保留标记外内容', () => {
   assert.match(next, /新/);
   assert.doesNotMatch(next, /旧/);
   assert.match(next, /手工内容/);
+});
+
+test('--print 输出内容且不写文件', () => {
+  const root = makeProject();
+  const result = onboardMain(['--root', root, '--print', '--now', 'fixed']);
+  assert.match(result.content, /Node\.js/);
+  assert.equal(existsSync(join(root, OVERVIEW_FILE)), false);
+  rmSync(root, { recursive: true, force: true });
 });
