@@ -1,184 +1,198 @@
 #!/usr/bin/env node
-import { existsSync, copyFileSync, rmSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
-  pluginInfo, argValue, hasFlag, readText, writeText,
-  writeAtomic, log, posix, isMain, projectRoot, ensureDir, normalizeEol,
-  walk, relPosix, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
-  isGeneratedArtifact, loadHub, bumpVersion, isValidStageName, isPathInside, isRealPathInside,
+  argValue, hasFlag, log, posix, isMain, projectRoot, readText, writeAtomic,
+  resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub, pluginInfo,
+  isValidStageName, normalizeEol,
 } from './lib/common.mjs';
+import {
+  JOURNAL, resolveUnits, planUnits, applyPlan, backupFile, makeId,
+  updateVersionFiles, updateChangelog, appendLog, revertFromLog,
+  bumpKind, bumpVersion,
+} from './lib/upstream.mjs';
 
-const JOURNAL = '.devflow-upstream-apply.json';
-
-const PRIVATE_PATTERNS = [
-  /(?<![A-Za-z])[A-Za-z]:[\\/]/, // Windows 盘符路径（负向后行断言排除 URL 中的 ://）
-  /\/Users\/[^/]+/,            // macOS 家目录
-  /\/home\/[^/]+/,             // Linux 家目录
-  /\b192\.168(?:\.\d{1,3}){2}\b/, // 内网 IP
-  /\b10(?:\.\d{1,3}){3}\b/,
-  /\b172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}\b/,
-  /\b127\.0\.0\.1\b/,
-  /\b169\.254(?:\.\d{1,3}){2}\b/,
-  /\.corp\b|\.internal\b/i,
-];
-
-// 回灌会把项目内容写进插件仓库并提交，命中即按项目专属处理，避免把凭据带出去。
-const SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9_-]{16,}\b/,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
-  /\bAKIA[0-9A-Z]{16}\b/,
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\bBearer\s+[A-Za-z0-9._\-]{20,}/,
-  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, // URL 中 user:pass@
-];
-
-/**
- * 名称匹配：ASCII 名称要求词边界（避免 api 命中 rapid/capital），
- * 含非 ASCII（中文等）的名称边界无意义，退回普通包含。
- */
-function nameHit(text, name) {
-  const word = String(name).trim();
-  if (!word) return false;
-  if (!/^[\x00-\x7F]+$/.test(word)) return text.includes(word);
-  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^A-Za-z0-9_])${esc}([^A-Za-z0-9_]|$)`).test(text);
-}
-
-function classify(text, config) {
-  const hints = new Set();
-  for (const p of PRIVATE_PATTERNS) if (p.test(text)) hints.add(String(p));
-  if (SECRET_PATTERNS.some((p) => p.test(text))) hints.add('疑似密钥或凭据');
-  const blocked = config?.upstream?.blocklist;
-  if (Array.isArray(blocked)) {
-    for (const word of blocked) if (nameHit(text, word)) hints.add(word);
-  }
-  for (const name of Object.keys(config?.subprojects || {})) {
-    if (nameHit(text, name)) hints.add(`子项目名 ${name}`);
-  }
-  const list = [...hints];
-  return list.length ? { type: 'project-local', hints: list } : { type: 'reusable', hints: [] };
-}
-
-function showDiff(from, to, label) {
-  const result = spawnSync('git', ['diff', '--no-index', '--', from, to], { encoding: 'utf8' });
-  if (result.status === 0 || result.status === 1) {
-    console.log(`\n--- ${label} ---`);
-    console.log(result.stdout || '（内容一致）');
-  } else {
-    console.log(`\n--- ${label} ---（git 不可用，仅显示文件）`);
-    console.log(`${posix(from)} → ${posix(to)}`);
-  }
-}
-
-function bumpKind(argv) {
-  const kind = argValue(argv, '--bump', 'patch');
-  if (!['patch', 'minor', 'major'].includes(kind)) {
-    throw new Error(`--bump 只支持 patch|minor|major，收到：${kind}`);
-  }
-  return kind;
-}
-
-/** 插件版本有多个落盘点，升级时保持同步。plugin.json 是权威来源，其余是镜像。 */
-function updateVersionFiles(pluginRoot, next) {
-  const targets = [
-    join(pluginRoot, '.claude-plugin', 'plugin.json'),
-    join(pluginRoot, 'package.json'),
-    join(pluginRoot, '.claude-plugin', 'marketplace.json'),
-  ];
-  let pluginName = null;
+function showDiff(content, target, label) {
+  const tmp = join(tmpdir(), `devflow-diff-${process.pid}-${Date.now()}.txt`);
   try {
-    pluginName = JSON.parse(readText(join(pluginRoot, '.claude-plugin', 'plugin.json'))).name;
-  } catch { /* 缺失时按唯一插件处理 */ }
-
-  const changed = [];
-  for (const file of targets) {
-    if (!existsSync(file)) continue;
-    let data;
-    try {
-      data = JSON.parse(readText(file));
-    } catch (err) {
-      throw new Error(`无法解析版本文件 ${posix(file)}：${err.message}。请修复后再回灌。`);
+    writeAtomic(tmp, content);
+    const result = spawnSync('git', ['diff', '--no-index', '--', target, tmp], { encoding: 'utf8' });
+    if (result.status === 0 || result.status === 1) {
+      console.log(`\n--- ${label} ---`);
+      console.log(result.stdout || '（内容一致）');
     }
-    if (file.endsWith('marketplace.json')) {
-      data.metadata = { ...(data.metadata || {}), version: next };
-      if (Array.isArray(data.plugins)) {
-        for (const plugin of data.plugins) {
-          if (!pluginName || plugin.name === pluginName) plugin.version = next;
-        }
-      }
-    } else {
-      data.version = next;
-    }
-    writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
-    changed.push(posix(file));
+  } finally {
+    rmSync(tmp, { force: true });
   }
-  return changed;
+}
+
+function reportText(plans) {
+  let reusable = 0;
+  let pending = 0;
+  let local = 0;
+  let unchanged = 0;
+  for (const plan of plans) {
+    for (const file of plan.files) {
+      const rel = `${plan.unit.kind === 'shared' ? '_shared' : plan.unit.name}/${file.rel}`;
+      if (file.skipped) {
+        console.log(`[跳过] ${rel}（${file.reason}）`);
+        continue;
+      }
+      const { verdict } = file;
+      if (verdict.type === 'local') {
+        local += 1;
+        console.log(`[项目专属] ${rel}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}`);
+        continue;
+      }
+      reusable += 1;
+      const removed = verdict.removed.length ? `（剔除 ${verdict.removed.length} 行：${[...new Set(verdict.removed.map((r) => r.reason))].join('、')}）` : '';
+      if (file.changed) {
+        pending += 1;
+        console.log(`[可回灌] ${rel}${removed}`);
+      } else {
+        unchanged += 1;
+        console.log(`[无变化] ${rel}${removed}`);
+      }
+    }
+  }
+  return { reusable, pending, local, unchanged };
+}
+
+function jsonReport(plans, extra) {
+  return {
+    ...extra,
+    units: plans.map((p) => ({ kind: p.unit.kind, name: p.unit.name })),
+    files: plans.flatMap((p) => p.files.map((f) => ({
+      unit: p.unit.kind === 'shared' ? '_shared' : p.unit.name,
+      path: f.rel,
+      type: f.skipped ? 'skipped' : f.verdict.type,
+      changed: Boolean(f.changed),
+      removed: f.verdict?.removed?.length || 0,
+      hints: f.verdict?.hints || [],
+      reason: f.reason || null,
+    }))),
+  };
+}
+
+function passthrough(argv, names) {
+  const out = [];
+  for (const name of names) {
+    const value = argValue(argv, name, null);
+    if (value !== null) out.push(name, value);
+  }
+  return out;
+}
+
+async function runRemote(argv, { root, pluginRoot, units }) {
+  const { main: ship } = await import('./hub-ship.mjs');
+  const args = ['--root', root, '--plugin-root', pluginRoot];
+  for (const unit of units) {
+    if (unit.kind === 'stage') args.push('--stage', unit.name);
+  }
+  if (units.some((u) => u.kind === 'shared')) args.push('--shared');
+  args.push(...passthrough(argv, ['--base', '--bump', '--remote', '--resume']));
+  if (hasFlag(argv, '--fork')) args.push('--fork');
+  if (hasFlag(argv, '--no-pr')) args.push('--no-pr');
+  // 远程回灌只有加 --apply 才真正推送；不带时等价于 ship --dry-run。
+  if (!hasFlag(argv, '--apply')) args.push('--dry-run');
+  return ship(args);
 }
 
 export async function main(argv = process.argv.slice(2)) {
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
+  const shared = hasFlag(argv, '--shared');
+  const all = hasFlag(argv, '--all');
   const apply = hasFlag(argv, '--apply');
-  const kind = bumpKind(argv);
-  if (!stage) throw new Error('必须指定 --stage <req|plan|implement|test|review|debug>');
-  if (!isValidStageName(stage)) {
+  const json = hasFlag(argv, '--json');
+  const to = argValue(argv, '--to', 'local');
+  const revertId = argValue(argv, '--revert', null);
+
+  if (!['local', 'remote'].includes(to)) throw new Error(`--to 只支持 local|remote，收到：${to}`);
+  const bumpArg = argValue(argv, '--bump', null);
+  // 无论是否 --apply，只要显式给了 --bump 就先校验，避免预览时静默忽略非法值。
+  if (bumpArg !== null) bumpKind(bumpArg);
+  if (stage && !isValidStageName(stage)) {
     throw new Error(`阶段名非法：${stage}。只允许小写字母开头的 [a-z0-9_-]。`);
   }
 
-  const { config } = loadHub(root);
   const pluginRoot = resolveUpstreamRoot(root, argValue(argv, '--plugin-root', null));
   const info = pluginInfo(pluginRoot);
+
+  if (revertId) {
+    if (isPluginCache(pluginRoot)) throw new Error(cacheGuardMessage(pluginRoot));
+    const entry = revertFromLog(pluginRoot, revertId);
+    log('ok', `已回滚回灌记录 ${revertId}（${entry.files.length} 个模板文件）`);
+    return { reverted: revertId, files: entry.files };
+  }
+
+  let units;
+  try {
+    units = resolveUnits(root, { stage, shared, all });
+  } catch (err) {
+    throw err;
+  }
+
+  if (to === 'remote') {
+    return runRemote(argv, { root, pluginRoot, units });
+  }
+
+  const { config } = loadHub(root);
   const cacheTarget = isPluginCache(pluginRoot);
 
-  const srcDir = join(root, '.claude', 'hub', 'stages', stage);
-  const dstDir = join(pluginRoot, 'templates', 'stages', stage);
-  if (!isPathInside(join(root, '.claude', 'hub', 'stages'), srcDir) || !isRealPathInside(root, srcDir)) {
-    throw new Error(`阶段源目录越界：${posix(srcDir)}`);
-  }
-  if (!isPathInside(join(pluginRoot, 'templates', 'stages'), dstDir)
-    || !isRealPathInside(pluginRoot, dstDir)) {
-    throw new Error(`回灌目标越界：${posix(dstDir)}`);
-  }
-  if (!existsSync(srcDir)) throw new Error(`项目里没有该阶段：${posix(srcDir)}`);
-
-  const files = walk(srcDir)
-    .map((abs) => ({ abs, rel: relPosix(srcDir, abs) }))
-    .filter((f) => !isGeneratedArtifact(f.rel))
-    .sort((a, b) => a.rel.localeCompare(b.rel));
-  if (!files.length) throw new Error(`阶段目录为空：${posix(srcDir)}`);
-
-  let localCount = 0;
-  const reusable = [];
-  for (const f of files) {
-    const src = f.abs;
-    const dst = join(dstDir, ...f.rel.split('/'));
-    const text = readText(src);
-    const verdict = classify(text, config);
-    const changed = !existsSync(dst) || normalizeEol(readText(dst)) !== normalizeEol(text);
-    console.log(`${verdict.type === 'reusable' ? '[可回灌]' : '[项目专属]'} ${stage}/${f.rel}${verdict.hints.length ? `（${verdict.hints.join('、')}）` : ''}${verdict.type === 'reusable' && !changed ? '（与插件一致）' : ''}`);
-    if (verdict.type === 'reusable') reusable.push({ src, dst, name: f.rel, changed });
-    else localCount += 1;
-    // 项目专属内容可能含密钥，不回显 diff，避免把凭据打印到终端或日志
-    if (verdict.type === 'reusable' && existsSync(dst) && changed) showDiff(dst, src, `${stage}/${f.rel}（插件 → 项目）`);
+  let plans;
+  try {
+    plans = planUnits(root, pluginRoot, units, config);
+  } catch (err) {
+    throw err;
   }
 
-  const pending = reusable.filter((f) => f.changed);
+  if (!json) {
+    for (const plan of plans) {
+      console.log(`\n== ${plan.unit.kind === 'shared' ? '共享规则 .claude/hub/_shared' : `阶段 ${plan.unit.name}`} ==`);
+      const counts = reportText([plan]);
+      for (const file of plan.pending) {
+        showDiff(file.verdict.content, file.targetAbs, `${plan.unit.name}/${file.rel}（插件 → 项目，已剔除敏感行）`);
+      }
+      console.log(
+        `小结：${counts.reusable} 个可回灌（${counts.pending} 个有变化），`
+        + `${counts.local} 个项目专属，${counts.unchanged} 个一致。`,
+      );
+    }
+  }
+
+  const totals = plans.reduce((acc, plan) => {
+    for (const file of plan.files) {
+      if (file.skipped) continue;
+      if (file.verdict.type === 'local') acc.local += 1;
+      else {
+        acc.reusable += 1;
+        if (file.changed) acc.pending += 1;
+      }
+    }
+    return acc;
+  }, { reusable: 0, pending: 0, local: 0 });
+
+  const summary = jsonReport(plans, { mode: 'local', applied: false });
 
   if (!apply) {
-    console.log(`\n预览完成：${reusable.length} 个可回灌（${pending.length} 个有变化），${localCount} 个项目专属。`);
-    console.log('加 --apply 才会写入插件模板并升级版本。');
-    if (cacheTarget) log('warn', `目标是安装缓存（${posix(pluginRoot)}），--apply 会被拒绝，请用 --plugin-root 指向源码仓库。`);
-    return { stage, reusable: reusable.length, pending: pending.length, local: localCount, applied: false };
+    if (!json) {
+      console.log(`\n预览完成：${totals.reusable} 个可回灌（${totals.pending} 个有变化），${totals.local} 个项目专属。`);
+      console.log('加 --apply 才会写入插件模板；加 --to remote --apply 走分支 + PR。');
+      if (cacheTarget) log('warn', `目标是安装缓存（${posix(pluginRoot)}），--apply 会被拒绝，请用 --plugin-root 指向源码仓库。`);
+    }
+    return json ? { ...summary, ...totals } : { ...totals, applied: false, units: summary.units };
   }
 
   if (cacheTarget) throw new Error(cacheGuardMessage(pluginRoot));
 
-  // 上次中断可能停在“文件已复制、版本未升级”：先记账再写入，重跑时续做而不是提前返回。
-  const journalFile = join(pluginRoot, JOURNAL);
+  const noBump = hasFlag(argv, '--no-bump');
+  const kind = noBump ? null : bumpKind(bumpArg ?? 'patch');
+
+  // 上次中断可能停在“文件已复制、版本未升级”：先记账再写入，重跑时续做。
+  const journalFile = join(pluginRoot, ...JOURNAL.split('/'));
   let journal = null;
   if (existsSync(journalFile)) {
     try {
@@ -186,79 +200,78 @@ export async function main(argv = process.argv.slice(2)) {
     } catch {
       throw new Error(`无法解析上次中断的回灌记录：${posix(journalFile)}。请检查或删除后重试。`);
     }
-    if (journal?.stage && journal.stage !== stage) {
-      throw new Error(`上次未完成的回灌属于阶段 ${journal.stage}，请先完成或删除 ${posix(journalFile)}。`);
+    const same = JSON.stringify(journal.units) === JSON.stringify(units.map((u) => `${u.kind}:${u.name}`));
+    if (!same) {
+      throw new Error(`上次未完成的回灌属于 ${journal.units.join('、')}，请先完成或删除 ${posix(journalFile)}。`);
     }
-  }
-
-  let oldVersion;
-  let nextVersion;
-  if (journal) {
-    oldVersion = String(journal.oldVersion);
-    nextVersion = String(journal.nextVersion);
-    if (info.version !== oldVersion && info.version !== nextVersion) {
+    if (info.version !== journal.oldVersion && info.version !== journal.nextVersion) {
       throw new Error(
-        `插件版本 ${info.version} 与未完成回灌记录的 ${oldVersion} → ${nextVersion} 不一致，`
+        `插件版本 ${info.version} 与未完成回灌记录的 ${journal.oldVersion} → ${journal.nextVersion} 不一致，`
         + `请检查后删除 ${posix(journalFile)}。`,
       );
     }
-    log('warn', `检测到上次未完成的回灌，继续完成 ${oldVersion} → ${nextVersion}`);
+    log('warn', `检测到上次未完成的回灌，继续完成 ${journal.oldVersion} → ${journal.nextVersion}`);
   } else {
-    if (!pending.length) {
-      console.log(reusable.length ? '可回灌文件与插件模板一致，未修改插件。' : '没有可回灌内容，未修改插件。');
-      return { stage, reusable: reusable.length, pending: 0, local: localCount, applied: false };
+    if (!totals.pending) {
+      if (!json) {
+        console.log(totals.reusable ? '可回灌文件与插件模板一致，未修改插件。' : '没有可回灌内容，未修改插件。');
+      }
+      return json ? { ...summary, ...totals, applied: false } : { ...totals, applied: false };
     }
-    oldVersion = info.version;
-    nextVersion = bumpVersion(oldVersion, kind);
-    writeAtomic(journalFile, `${JSON.stringify({
-      stage,
+    const oldVersion = info.version;
+    const nextVersion = kind ? bumpVersion(oldVersion, kind) : oldVersion;
+    journal = {
+      id: makeId(),
+      units: units.map((u) => `${u.kind}:${u.name}`),
       oldVersion,
       nextVersion,
-      files: pending.map((f) => f.name),
+      bumped: Boolean(kind),
+      files: plans.flatMap((plan) => plan.pending.map((f) => `${plan.unit.targetRel}/${f.rel}`)),
+      created: plans.flatMap((plan) => plan.pending
+        .filter((f) => !existsSync(f.targetAbs))
+        .map((f) => `${plan.unit.targetRel}/${f.rel}`)),
       createdAt: new Date().toISOString(),
-    }, null, 2)}\n`);
+    };
+    writeAtomic(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
   }
 
-  for (const f of pending) {
-    if (!isPathInside(dstDir, f.dst) || !isRealPathInside(dstDir, f.dst)) {
-      throw new Error(`回灌目标越界：${posix(f.dst)}`);
-    }
+  const backupId = journal.id;
+  for (const rel of ['.claude-plugin/plugin.json', 'package.json', '.claude-plugin/marketplace.json', 'CHANGELOG.md']) {
+    backupFile(pluginRoot, backupId, rel);
   }
-  ensureDir(dstDir);
-  for (const f of pending) {
-    ensureDir(dirname(f.dst));
-    copyFileSync(f.src, f.dst);
-  }
+  const result = applyPlan({ pending: plans.flatMap((p) => p.pending) }, pluginRoot, { backupId });
+  // 中断续做时本次 pending 可能为空，历史清单仍要进入日志与回滚范围。
+  const written = [...new Set([...(journal.files || []), ...result.written])];
+  const created = [...new Set([...(journal.created || []), ...result.created])];
 
-  const logFile = join(pluginRoot, 'templates', 'stages', '_feedback-log.md');
-  const marker = `<!-- devflow-apply:${stage}:${nextVersion} -->`;
-  const existingLog = existsSync(logFile) ? readText(logFile) : '# 回灌日志\n';
-  if (!existingLog.includes(marker)) {
-    const entry = `\n## ${new Date().toISOString()} · ${stage}\n\n${marker}\n\n- 回灌文件：${pending.map((f) => f.name).join('、')}\n- 项目：${basename(root)}（本地路径不记录）\n- 插件版本：${oldVersion} → ${nextVersion}\n`;
-    writeText(logFile, `${existingLog.endsWith('\n') ? existingLog : `${existingLog}\n`}${entry}`);
+  if (journal.bumped) {
+    updateVersionFiles(pluginRoot, journal.nextVersion);
+    updateChangelog(pluginRoot, journal.nextVersion, units, written);
   }
 
-  updateVersionFiles(pluginRoot, nextVersion);
-
-  const changelog = join(pluginRoot, 'CHANGELOG.md');
-  const old = existsSync(changelog) ? readText(changelog) : '';
-  const block = `\n## ${nextVersion}\n\n- 从项目回灌 ${stage} 阶段模板（${pending.map((f) => f.name).join('、')}）\n`;
-  // 标题缺失时补上再插入，避免 replace 不匹配导致版本条目被静默丢弃。
-  const withTitle = /^# Changelog\b/m.test(old) ? old : `# Changelog\n${old}`;
-  const heading = /^# Changelog[^\n]*\n?/m.exec(withTitle);
-  const versionRe = new RegExp(`^##\\s+${nextVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm');
-  const updated = versionRe.test(withTitle)
-    ? withTitle
-    : heading
-      ? `${withTitle.slice(0, heading.index + heading[0].length)}${block}${withTitle.slice(heading.index + heading[0].length)}`
-      : `${withTitle}${block}`;
-  writeAtomic(changelog, updated);
+  appendLog(pluginRoot, {
+    id: backupId,
+    at: new Date().toISOString(),
+    mode: 'local',
+    units: units.map((u) => (u.kind === 'shared' ? '共享规则' : `${u.name} 阶段`)),
+    project: posix(root).split('/').pop(),
+    files: written,
+    created,
+    oldVersion: journal.bumped ? journal.oldVersion : null,
+    newVersion: journal.bumped ? journal.nextVersion : null,
+  });
 
   rmSync(journalFile, { force: true });
 
-  log('ok', `已回灌 ${pending.length} 个文件，插件版本 ${oldVersion} → ${nextVersion}`);
-  log('ok', `回灌日志：${posix(logFile)}`);
-  return { stage, reusable: reusable.length, pending: pending.length, local: localCount, applied: true, version: nextVersion };
+  if (!json) {
+    log('ok', `已回灌 ${written.length} 个文件${journal.bumped ? `，插件版本 ${journal.oldVersion} → ${journal.nextVersion}` : '（版本未变）'}`);
+    log('ok', `回灌日志：${posix(join(pluginRoot, '.devflow', 'upstream-log.jsonl'))}`);
+    log('ok', `可回滚：/devflow:upstream --revert ${backupId}`);
+  }
+
+  return json
+    ? { ...summary, ...totals, applied: true, version: journal.nextVersion, id: backupId, written }
+    : { ...totals, applied: true, version: journal.nextVersion, id: backupId, written };
 }
 
 if (isMain(import.meta.url)) {

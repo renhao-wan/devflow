@@ -86,7 +86,7 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
   try {
     const root = makeProject();
     const { repo, bare } = makePluginRepo(base);
-    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo], repo);
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--bump', 'patch'], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
 
     assert.match(r.stdout, /compare\/main\.\.\.devflow\/upstream-review/);
@@ -108,8 +108,8 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
     const template = git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]);
     assert.match(template, /先看正确性/);
 
-    const log = git(bare, ['show', `${branchName}:templates/stages/_feedback-log.md`]);
-    assert.match(log, /回灌文件/);
+    const log = git(bare, ['show', `${branchName}:.devflow/upstream-log.jsonl`]);
+    assert.match(log, /review 阶段/);
 
     // 回灌只在临时 worktree 中发生：主工作区版本与分支不变，也不留下未提交改动。
     assert.equal(JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0');
@@ -292,9 +292,9 @@ test('PR 正文复用仓库模板', () => {
       newVersion: '1.1.0',
       kind: 'minor',
     });
-    assert.match(body, /回灌 review 阶段规则，来源项目：demo/);
+    assert.match(body, /回灌.*review 阶段.*来源项目：demo/);
     assert.match(body, /## 类型[\s\S]*- \[x\] feat/);
-    assert.match(body, /阶段：review/);
+    assert.match(body, /范围：review 阶段/);
     assert.match(body, /templates\/stages\/review\/SKILL\.md/);
     assert.match(body, /1\.0\.0 → 1\.1\.0（minor）/);
     assert.doesNotMatch(body, /<!-- 说明 -->/);
@@ -352,7 +352,7 @@ test('ship 的版本号来自 --base 分支而非当前分支', () => {
     git(repo, ['add', '-A']);
     git(repo, ['commit', '-m', 'chore: 当前分支预发布版本']);
 
-    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main'], repo);
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main', '--bump', 'patch'], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
 
     const branches = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n');
@@ -389,4 +389,47 @@ test('redactText 覆盖 URL 凭据与查询参数 token', () => {
   const text = redactText('fatal: https://user:tok3n@example.com/x?access_token=abc123&token=def456');
   assert.doesNotMatch(text, /tok3n@|abc123|def456/);
   assert.match(text, /\*\*\*/);
+});
+
+test('ship 默认不 bump 版本，只更新模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-nobump-'));
+  try {
+    const root = makeProject();
+    const { repo, bare } = makePluginRepo(base);
+
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo], repo);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+
+    const branches = git(bare, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+    const branchName = branches.split('\n').find((b) => b.startsWith('devflow/upstream-review'));
+    assert.ok(branchName, `未找到回灌分支：${branches}`);
+
+    const plugin = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/plugin.json`]));
+    assert.equal(plugin.version, '1.0.0');
+    assert.doesNotMatch(git(bare, ['show', `${branchName}:CHANGELOG.md`]), /## 1\.0\.1/);
+    assert.match(git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]), /先看正确性/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ship 支持回灌共享规则', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-shared-'));
+  try {
+    const root = makeProject();
+    const { repo, bare } = makePluginRepo(base);
+    mkdirSync(join(root, '.claude', 'hub', '_shared'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', '_shared', 'common.md'), '共享规则：先读需求。\n');
+
+    const r = run(['--root', root, '--shared', '--plugin-root', repo], repo);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+
+    const branches = git(bare, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+    const branchName = branches.split('\n').find((b) => b.startsWith('devflow/upstream-shared'));
+    assert.ok(branchName, `未找到回灌分支：${branches}`);
+    assert.equal(git(bare, ['show', `${branchName}:templates/shared/common.md`]), '共享规则：先读需求。');
+    assert.match(git(bare, ['log', '--format=%s', '-1', branchName]), /回灌共享规则/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
