@@ -103,6 +103,18 @@ test('upsertAutoBlock 保留标记外内容', () => {
   assert.match(next, /手工内容/);
 });
 
+test('残缺标记块不会产生重复标记', () => {
+  const root = makeProject();
+  const file = join(root, OVERVIEW_FILE);
+  writeFileSync(file, `${AUTO_START}\n旧自动内容\n\n人工笔记：保留我\n`);
+  generateOverview(root, { now: 'fixed' });
+  const text = readFileSync(file, 'utf8');
+  assert.equal((text.match(/devflow:auto:start/g) || []).length, 1);
+  assert.equal((text.match(/devflow:auto:end/g) || []).length, 1);
+  assert.match(text, /人工笔记：保留我/);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('--print 输出内容且不写文件', () => {
   const root = makeProject();
   const result = onboardMain(['--root', root, '--print', '--now', 'fixed']);

@@ -113,7 +113,14 @@ export function upsertAutoBlock(current, block) {
   if (!current) {
     return `${block}\n\n## 项目补充\n\n（在此记录业务背景、领域术语与阅读顺序。重扫不会覆盖本节。）\n`;
   }
-  if (AUTO_RE.test(current)) return current.replace(AUTO_RE, block);
+  const starts = current.split(AUTO_START).length - 1;
+  const ends = current.split(AUTO_END).length - 1;
+  if (starts === 1 && ends === 1 && AUTO_RE.test(current)) return current.replace(AUTO_RE, block);
+  if (starts || ends) {
+    // 标记不成对时无法可靠区分自动段与人工段：只移除标记本身，保留其余文本，再前置新块。
+    const cleaned = current.split(AUTO_START).join('').split(AUTO_END).join('');
+    return `${block}\n\n${cleaned.trimStart()}`;
+  }
   return `${block}\n\n${current}`;
 }
 
