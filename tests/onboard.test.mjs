@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   AUTO_START, AUTO_END, OVERVIEW_FILE, scanFacts, generateOverview, upsertAutoBlock,
@@ -150,6 +150,31 @@ test('--print 输出内容且不写文件', () => {
   const result = onboardMain(['--root', root, '--print', '--now', 'fixed']);
   assert.match(result.content, /Node\.js/);
   assert.equal(existsSync(join(root, OVERVIEW_FILE)), false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('默认输出包含概览摘要', () => {
+  const root = makeProject();
+  const r = spawnSync(process.execPath, [
+    resolve(import.meta.dirname, '..', 'scripts', 'hub-onboard.mjs'),
+    '--root', root,
+  ], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /项技术栈/);
+  assert.match(r.stdout, /个入口/);
+  assert.match(r.stdout, /个 CI/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('--print 与 --json 互斥', () => {
+  const root = makeProject();
+  assert.throws(() => onboardMain(['--root', root, '--print', '--json']), /不能同时使用/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('--root 不存在时报错', () => {
+  const root = makeProject();
+  assert.throws(() => onboardMain(['--root', join(root, 'missing')]), /不存在|不是目录/);
   rmSync(root, { recursive: true, force: true });
 });
 
