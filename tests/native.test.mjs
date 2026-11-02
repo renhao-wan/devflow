@@ -71,3 +71,65 @@ test('原生能力文档记录命名、版本与降级边界', () => {
   assert.match(doc, /\/agents/);
   assert.match(read('README.md'), /docs\/native-capabilities\.md/);
 });
+
+test('实现、测试、排障提供可选 goal 完成条件且不替代门禁', () => {
+  const templates = [
+    'templates/stages/implement/SKILL.md',
+    'templates/stages/test/SKILL.md',
+    'templates/stages/debug/SKILL.md',
+  ];
+  for (const rel of templates) {
+    const body = read(rel);
+    assert.match(body, /## 可选完成条件（\/goal）/, `${rel} 缺少 goal 小节`);
+    assert.match(body, /不替代门禁/, `${rel} 未声明 goal 不替代门禁`);
+    assert.match(body, /不要启用 goal/, `${rel} 未说明禁用条件`);
+  }
+  for (const stage of ['implement', 'test', 'debug']) {
+    const body = read(`skills/${stage}/SKILL.md`);
+    assert.match(body, /\/goal/, `skills/${stage} 缺少 goal 提示`);
+    assert.match(body, /不替代门禁/, `skills/${stage} 未声明 goal 不替代门禁`);
+  }
+});
+
+test('plan 阶段接入 plan mode 与 Plan/Explore 子代理并保留降级', () => {
+  for (const rel of ['skills/plan/SKILL.md', 'templates/stages/plan/SKILL.md']) {
+    const body = read(rel);
+    assert.match(body, /Explore/, `${rel} 未接入 Explore`);
+    assert.match(body, /\bPlan\b/, `${rel} 未接入 Plan 子代理`);
+    assert.match(body, /EnterPlanMode/, `${rel} 未接入 EnterPlanMode`);
+    assert.match(body, /ExitPlanMode/, `${rel} 未接入 ExitPlanMode`);
+    assert.match(body, /不改代码|不写文件/, `${rel} 未限制 plan mode 内的写操作`);
+  }
+  assert.match(read('templates/stages/plan/SKILL.md'), /这些能力是加速手段，不是门禁/);
+  assert.match(read('skills/plan/SKILL.md'), /无法使用或用户拒绝时/);
+});
+
+test('debug 与 review 支持并行子代理且要求合并冲突', () => {
+  const debug = read('templates/stages/debug/SKILL.md');
+  assert.match(debug, /## 并行假设验证（可选）/);
+  assert.match(debug, /同一条消息/);
+  assert.match(debug, /devflow:devflow-debug-investigator/);
+  assert.match(debug, /本地复现裁决/);
+  assert.match(read('skills/debug/SKILL.md'), /同一条消息并行启动多个/);
+
+  const review = read('templates/stages/review/SKILL.md');
+  assert.match(review, /高风险改动/);
+  assert.match(review, /两个子代理/);
+  assert.match(review, /正确性与安全/);
+  assert.match(review, /验收与回归/);
+  assert.match(read('skills/review/SKILL.md'), /两个子代理/);
+
+  const template = read('templates/stages/review/templates/review.template.md');
+  assert.match(template, /## 子代理交叉审查（可选）/);
+  assert.match(template, /视角 A/);
+  assert.match(template, /冲突项与裁决依据/);
+});
+
+test('工程流程技能汇总原生协作并保留文本降级', () => {
+  const flow = read('skills/devflow-engineering-flow/SKILL.md');
+  assert.match(flow, /## 原生能力协作（可选）/);
+  assert.match(flow, /不替代门禁/);
+  assert.match(flow, /AskUserQuestion.*不可用时文本询问/);
+  assert.match(flow, /Explore/);
+  assert.match(flow, /并行/);
+});

@@ -16,12 +16,13 @@
 | 能力 | 当前接入 | 版本/条件 | 不可用时的降级 |
 | --- | --- | --- | --- |
 | Skills / 斜杠命令 | 阶段入口、通用技能、`allowed-tools`、`argument-hint`、`disable-model-invocation` | 基础能力 | 仍可用 `/devflow:*` 手动调用 |
-| `Agent` / 子代理 | `debug`、`test`、`review` 可调用三个项目子代理 | 工具名可能为 `Task` 或 `Agent` | 工具不可用时在主上下文执行 |
+| `Agent` / 子代理 | `debug`、`test`、`review` 可调用三个项目子代理；`debug` 支持并行假设验证 | 工具名可能为 `Task` 或 `Agent` | 工具不可用时在主上下文执行 |
+| 并行子代理 | `debug` 对 ≥2 个独立假设并行调查；`review` 高风险时并行双视角审查 | 一条消息发起多个 Agent 调用 | 串行执行或主上下文分视角自查 |
 | 子代理命名 | 文档使用 `devflow:<agent>`；旧版本可能为裸名 | 取决于插件命名空间 | 以 `/agents` 列表中的名称为准 |
 | `AskUserQuestion` | 多 slug、软阈值、升级与委派确认 | 交互会话 | 非交互模式回退为文本提问 |
-| `/goal` | 阶段内可选完成条件模板 | 2.1.139+ | 不使用 goal，按产物与测试门禁推进 |
-| plan mode | `plan` 阶段建议在 plan mode 中调研 | 交互会话 | 直接在普通模式调研，不自动写代码 |
-| `Plan` / `Explore` 子代理 | `plan` 阶段用于大范围调研与方案设计 | 内置 agent | 主上下文用 Read/Grep/Glob 调研 |
+| `/goal` | `implement`、`test`、`debug` 可选完成条件模板与入口提示；不自动设置 | 2.1.139+ | 不使用 goal，按产物与测试门禁推进 |
+| plan mode | `plan` 阶段在用户同意后用 `EnterPlanMode` / `ExitPlanMode`；plan mode 内不写文件 | 交互会话 | 直接在普通模式调研并写 `plan.md` |
+| `Plan` / `Explore` 子代理 | `plan` 阶段用 `Explore` 定位、`Plan` 设计方案；结论需本地核对 | 内置 agent | 主上下文用 Read/Grep/Glob 调研 |
 | Hooks | `PreToolUse`、`PostToolUse`、`Stop`、`SessionStart` | 基础能力 | 钩子异常时 fail-open |
 | `SessionStart` 注入 | `additionalContext` + `reloadSkills`，覆盖 compact/fork | 基础能力 | 无注入时仍按产物与 hub 工作 |
 | statusline | 可选脚本读取 `devflow status --json` 数据 | 用户配置 | 不配置时用 `/devflow:status` |
