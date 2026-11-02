@@ -68,6 +68,8 @@
 | Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
 | SessionStart | 注入当前子项目和测试命令 |
 
+完整事件、生成物写保护与 deny/ask 清单见 [hooks.md](hooks.md)。
+
 ## 进度与命令衔接
 
 阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
@@ -86,6 +88,8 @@
 
 插件版本以 `.claude-plugin/plugin.json` 为权威来源，`package.json` 与 `.claude-plugin/marketplace.json` 的 `plugins[].version` 是镜像，必须一致；`metadata.version` 属于市场自身元数据，不决定插件安装版本。回灌/`ship` 的 `--apply --bump <patch|minor|major>` 会同时更新，清单测试负责校验漂移。
 
+具体操作、启用状态与故障处理见 [maintenance.md](maintenance.md)。
+
 ## 方案前调研
 
 plan 阶段的职责从“给方案”扩展为“先确认有没有现成实现，再给方案”。取舍如下：
@@ -97,6 +101,8 @@ plan 阶段的职责从“给方案”扩展为“先确认有没有现成实现
 - **复用结论落盘**：`plan.md` 记录检索记录、候选对比与“采用 / 借鉴 / 自建 / 排除”的理由；review 阶段核对这些结论的来源、许可证与维护状态。
 
 req 阶段同步记录技术约束（是否允许新增依赖、许可证政策、运行时下限、离线/私有部署、数据驻留、必须兼容接口），避免 plan 调研出“技术上可行但组织上不允许”的方案。
+
+操作细节与失败降级顺序见 [usage.md](usage.md)。
 
 ## 与 superpowers 的边界
 
