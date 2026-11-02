@@ -105,6 +105,19 @@ test('doctor 发现项目概览标记块残缺', () => {
   }
 });
 
+test('doctor 发现项目概览过期', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    rmSync(join(root, 'package.json'));
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.match(doctor.stdout, /项目概览可能过期/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('手改投影后 --check 与 doctor 能发现漂移', () => {
   const root = makeSandbox();
   try {

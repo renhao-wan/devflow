@@ -236,6 +236,34 @@ test('测试命令含反引号时安全渲染', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('概览写入事实指纹，时间戳变化不重写', () => {
+  const root = makeProject();
+  const first = generateOverview(root, { now: '2026-01-01T00:00:00.000Z' });
+  assert.match(first.content, /<!-- devflow:facts:[a-f0-9]{64} -->/);
+  const second = generateOverview(root, { now: '2026-01-02T00:00:00.000Z' });
+  assert.equal(second.fingerprint, first.fingerprint);
+  assert.equal(second.changed, false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('已初始化但缺少概览时 init 会补生成', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-init-overview-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));
+  await initMain(['--root', root]);
+  rmSync(join(root, OVERVIEW_FILE));
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    await initMain(['--root', root]);
+  } finally {
+    console.log = original;
+  }
+  assert.equal(existsSync(join(root, OVERVIEW_FILE)), true);
+  assert.ok(logs.some((l) => /补生成项目概览/.test(l)), logs.join('\n'));
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('init 生成简版项目概览', async () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-init-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));

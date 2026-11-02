@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
-import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol } from './common.mjs';
+import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol, sha256 } from './common.mjs';
 import { detectTechStack } from './discover.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
 export const AUTO_START = '<!-- devflow:auto:start -->';
 export const AUTO_END = '<!-- devflow:auto:end -->';
+const FACTS_RE = /^<!-- devflow:facts:([a-f0-9]{64}) -->$/m;
 
 const SKIP_TOP = new Set(['.git', '.claude', 'node_modules', 'dist', 'build', 'target', 'coverage']);
 
@@ -119,10 +120,11 @@ export function readHubFacts(root) {
   return { subprojects, rootTest: config.defaults?.testCommand || null };
 }
 
-export function buildAutoSection({ facts, subprojects, rootTest, now, full }) {
+export function buildAutoSection({ facts, subprojects, rootTest, now, full, fingerprint }) {
   const lines = [
     AUTO_START,
     `> 本节由 devflow 自动生成（${now}），运行 \`/devflow:onboard\` 重扫会刷新，请勿手改。`,
+    `<!-- devflow:facts:${fingerprint} -->`,
     '',
     '### 技术栈',
     ...(facts.techStack.length ? facts.techStack.map((t) => `- ${t}`) : ['- 未识别到常见构建文件']),
@@ -153,6 +155,23 @@ export function buildAutoSection({ facts, subprojects, rootTest, now, full }) {
   return lines.join('\n');
 }
 
+/** 事实指纹：只覆盖会影响自动段的结构信息，不含时间戳。 */
+export function factsFingerprint({ facts, subprojects, rootTest }) {
+  return sha256(JSON.stringify({
+    techStack: facts.techStack,
+    topDirs: facts.topDirs,
+    entrypoints: facts.entrypoints,
+    ci: facts.ci,
+    subprojects: subprojects.map((s) => ({ path: s.path, testCommand: s.testCommand || null })),
+    rootTest: rootTest || null,
+  }));
+}
+
+export function readFactsFingerprint(text) {
+  const m = FACTS_RE.exec(normalizeEol(text));
+  return m ? m[1] : null;
+}
+
 const AUTO_RE = new RegExp(
   `${AUTO_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AUTO_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
 );
@@ -181,7 +200,8 @@ export function upsertAutoBlock(current, block) {
 export function generateOverview(root, { full = true, now = new Date().toISOString(), write = true } = {}) {
   const hub = readHubFacts(root);
   const facts = scanFacts(root, { subprojectPaths: hub.subprojects.map((s) => s.path) });
-  const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full });
+  const fingerprint = factsFingerprint({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest });
+  const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full, fingerprint });
   const hubDir = join(root, '.claude', 'hub');
   const file = join(root, OVERVIEW_FILE);
   if (write && (!isPathInside(root, hubDir) || !isRealPathInside(root, hubDir)
@@ -201,6 +221,7 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
     content: write && !changed ? raw : next,
     changed,
     facts,
+    fingerprint,
     subprojects: hub.subprojects,
   };
 }

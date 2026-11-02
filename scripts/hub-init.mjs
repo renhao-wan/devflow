@@ -13,7 +13,7 @@ import {
 } from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 import { discoverSubprojects, detectTestCommand } from './lib/discover.mjs';
-import { generateOverview } from './lib/overview.mjs';
+import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
 
@@ -202,6 +202,14 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (existsSync(hubFile) && !force) {
     log('warn', `已经初始化：${posix(hubFile)}。使用 --force 覆盖 hub.yaml 与模板；升级模板请用 /devflow:sync。`);
+    if (!existsSync(join(root, OVERVIEW_FILE))) {
+      try {
+        generateOverview(root, { full: false });
+        log('ok', `补生成项目概览 ${OVERVIEW_FILE}（运行 /devflow:onboard 深度重扫）`);
+      } catch (err) {
+        log('warn', `补生成项目概览失败：${err.message}`);
+      }
+    }
   } else {
     ensureDir(join(root, '.claude', 'hub', 'stages'));
     ensureDir(join(root, '.claude', 'hub', '_shared'));

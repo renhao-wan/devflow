@@ -7,7 +7,9 @@ import {
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
-import { OVERVIEW_FILE, AUTO_START, AUTO_END } from './lib/overview.mjs';
+import {
+  OVERVIEW_FILE, AUTO_START, AUTO_END, scanFacts, readHubFacts, factsFingerprint, readFactsFingerprint,
+} from './lib/overview.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE, isStale, loadEcosystem, loadState,
   summarizeState, validateConfig,
@@ -203,10 +205,21 @@ export async function main(argv = process.argv.slice(2)) {
       const text = readText(overviewFile);
       const starts = text.split(AUTO_START).length - 1;
       const ends = text.split(AUTO_END).length - 1;
-      if (starts === 1 && ends === 1) {
-        add('ok', '项目概览标记块完整');
-      } else {
+      if (starts !== 1 || ends !== 1) {
         add('warn', `项目概览自动段标记异常（start=${starts}，end=${ends}），运行 /devflow:onboard 重建`, '/devflow:onboard');
+      } else {
+        add('ok', '项目概览标记块完整');
+        const hub = readHubFacts(root);
+        const facts = scanFacts(root, { subprojectPaths: hub.subprojects.map((s) => s.path) });
+        const expected = factsFingerprint({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest });
+        const actual = readFactsFingerprint(text);
+        if (!actual) {
+          add('warn', '项目概览缺少事实指纹，运行 /devflow:onboard 重建', '/devflow:onboard');
+        } else if (actual !== expected) {
+          add('warn', '项目概览可能过期（项目结构已变化），运行 /devflow:onboard 刷新', '/devflow:onboard');
+        } else {
+          add('ok', '项目概览与当前项目结构一致');
+        }
       }
     }
   }
