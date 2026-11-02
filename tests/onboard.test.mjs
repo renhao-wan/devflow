@@ -189,6 +189,22 @@ test('读取 CRLF 文件时统一行尾', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('测试命令含反引号时安全渲染', () => {
+  const root = makeProject();
+  writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+    'version: 1',
+    'stages:',
+    '  - req',
+    'subprojects: {}',
+    'defaults:',
+    '  testCommand: "echo `x`"',
+    '',
+  ].join('\n'));
+  const result = generateOverview(root, { now: 'fixed' });
+  assert.ok(result.content.includes('`` echo `x` ``'), result.content);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('init 生成简版项目概览', async () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-init-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));

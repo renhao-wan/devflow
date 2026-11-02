@@ -34,6 +34,15 @@ function safeReaddir(dir) {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }
 
+/** 行内代码：围栏比内容中最长的反引号多一个，避免值里的反引号截断 Markdown。 */
+function codeSpan(value) {
+  const s = String(value).replace(/\r?\n/g, ' ');
+  const longest = Math.max(0, ...(s.match(/`+/g) || []).map((m) => m.length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = s.startsWith('`') || s.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${s}${pad}${fence}`;
+}
+
 export function scanFacts(root, { full = true, subprojectPaths = [] } = {}) {
   const techStack = [];
   const seen = new Set();
@@ -90,21 +99,21 @@ export function buildAutoSection({ facts, subprojects, rootTest, now, full }) {
     '',
     '### 子项目与测试命令',
     ...(subprojects.length
-      ? subprojects.map((s) => `- \`${s.path}\`${s.testCommand ? ` → \`${s.testCommand}\`` : ' → 未探测到测试命令'}`)
+      ? subprojects.map((s) => `- ${codeSpan(s.path)}${s.testCommand ? ` → ${codeSpan(s.testCommand)}` : ' → 未探测到测试命令'}`)
       : ['- 单项目（无子项目）']),
-    `- 根目录测试：${rootTest ? `\`${rootTest}\`` : '未探测到'}`,
+    `- 根目录测试：${rootTest ? codeSpan(rootTest) : '未探测到'}`,
     '',
     '### 顶层目录',
-    ...(facts.topDirs.length ? facts.topDirs.map((d) => `- \`${d}/\``) : ['- 无']),
+    ...(facts.topDirs.length ? facts.topDirs.map((d) => `- ${codeSpan(`${d}/`)}`) : ['- 无']),
   ];
   if (full) {
     lines.push(
       '',
       '### 关键入口',
-      ...(facts.entrypoints.length ? facts.entrypoints.map((p) => `- \`${p}\``) : ['- 未识别到常见入口文件']),
+      ...(facts.entrypoints.length ? facts.entrypoints.map((p) => `- ${codeSpan(p)}`) : ['- 未识别到常见入口文件']),
       '',
       '### GitHub Actions',
-      ...(facts.ci.length ? facts.ci.map((f) => `- \`.github/workflows/${f}\``) : ['- 未发现 GitHub Actions 工作流']),
+      ...(facts.ci.length ? facts.ci.map((f) => `- ${codeSpan(`.github/workflows/${f}`)}`) : ['- 未发现 GitHub Actions 工作流']),
       '',
       '### 待确认',
       '- 以上基于目录与构建文件的启发式结果，请结合代码核对；未识别的技术栈补充到“项目补充”。',
