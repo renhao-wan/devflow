@@ -7,6 +7,7 @@ import {
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
+import { OVERVIEW_FILE, AUTO_START, AUTO_END } from './lib/overview.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE, isStale, loadEcosystem, loadState,
   summarizeState, validateConfig,
@@ -191,6 +192,22 @@ export async function main(argv = process.argv.slice(2)) {
       }
     } catch (err) {
       add('error', err.message);
+    }
+  }
+
+  if (config) {
+    const overviewFile = join(root, OVERVIEW_FILE);
+    if (!existsSync(overviewFile)) {
+      add('warn', `缺少 ${OVERVIEW_FILE}，运行 /devflow:onboard 生成项目概览`, '/devflow:onboard');
+    } else {
+      const text = readText(overviewFile);
+      const starts = text.split(AUTO_START).length - 1;
+      const ends = text.split(AUTO_END).length - 1;
+      if (starts === 1 && ends === 1) {
+        add('ok', '项目概览标记块完整');
+      } else {
+        add('warn', `项目概览自动段标记异常（start=${starts}，end=${ends}），运行 /devflow:onboard 重建`, '/devflow:onboard');
+      }
     }
   }
 
