@@ -57,11 +57,32 @@ test('重扫只更新自动段，保留人工补充', () => {
   generateOverview(root, { full: true, now: '2026-11-02T00:00:00.000Z' });
   const file = join(root, OVERVIEW_FILE);
   writeFileSync(file, `${readFileSync(file, 'utf8')}\n人工笔记：领域术语\n`);
+  writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+    'version: 1',
+    'stages:',
+    '  - req',
+    'subprojects: {}',
+    'defaults:',
+    '  testCommand: "npm run test:changed"',
+    '',
+  ].join('\n'));
   generateOverview(root, { full: true, now: '2026-11-03T00:00:00.000Z' });
   const text = readFileSync(file, 'utf8');
   assert.match(text, /人工笔记：领域术语/);
+  assert.match(text, /npm run test:changed/);
   assert.match(text, /2026-11-03/);
   assert.doesNotMatch(text, /2026-11-02/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('内容未变时不重写文件，也不更新时间戳', () => {
+  const root = makeProject();
+  const first = generateOverview(root);
+  const before = readFileSync(first.file, 'utf8');
+  const second = generateOverview(root);
+  assert.equal(second.changed, false);
+  assert.equal(readFileSync(second.file, 'utf8'), before);
+  assert.equal(second.content, before);
   rmSync(root, { recursive: true, force: true });
 });
 

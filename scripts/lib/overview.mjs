@@ -103,6 +103,12 @@ const AUTO_RE = new RegExp(
   `${AUTO_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AUTO_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
 );
 
+// 时间戳只表示扫描时间，不参与“内容是否变化”的判断。
+const STAMP_RE = /^> 本节由 devflow 自动生成（[^）]*）/m;
+function withoutStamp(text) {
+  return text.replace(STAMP_RE, '> 本节由 devflow 自动生成（STAMP）');
+}
+
 export function upsertAutoBlock(current, block) {
   if (!current) {
     return `${block}\n\n## 项目补充\n\n（在此记录业务背景、领域术语与阅读顺序。重扫不会覆盖本节。）\n`;
@@ -123,10 +129,16 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
   }
   const current = existsSync(file) ? readText(file) : '';
   const next = upsertAutoBlock(current, block);
-  const changed = next !== current;
+  const changed = withoutStamp(next) !== withoutStamp(current);
   if (write && changed) {
-    ensureDir(join(root, '.claude', 'hub'));
+    ensureDir(hubDir);
     writeAtomic(file, next);
   }
-  return { file, content: next, changed, facts, subprojects: hub.subprojects };
+  return {
+    file,
+    content: write && !changed ? current : next,
+    changed,
+    facts,
+    subprojects: hub.subprojects,
+  };
 }
