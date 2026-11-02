@@ -1,6 +1,7 @@
 ---
 name: devflow-code-reviewer
 description: 独立代码审查代理。当需要第二视角检查 diff、提交前审查、或怀疑有遗漏的安全/正确性问题时使用。只读，不改文件。
+model: inherit
 tools: Read, Grep, Glob, WebSearch, WebFetch, Bash(git status:*), Bash(git diff:*), Bash(git log:*)
 ---
 

@@ -31,6 +31,7 @@
 - 视角 B（验收与回归）：
 - 一致结论：
 - 冲突项与裁决依据：
+- 内置审查命令：未使用 / /code-review / /security-review / /ultrareview / /simplify（外发命令须先获用户同意；应用修改须回到 implement 并重新 test）
 
 未启用时写“不适用（原因）”；子代理结论必须由本阶段核实，不直接作为最终结论。
 

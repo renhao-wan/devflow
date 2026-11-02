@@ -19,6 +19,7 @@
 | `Agent` / 子代理 | `debug`、`test`、`review` 可调用三个项目子代理；`debug` 支持并行假设验证 | 工具名可能为 `Task` 或 `Agent` | 工具不可用时在主上下文执行 |
 | 并行子代理 | `debug` 对 ≥2 个独立假设并行调查；`review` 高风险时并行双视角审查 | 一条消息发起多个 Agent 调用 | 串行执行或主上下文分视角自查 |
 | 子代理命名 | 文档使用 `devflow:<agent>`；旧版本可能为裸名 | 取决于插件命名空间 | 以 `/agents` 列表中的名称为准 |
+| 子代理模型 | `devflow-test-runner` 用 `model: haiku`；reviewer 与 debug-investigator 用 `model: inherit` | 支持 agent `model` 字段的版本 | 不支持时删除 `model` 行，按默认模型运行 |
 | `AskUserQuestion` | 多 slug、软阈值、升级与委派确认 | 交互会话 | 非交互模式回退为文本提问 |
 | `/goal` | `implement`、`test`、`debug` 可选完成条件模板与入口提示；不自动设置 | 2.1.139+ | 不使用 goal，按产物与测试门禁推进 |
 | plan mode | `plan` 阶段在用户同意后用 `EnterPlanMode` / `ExitPlanMode`；plan mode 内不写文件 | 交互会话 | 直接在普通模式调研并写 `plan.md` |
@@ -28,7 +29,7 @@
 | statusline | 可选脚本读取 `devflow status --json` 数据 | 用户配置 | 不配置时用 `/devflow:status` |
 | `context: fork` | 只读调研技能在独立上下文运行 | 较新版本 | 不支持时普通技能执行 |
 | `disallowed-tools` | 只读调研技能显式禁用写工具 | 较新版本 | 不支持时靠 `allowed-tools` 限制 |
-| 内置审查命令 | review 阶段建议按风险使用 `/ultrareview`、`/security-review` 等 | 取决于命令可用性 | 使用 `devflow-code-reviewer` |
+| 内置审查命令 | review 阶段可选 `/code-review`；`/security-review`、`/ultrareview` 需用户确认；`/simplify` 改动后回 implement | 取决于命令可用性 | 使用 `devflow-code-reviewer`，跳过并记录“未使用” |
 | MCP | 不作为依赖；需手动登记到 `ecosystem.yaml` | 可选 | 未登记时路由看不到 MCP 工具 |
 
 ## 子代理命名
@@ -47,6 +48,7 @@
 - **不猜测版本号**：除 `/goal` 外，本文不为其他能力标注精确最低版本；以实际工具列表和 `claude --help` 为准。
 - **非交互模式**：`-p`、Remote Control 或权限模式不允许提问时，不调用 `AskUserQuestion`，改为文本列出选项。
 - **hook 兼容**：现有 `hooks.json` 使用 `command` 字符串形式；新版 `args` 执行形式作为可选优化，不强制启用。
+- **子代理模型**：`model` 字段不可用或导致加载失败时，删除对应行即可恢复默认模型；不改变代理的工具限制与提示。
 - **外发边界**：`/ultrareview`、`/security-review` 等可能调用云端服务，必须由用户确认后执行。
 
 ## 明确不使用的能力

@@ -1,6 +1,7 @@
 ---
 name: devflow-test-runner
 description: 测试执行代理。当需要运行测试、定位失败用例、给出真实测试报告时使用。会运行命令，但不修改业务代码。
+model: haiku
 tools: Read, Grep, Glob, Bash(*)
 ---
 

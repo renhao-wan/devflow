@@ -133,3 +133,36 @@ test('工程流程技能汇总原生协作并保留文本降级', () => {
   assert.match(flow, /Explore/);
   assert.match(flow, /并行/);
 });
+
+test('子代理按职责设置模型并保留兼容回退', () => {
+  const models = {
+    'agents/devflow-test-runner.md': 'haiku',
+    'agents/devflow-code-reviewer.md': 'inherit',
+    'agents/devflow-debug-investigator.md': 'inherit',
+  };
+  for (const [rel, model] of Object.entries(models)) {
+    const fm = parseFrontmatter(read(rel));
+    assert.equal(fm.model, model, `${rel} 的 model 应为 ${model}`);
+  }
+  const doc = read('docs/native-capabilities.md');
+  assert.match(doc, /model: haiku/);
+  assert.match(doc, /model: inherit/);
+  assert.match(doc, /删除 `model` 行/);
+});
+
+test('review 阶段与内置审查命令协作且限制外发与修改', () => {
+  const docs = [
+    'skills/review/SKILL.md',
+    'templates/stages/review/SKILL.md',
+  ];
+  for (const rel of docs) {
+    const body = read(rel);
+    for (const command of ['/code-review', '/security-review', '/ultrareview', '/simplify']) {
+      assert.ok(body.includes(command), `${rel} 缺少 ${command}`);
+    }
+    assert.match(body, /明确同意|先获用户明确同意/, `${rel} 未要求外发前确认`);
+    assert.match(body, /回到 implement/, `${rel} 未要求应用修改后回到实现`);
+    assert.match(body, /未使用/, `${rel} 未说明不可用时记录`);
+  }
+  assert.match(read('templates/stages/review/templates/review.template.md'), /内置审查命令/);
+});
