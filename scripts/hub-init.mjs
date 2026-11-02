@@ -111,11 +111,16 @@ function copyTree(src, dst, overwrite) {
   return copied;
 }
 
+const TEMPLATE_ROOTS = [
+  { src: 'templates/stages', dest: 'stages' },
+  { src: 'templates/shared', dest: '_shared' },
+];
+
 function copyStageTemplates(pluginRoot, root, force) {
   let copied = 0;
-  for (const stage of STAGES) {
-    const srcDir = join(pluginRoot, 'templates', 'stages', stage);
-    const dstDir = join(root, '.claude', 'hub', 'stages', stage);
+  for (const def of TEMPLATE_ROOTS) {
+    const srcDir = join(pluginRoot, ...def.src.split('/'));
+    const dstDir = join(root, '.claude', 'hub', def.dest);
     if (!existsSync(srcDir)) continue;
     ensureDir(dstDir);
     copied += copyTree(srcDir, dstDir, force);
@@ -123,24 +128,34 @@ function copyStageTemplates(pluginRoot, root, force) {
   return copied;
 }
 
-/** 记录阶段源文件哈希，供 /devflow:sync 判断本地是否手改过。
- * 只记录“内容仍等于插件模板”的文件；初始化时因已存在而跳过的文件若已被手改，
- * 不能当作基线，否则 sync 会把本地改动误判成模板更新。
+/** 记录源文件基线，供 /devflow:sync 做三方合并。
+ * 同时写入哈希账本和 `.claude/.hub-bases/` 快照：账本判断“本地是否手改”，
+ * 快照作为 git merge-file 的 base，能自动合并双方都改过的文件。
  */
 function writeSourceManifest(root, version, pluginRoot) {
-  const hubDir = join(root, '.claude', 'hub');
+  const hubRoot = join(root, '.claude', 'hub');
   const files = {};
-  for (const abs of walk(join(hubDir, 'stages'))) {
-    const rel = relPosix(hubDir, abs);
-    if (isGeneratedArtifact(rel)) continue;
-    const tpl = join(pluginRoot, 'templates', ...rel.split('/'));
-    if (!existsSync(tpl)) continue;
-    const hash = contentHash(readText(abs));
-    if (hash !== contentHash(readText(tpl))) continue;
-    files[`.claude/hub/${rel}`] = hash;
+  for (const def of TEMPLATE_ROOTS) {
+    const hubDir = join(hubRoot, def.dest);
+    const tplDir = join(pluginRoot, ...def.src.split('/'));
+    if (!existsSync(hubDir)) continue;
+    for (const abs of walk(hubDir)) {
+      const rel = relPosix(hubDir, abs);
+      if (isGeneratedArtifact(rel)) continue;
+      const tpl = join(tplDir, ...rel.split('/'));
+      if (!existsSync(tpl)) continue;
+      const text = readText(abs);
+      const hash = contentHash(text);
+      if (hash !== contentHash(readText(tpl))) continue;
+      const destRel = `.claude/hub/${def.dest}/${rel}`;
+      files[destRel] = { base: hash, local: hash };
+      const baseFile = join(root, '.claude', '.hub-bases', def.dest, ...rel.split('/'));
+      ensureDir(dirname(baseFile));
+      writeAtomic(baseFile, readText(tpl));
+    }
   }
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     pluginVersion: version,
     files,
@@ -156,6 +171,7 @@ scripts/devflow-test.mjs
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
 .claude/.hub-sources.json
+.claude/.hub-bases/
 .claude/.devflow-state.json
 .claude/.ecosystem-state.json
 .devflow.json
