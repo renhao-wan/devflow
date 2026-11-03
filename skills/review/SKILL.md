@@ -1,7 +1,7 @@
 ---
 name: review
 description: 审查阶段：以缺陷为导向检查 diff，输出阻断项与建议项
-argument-hint: [范围或 slug] [--force-devflow]
+argument-hint: [slug] [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only] [--base <ref>] [--force-devflow]
 allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(node:*), Bash(devflow:*)
 ---
 
@@ -17,7 +17,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
 2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`，按 slug 去重：只有一个候选就采用；多个时用 `AskUserQuestion` 让用户选择，不要自行挑选，也不要用 `latest` 代替；无法提问时列出候选并等待回复。没有候选时提示先运行 `/devflow:status` 或确认 slug。
 3. 运行审查 triage，得到是否必审、风险等级、选中方向与子代理上限：
-   `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug> --write`（未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/review-triage.mjs`）。
+   `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug> --write`（未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/devflow-triage.mjs`）。
    - 用户指定方向：`--focus security`（可重复或逗号分隔）；指定后只审这些方向，其余方向会让位并留痕。
    - 用户指定数量：`--agents 0-4`；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查。
    - 分支对比：`--base <ref>`；默认只对比工作区与暂存改动。

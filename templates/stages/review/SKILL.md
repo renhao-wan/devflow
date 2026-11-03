@@ -15,7 +15,7 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 ## 执行步骤
 
 1. **看全量 diff**：先看范围，确认没有意外文件、无关改动、生成物。
-2. **运行 triage**：`node scripts/review-triage.mjs --root . --slug <slug> --write`（在插件内用 `${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs`）。它读取任务产物与 git 改动，输出 `trigger`（mandatory / required / auto / user / skipped）、风险等级 `level`、选中与排除方向、子代理上限与分组。
+2. **运行 triage**：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`；未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --write`（老项目未重建 loader 时回退插件根脚本）。它读取任务产物与 git 改动，输出 `trigger`（mandatory / required / auto / user / skipped）、风险等级 `level`、选中与排除方向、子代理上限与分组。
    - 用户指定方向时优先：`--focus security`（可重复或用逗号分隔）。只审这些方向，其余明确记为让位。
    - 用户指定数量：`--agents 0-4` 覆盖自动上限；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查。
    - `--base <ref>` 对比分支基线；默认只对比工作区与暂存改动。
