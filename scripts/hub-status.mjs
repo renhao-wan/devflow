@@ -5,6 +5,8 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
+import { collectChanges } from './lib/review.mjs';
+import { planDriftFor } from './lib/plan-drift.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
@@ -134,13 +136,19 @@ function stageOf(files, testsPending, reviewRequired = false) {
   return 'req';
 }
 
-export function buildStatus(root, { wanted = null } = {}) {
+export function buildStatus(root, { wanted = null, drift = true } = {}) {
   const state = readState(root);
 
   let slugs = scanSlugs(root);
   if (wanted) {
     slugs = slugs.filter((s) => s.slug === wanted);
     if (!slugs.length) return { missing: true };
+  }
+
+  // 只读一次 diff，供所有任务复用；非 git 或读取失败时返回 null，不影响阶段推导。
+  let changes = null;
+  if (drift && slugs.length) {
+    try { changes = collectChanges(root); } catch { changes = null; }
   }
 
   // 只有一个任务（或显式指定）时，才能把全局 testsPending 归到它名下。
@@ -164,6 +172,7 @@ export function buildStatus(root, { wanted = null } = {}) {
       : null;
     if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
+    const planDrift = changes ? planDriftFor(root, item.slug, { changes }) : null;
     return {
       slug: item.slug,
       stage,
@@ -175,6 +184,7 @@ export function buildStatus(root, { wanted = null } = {}) {
       reviewGate: reviewGate
         ? { ok: reviewGate.ok, errors: reviewGate.errors, warnings: reviewGate.warnings }
         : null,
+      planDrift,
       artifacts: item.files,
       gap,
       next: NEXT[stage](item.slug),
@@ -190,6 +200,18 @@ export function buildStatus(root, { wanted = null } = {}) {
   }
   if (testsPending) {
     suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>"`);
+  }
+  if (state.lastTestStatus === 'failed') {
+    suggestions.push(`上次测试失败（exit ${state.lastTestExitCode ?? '?'}）；修复后重新运行并用 node scripts/devflow-test.mjs 记录结果`);
+  }
+  for (const row of rows) {
+    if (!row.planDrift || row.planDrift.skipped) continue;
+    if (row.planDrift.unplannedChanged.length) {
+      suggestions.push(`${row.slug}：有 ${row.planDrift.unplannedChanged.length} 个改动未列入计划（${row.planDrift.unplannedChanged.slice(0, 3).join('、')}${row.planDrift.unplannedChanged.length > 3 ? ' 等' : ''}）；确认是否需要更新计划或补测试`);
+    }
+    if (row.planDrift.plannedButUnchanged.length) {
+      suggestions.push(`${row.slug}：计划中的 ${row.planDrift.plannedButUnchanged.length} 个文件尚未改动；若已放弃请更新计划`);
+    }
   }
   for (const row of rows) {
     if (row.reviewGate && !row.reviewGate.ok) {
@@ -217,12 +239,22 @@ export function buildStatus(root, { wanted = null } = {}) {
     suggestions.push('工具检测结果缺失或过期；运行 devflow route --detect 更新');
   }
 
+  const lastTest = state.lastTestStatus
+    ? {
+      status: state.lastTestStatus,
+      exitCode: state.lastTestExitCode ?? null,
+      durationMs: state.lastTestDurationMs ?? null,
+      command: state.lastTestCommand ?? null,
+      at: state.lastTestAt ?? null,
+    }
+    : null;
+
   const report = {
     root: posix(root),
     activeSlug,
     inferred: Boolean(activeSlug && !wanted),
     slugs: rows,
-    state: { testsPending, hubPending: Boolean(state.hubPending) },
+    state: { testsPending, hubPending: Boolean(state.hubPending), lastTest },
     routing: {
       configured: eco.exists,
       mode: eco.config.routing.mode,
@@ -270,6 +302,16 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
+      if (row.planDrift && !row.planDrift.skipped) {
+        const unplanned = row.planDrift.unplannedChanged;
+        const missing = row.planDrift.plannedButUnchanged;
+        if (unplanned.length) {
+          console.log(`    计划外改动：${unplanned.slice(0, 5).join('、')}${unplanned.length > 5 ? ` 等 ${unplanned.length} 个` : ''}`);
+        }
+        if (missing.length) {
+          console.log(`    计划未改动：${missing.slice(0, 5).join('、')}${missing.length > 5 ? ` 等 ${missing.length} 个` : ''}`);
+        }
+      }
     }
     if (report.activeSlug && !wanted && report.slugs.length === 1) {
       console.log(`  未传 --slug 时默认使用：${report.activeSlug}`);
@@ -279,6 +321,10 @@ export async function main(argv = process.argv.slice(2)) {
     ? report.routing.availableTools.join('、')
     : '无（运行 devflow route --detect 更新）';
   console.log(`  路由：${report.routing.mode}${report.routing.configured ? '' : '（未配置）'}；可用工具：${tools}`);
+  if (report.state.lastTest) {
+    const test = report.state.lastTest;
+    console.log(`  最近测试：${test.status}${test.exitCode !== null ? `（exit ${test.exitCode}）` : ''}${test.durationMs !== null ? `，${test.durationMs}ms` : ''}`);
+  }
   const visibleSuggestions = report.slugs.length
     ? report.suggestions
     : report.suggestions.filter((s) => !s.startsWith('未发现进行中的任务'));

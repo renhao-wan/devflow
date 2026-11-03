@@ -114,7 +114,7 @@ function compact(report) {
 export async function main(argv = process.argv.slice(2)) {
   try {
     const input = await readInput();
-    const { report } = buildStatus(rootFrom(input, argv), {});
+    const { report } = buildStatus(rootFrom(input, argv), { drift: false });
     if (hasFlag(argv, '--json')) {
       emit(JSON.stringify(compact(report)));
     } else {
