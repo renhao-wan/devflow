@@ -77,14 +77,16 @@ test('用户指定方向优先，其余方向让位并记录原因', () => {
   assert.match(excluded.reason, /用户指定/);
 });
 
-test('用户指定方向数超过上限时明确记为超出上限', () => {
+test('用户指定方向数超过上限时保留方向并记为待补查', () => {
   const profile = profileChanges({
     files: [{ path: 'src/app.js', additions: 1, deletions: 0 }],
     focus: ['security', 'data', 'concurrency', 'deps', 'acceptance'],
   });
   assert.equal(profile.maxAgents, 4);
-  assert.equal(profile.selected.length, 4);
-  assert.ok(profile.excluded.some((r) => /超出代理上限/.test(r.reason)));
+  assert.equal(profile.selected.length, 5);
+  assert.equal(profile.assignments.flatMap((a) => a.directions).length, 4);
+  assert.ok(profile.deferred.some((r) => /超出代理上限/.test(r.reason)));
+  assert.equal(profile.excluded.some((r) => /超出代理上限/.test(r.reason)), false);
 });
 
 test('--no-subagents 与 --agents 0 把代理上限降为 0，但保留方向画像', () => {
@@ -93,10 +95,15 @@ test('--no-subagents 与 --agents 0 把代理上限降为 0，但保留方向画
   assert.equal(none.maxAgents, 0);
   assert.equal(none.capSource, 'none');
   assert.ok(none.ranked.some((r) => r.direction === 'security'));
+  assert.ok(none.selected.some((r) => r.direction === 'security'));
+  assert.equal(none.assignments.length, 0);
+  assert.ok(none.deferred.every((r) => /不派子代理/.test(r.reason)));
 
   const zero = profileChanges({ files, agents: 0 });
   assert.equal(zero.maxAgents, 0);
   assert.equal(zero.capSource, 'user');
+  assert.ok(zero.selected.some((r) => r.direction === 'security'));
+  assert.ok(zero.deferred.every((r) => /0 个代理/.test(r.reason)));
 });
 
 test('--focus-only 不派代理，并把命中方向记为排除', () => {
@@ -255,4 +262,135 @@ test('DIRECTIONS 与默认排除保持一致', () => {
   assert.equal(profile.selected.some((r) => r.direction === 'maintainability'), false);
   assert.equal(profile.selected.some((r) => r.direction === 'tests'), false);
   assert.ok(profile.excluded.some((r) => r.direction === 'maintainability'));
+});
+
+test('自动触发但未命中方向时补基线方向，不留空计划', () => {
+  const acceptance = buildReviewPlan({
+    flow: 'light-bug',
+    files: [{ path: 'src/api/contract.ts', additions: 2, deletions: 0 }],
+  });
+  assert.equal(acceptance.trigger, 'auto');
+  assert.ok(acceptance.selected.some((r) => r.direction === 'acceptance'));
+
+  const scale = buildReviewPlan({
+    flow: 'light-bug',
+    files: [{ path: 'src/app.js', additions: 250, deletions: 0 }],
+  });
+  assert.equal(scale.trigger, 'auto');
+  assert.deepEqual(scale.selected.map((r) => r.direction), ['correctness']);
+
+  const agents = buildReviewPlan({ flow: 'light-bug', agents: 2 });
+  assert.equal(agents.trigger, 'user');
+  assert.deepEqual(agents.selected.map((r) => r.direction), ['correctness']);
+  assert.ok(agents.assignments.some((a) => a.directions.includes('correctness')));
+});
+
+test('无法统计改动时不自动跳过，并给出基线方向', () => {
+  const plan = buildReviewPlan({ flow: 'light-bug', statsAvailable: false });
+  assert.equal(plan.trigger, 'auto');
+  assert.ok(plan.selected.some((r) => r.direction === 'correctness'));
+});
+
+test('特别风险下禁用子代理，方向保留且排除理由不误写低风险', () => {
+  const profile = profileChanges({
+    files: [
+      { path: 'src/auth/session.js', additions: 10, deletions: 1 },
+      { path: 'src/db/init.sql', additions: 20, deletions: 1 },
+    ],
+    noSubagents: true,
+  });
+  assert.equal(profile.level, 'special');
+  assert.ok(profile.selected.length >= 2);
+  assert.equal(profile.assignments.length, 0);
+  assert.ok(profile.excluded.every((r) => !/风险等级低/.test(r.reason)));
+  assert.ok(profile.deferred.every((r) => /不派子代理/.test(r.reason)));
+});
+
+test('统计规模只计源码，文档与测试不计入 codeFiles', () => {
+  const profile = profileChanges({
+    files: [
+      { path: 'README.md', additions: 300, deletions: 0 },
+      { path: 'tests/big.test.js', additions: 300, deletions: 0 },
+      { path: 'src/app.js', additions: 1, deletions: 0 },
+    ],
+  });
+  assert.equal(profile.stats.changedLines, 601);
+  assert.equal(profile.stats.codeChangedLines, 1);
+  assert.equal(profile.stats.codeFiles, 1);
+  // 测试路径本身带来 1 分，但 300 行测试不会因规模升级为 high。
+  assert.equal(profile.level, 'medium');
+
+  const docsOnly = profileChanges({
+    files: [
+      { path: 'README.md', additions: 300, deletions: 0 },
+      { path: 'src/app.js', additions: 1, deletions: 0 },
+    ],
+  });
+  assert.equal(docsOnly.level, 'low');
+});
+
+test('测试与规则定义中的正则文本不放大内容风险', () => {
+  const profile = profileChanges({
+    diffText: [
+      '+++ b/src/app.js',
+      '+const ok = 1;',
+      '+++ b/tests/review-triage.test.mjs',
+      '+const sql = "ALTER TABLE users";',
+      '+++ b/scripts/lib/review.mjs',
+      '+const re = /mutex|transaction/;',
+    ].join('\n'),
+  });
+  assert.equal(profile.ranked.length, 0);
+});
+
+test('CLI 拒绝 --focus-only 与 --focus 同时使用', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-triage-conflict-'));
+  try {
+    makeTask(root, 'a', { 'req.md': '# a\n' });
+    const r = run(['--root', root, '--slug', 'a', '--focus-only', '--focus', 'security']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /不能与 --focus 同时使用/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI 支持 --root= 形式', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-triage-eq-'));
+  try {
+    makeTask(root, 'a', { 'req.md': '# a\n' });
+    const r = run([`--root=${root}`, '--slug', 'a', '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.slug, 'a');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('未跟踪文件的内容参与风险扫描', () => {
+  const root = initRepo('devflow-triage-untracked-');
+  try {
+    makeTask(root, 'fix', { 'debug.md': '# debug\n' });
+    writeFileSync(join(root, 'schema.sql'), 'ALTER TABLE users ADD COLUMN age int;\n');
+    const r = run(['--root', root, '--json', '--slug', 'fix']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.trigger, 'auto');
+    assert.ok(r.json.selected.some((x) => x.direction === 'data'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI 在非 git 目录的轻量修复不会据空 diff 跳过', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-triage-nogit-bug-'));
+  try {
+    makeTask(root, 'fix', { 'debug.md': '# debug\n' });
+    const r = run(['--root', root, '--json', '--slug', 'fix']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.trigger, 'auto');
+    assert.ok(r.json.selected.length > 0);
+    assert.ok(r.json.warnings.some((w) => w.includes('不会据空 diff 自动跳过审查')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

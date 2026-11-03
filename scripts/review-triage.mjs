@@ -5,7 +5,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  argValue, hasFlag, isMain, projectRoot, writeText,
+  argValue, hasFlag, isMain, isPathInside, isRealPathInside, projectRoot, writeAtomic,
 } from './lib/common.mjs';
 import {
   DIRECTIONS,
@@ -91,10 +91,17 @@ function collectGit(root, base) {
     encoding: 'utf8',
   });
   if (probes.status !== 0 || probes.stdout.trim() !== 'true') {
-    return { changes: { files: [], diffText: '' }, warnings: ['当前目录不是 git 仓库，无法统计实际改动；画像仅依据任务产物。'] };
+    return {
+      changes: {
+        files: [], diffText: '', warnings: [], statsAvailable: false,
+      },
+      warnings: ['当前目录不是 git 仓库，无法统计实际改动；不会据空 diff 自动跳过审查。'],
+      statsAvailable: false,
+    };
   }
   if (base) checkBase(root, base);
-  return { changes: collectChanges(root, { base }), warnings: [] };
+  const changes = collectChanges(root, { base });
+  return { changes, warnings: changes.warnings, statsAvailable: changes.statsAvailable };
 }
 
 export function buildPlanFor(root, slug, {
@@ -106,7 +113,7 @@ export function buildPlanFor(root, slug, {
 } = {}) {
   const flow = detectFlow(root, slug);
   const reviewRequired = flow === 'light-bug' && readReviewMarker(root, slug) === 'required';
-  const { changes, warnings } = collectGit(root, base);
+  const { changes, warnings, statsAvailable } = collectGit(root, base);
   const plan = buildReviewPlan({
     flow,
     reviewRequired,
@@ -116,6 +123,7 @@ export function buildPlanFor(root, slug, {
     agents,
     noSubagents,
     focusOnly,
+    statsAvailable,
   });
   return { ...plan, warnings };
 }
@@ -128,6 +136,7 @@ export async function main(argv = process.argv.slice(2)) {
   const focusOnly = hasFlag(argv, '--focus-only');
   const base = argValue(argv, '--base', null);
   const focus = collectFocus(argv);
+  if (focusOnly && focus.length) throw new Error('--focus-only 不能与 --focus 同时使用');
   const agents = parseAgents(argValue(argv, '--agents', null));
 
   const slug = resolveSlug(root, argValue(argv, '--slug', null));
@@ -141,8 +150,13 @@ export async function main(argv = process.argv.slice(2)) {
   plan.slug = slug;
 
   if (write) {
+    const rel = `docs/devflow/${slug}/review-triage.json`;
     const out = join(root, 'docs', 'devflow', slug, 'review-triage.json');
-    writeText(out, `${JSON.stringify(plan, null, 2)}\n`);
+    // 目录或文件可能是符号链接/junction，不能只看词法路径。
+    if (!isPathInside(root, out) || !isRealPathInside(root, out)) {
+      throw new Error(`拒绝写入 ${rel}：目标指向项目外部`);
+    }
+    writeAtomic(out, `${JSON.stringify(plan, null, 2)}\n`);
   }
 
   if (json) {

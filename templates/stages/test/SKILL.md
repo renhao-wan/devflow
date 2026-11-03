@@ -19,7 +19,7 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 4. **手动验证不能替代测试**：涉及 UI/接口时补充手动步骤，但要在报告中单列。
 5. **记录结果**：测试通过后运行 `node scripts/devflow-test.mjs --command "<命令>"`，写入状态。
 6. **失败处理**：测试失败先进入 debug 阶段，不修改断言迁就实现。
-7. **判断后续**：同一 slug 存在多套产物时按完整流程优先（`plan.md` > `brief.md` > `debug.md`）。轻量修复运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`（未设置插件根时用 `node scripts/devflow-triage.mjs`）：`trigger` 为 `skipped` 时测试通过即完成，并记录基线检查结论；其他触发（`review: required`、用户指定方向/数量、或安全/数据/并发等风险信号）进入 `/devflow:review`。轻量功能与完整任务始终进入 review。
+7. **判断后续**：同一 slug 存在多套产物时按完整流程优先（`plan.md` > `brief.md` > `debug.md`）。轻量修复运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`（未设置插件根时用 `node scripts/devflow-triage.mjs`）：`trigger` 为 `skipped` 时测试通过即完成，并记录基线检查结论；其他触发（`review: required`、用户指定方向/数量、安全/数据/并发等风险信号，或无法统计改动时的 `auto`）进入 `/devflow:review`。轻量功能与完整任务始终进入 review。
 
 ## 可选完成条件（/goal）
 
@@ -53,4 +53,4 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - 不删除、跳过失败的测试来“通过”。
 - 不把未运行的测试写成通过。
 - 环境缺失导致无法运行时，明确报告缺失项，而不是猜测结果。
-- 不把普通小 bug 默认推进 review；是否需要 review 以 `debug.md` 顶部的 `review: required` 为准。
+- 不把普通小 bug 默认推进 review；轻量修复是否需要 review 由 test 阶段的 triage 按实际 diff 判定，`debug.md` 顶部的 `review: required` 是显式要求并优先于跳过结论。

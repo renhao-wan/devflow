@@ -77,6 +77,12 @@ function triageOf(root, slug) {
   }
 }
 
+/** triage 快照早于 debug.md 时可能已过期，只提示重跑，不改变阶段判定。 */
+function triageIsStale(root, slug) {
+  const dir = join(root, 'docs', 'devflow', slug);
+  return mtimeOf(join(dir, 'debug.md')) > mtimeOf(join(dir, 'review-triage.json'));
+}
+
 // 只读 debug.md 前 10 行判断是否需要独立 review；读取失败按普通小 bug 处理。
 // 标记须独占一行且为小写，可带引号；写在正文后面不生效。
 function needsReview(root, slug) {
@@ -144,16 +150,21 @@ export function buildStatus(root, { wanted = null } = {}) {
     const flow = flowOf(item.files);
     // reviewRequired 只对轻量修复有意义：轻量功能始终 review，完整流程也会 review。
     const triage = flow === 'light-bug' ? triageOf(root, item.slug) : null;
+    const markerRequired = flow === 'light-bug' ? needsReview(root, item.slug) : false;
+    // 显式标记优先于 triage 的跳过结论，避免后续补标记被旧快照覆盖。
     const reviewRequired = flow === 'light-bug'
-      ? (triage ? triage.trigger !== 'skipped' : needsReview(root, item.slug))
+      ? (markerRequired || (triage ? triage.trigger !== 'skipped' : false))
       : false;
+    const triageStale = triage ? triageIsStale(root, item.slug) : false;
     const stage = stageOf(item.files, pending, reviewRequired);
     return {
       slug: item.slug,
       stage,
       flow,
       reviewRequired,
-      reviewTriage: triage ? { trigger: triage.trigger, level: triage.level ?? null } : null,
+      reviewTriage: triage
+        ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
+        : null,
       artifacts: item.files,
       gap: GAP[stage],
       next: NEXT[stage](item.slug),
@@ -237,9 +248,10 @@ export async function main(argv = process.argv.slice(2)) {
       const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
       const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
       const triage = row.reviewTriage?.trigger === 'skipped' ? '，审查已跳过（triage）' : '';
+      const stale = row.reviewTriage?.stale ? '，triage 可能过期，建议重跑' : '';
       const gap = row.gap ? `（缺少 ${row.gap}）` : '';
       console.log(`  ${row.slug}`);
-      console.log(`    阶段：${row.stage}${flow}${review}${triage}`);
+      console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}`);
       console.log(`    产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }

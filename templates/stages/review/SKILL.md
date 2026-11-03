@@ -15,10 +15,11 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 ## 执行步骤
 
 1. **看全量 diff**：先看范围，确认没有意外文件、无关改动、生成物。
-2. **运行 triage**：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`；未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --write`（老项目未重建 loader 时回退插件根脚本）。它读取任务产物与 git 改动，输出 `trigger`（mandatory / required / auto / user / skipped）、风险等级 `level`、选中与排除方向、子代理上限与分组。
+2. **运行 triage**：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`；未设置 `CLAUDE_PLUGIN_ROOT` 时用项目内 loader `node scripts/devflow-triage.mjs --root . --slug <slug> --write`（loader 由 init 生成，旧项目未重建时先运行 `/devflow:init`）。它读取任务产物与 git 改动，输出 `trigger`（mandatory / required / auto / user / skipped）、风险等级 `level`、选中与排除方向、子代理上限与分组。
    - 用户指定方向时优先：`--focus security`（可重复或用逗号分隔）。只审这些方向，其余明确记为让位。
-   - 用户指定数量：`--agents 0-4` 覆盖自动上限；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查。
+   - 用户指定数量：`--agents 0-4` 覆盖自动上限；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
    - `--base <ref>` 对比分支基线；默认只对比工作区与暂存改动。
+   - 非 git、无 HEAD 或 diff 读取失败时不据空改动判跳过，而是按 `auto` 触发并给出基线方向。
    - `trigger=skipped` 时仍要写明基线检查结论与跳过理由，不能只写“无需审查”。
 3. **按风险排序**：先查 triage 选中的方向，再查正确性与数据安全，最后查边界与错误处理、风格。
 4. **逐项检查**：
@@ -31,13 +32,13 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 6. **核对复用与依赖**：完整任务读取 `plan.md` 的「调研与复用判断」，确认采用/借鉴/自建有可核对来源；新增依赖的许可证、维护状态、已知漏洞与 `req.md` 的技术约束不冲突；搜索失败或未验证项已披露。轻量功能/修复如未涉及依赖与调研，可写“不适用”；轻量修复涉及公共接口/契约、数据结构、迁移或依赖时必须已升级完整流程，`review: required` 只覆盖安全、数据、认证/权限/并发等不触发升级的风险。
 7. **给可执行结论**：每条问题写清文件:行号、问题、触发条件、建议。
 8. **区分阻断与建议**：阻断项必须修复；建议项可记录。
-9. **按画像派子代理**：数量不得超过 triage 的 `maxAgents`，方向以 `selected` 为准。分组如下，相关方向合并、异质方向分开：
+9. **按画像派子代理**：`selected` 是应审方向全集；实际派单数不得超过 `maxAgents`，`assignments` 给出分组，`deferred` 是超过上限或未分配代理、需要主上下文补查的方向。分组如下，相关方向合并、异质方向分开：
    - A：正确性 + 并发与状态
    - B：安全 + 依赖与供应链
    - C：验收与回归 + 测试质量
    - D：数据与迁移
    - E：可维护性
-   调用 `devflow:devflow-code-reviewer`（旧版本可能显示为 `devflow-code-reviewer`，以 `/agents` 列表为准）。`maxAgents=0` 时自己按选中方向审一遍。合并时区分一致项与冲突项，冲突以本地代码和测试证据裁决；子代理结论必须本地核实。方法可用 `devflow-code-review` 技能；已安装 superpowers 时也可用其 `requesting-code-review` / `receiving-code-review`，门禁与产物仍以本阶段为准。
+   调用 `devflow:devflow-code-reviewer`（旧版本可能显示为 `devflow-code-reviewer`，以 `/agents` 列表为准）。`maxAgents=0` 时自己按 `selected` 审一遍，`deferred` 中的方向也要覆盖。合并时区分一致项与冲突项，冲突以本地代码和测试证据裁决；子代理结论必须本地核实。方法可用 `devflow-code-review` 技能；已安装 superpowers 时也可用其 `requesting-code-review` / `receiving-code-review`，门禁与产物仍以本阶段为准。
 
 ## 审查触发与画像
 
@@ -46,7 +47,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 | 流程 | 触发规则 |
 | --- | --- |
 | 完整任务 / 轻量功能 / 未识别 | 必审（mandatory） |
-| 轻量修复 | `--focus` 或 `--agents>0` → user；`debug.md` 的 `review: required` → required；安全、数据、并发、依赖、契约等信号 → auto；否则 skipped |
+| 轻量修复 | `--focus` 或 `--agents>0` → user；`debug.md` 的 `review: required` → required；安全、数据、并发、依赖、契约、规模等信号 → auto；无法统计改动也按 auto；否则 skipped |
 
 - 风险等级：low / medium / high / special，对应子代理上限 0 / 1 / 2 / 4。
 - 用户显式方向或数量优先于自动结果；硬上限 4。
@@ -68,7 +69,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 - [ ] diff 中没有与本任务无关的改动。
 - [ ] 验收来源（`req.md` + `plan.md`、`brief.md` 或 `debug.md`）的每条标准都有实现或测试支撑，未覆盖项已明确接受。
 - [ ] 完整任务的复用判断有可核对来源；轻量功能涉及依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界或不可逆操作时已升级完整流程；轻量修复涉及公共接口/契约、数据结构/迁移、依赖或不可逆操作时已升级，安全/数据/认证/并发风险已通过 `review: required` 补审。
-- [ ] 子代理数量未超过 `maxAgents`，方向与 `selected` 一致；`excluded` 中的方向均有理由，没有被静默漏审。
+- [ ] 子代理数量未超过 `maxAgents`，派单方向与 `selected` 一致；`deferred` 中的方向已由主上下文补查；`excluded` 中的方向均有理由，没有被静默漏审。
 - [ ] 子代理结论已由本地代码与测试证据核实。
 - [ ] 搜索失败、未验证项与盲区已披露，没有被当作已确认事实。
 - [ ] 没有未处理的阻断级问题。

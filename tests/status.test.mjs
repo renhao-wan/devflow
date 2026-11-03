@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -511,6 +511,38 @@ test('status 在 triage 文件损坏时回退 review: required 标记', () => {
     assert.equal(r.json.slugs[0].reviewRequired, true);
     assert.equal(r.json.slugs[0].stage, 'review');
     assert.equal(r.json.slugs[0].reviewTriage, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 的显式 review: required 优先于 triage 的 skipped', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-triage-marker-'));
+  try {
+    const dir = makeTask(root, 'fix-marker');
+    writeFileSync(join(dir, 'debug.md'), '# debug\nreview: required\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'skipped', level: 'low' }));
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.json.slugs[0].reviewRequired, true);
+    assert.equal(r.json.slugs[0].stage, 'review');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 提示 triage 快照早于 debug.md 时可能过期', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-triage-stale-'));
+  try {
+    const dir = makeTask(root, 'fix-stale');
+    writeFileSync(join(dir, 'debug.md'), '# debug\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'skipped', level: 'low' }));
+    const later = new Date(Date.now() + 5000);
+    utimesSync(join(dir, 'debug.md'), later, later);
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.json.slugs[0].reviewTriage.stale, true);
+    assert.match(run(['--root', root]).stdout, /triage 可能过期/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

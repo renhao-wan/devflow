@@ -32,14 +32,15 @@ review 阶段先运行 `scripts/review-triage.mjs`，用任务产物与真实 di
 | 轻量修复 | 用户指定方向或数量（user）> `review: required` > 风险信号（auto）> 跳过（skipped） |
 
 - 方向：正确性、安全、数据与迁移、并发与状态、验收与回归、依赖与供应链、测试质量、可维护性。
-- 等级与子代理上限：low 0 / medium 1 / high 2 / special 4，硬上限 4。
+- 等级与子代理上限：low 0 / medium 1 / high 2 / special 4，硬上限 4。上限只限制实际派单，不裁剪 `selected`：未派单的选中方向写入 `deferred`，由主上下文补查。
 - 默认不派代理检查可维护性与测试质量，验收对照仅在 high / special 时派；未入选方向全部写入 `excluded` 并带理由。
-- 用户优先：`--focus security`（可重复或逗号分隔）只审指定方向；`--agents 0-4` 覆盖上限；`--no-subagents` 只审不派；`--focus-only` 只做基线检查。
-- `--base <ref>` 对比分支基线，默认比较工作区与暂存改动；`--write` 把计划写入 `docs/devflow/<slug>/review-triage.json`，`devflow status` 会读取其中的触发结果。
+- 用户优先：`--focus security`（可重复或逗号分隔）只审指定方向；`--agents 0-4` 覆盖上限；`--no-subagents` 只审不派；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
+- 统计口径：规模只计源码行数与源码文件数，文档、测试与生成物不计入；内容规则跳过测试与规则定义文件，避免自我放大；未跟踪文件会读取有限内容补足风险信号。
+- `--base <ref>` 对比分支基线，默认比较工作区与暂存改动；`--write` 把计划写入 `docs/devflow/<slug>/review-triage.json`，写入前校验真实路径不越出项目，`devflow status` 会读取其中的触发结果。
 
 代理分组：A 正确性 + 并发，B 安全 + 依赖，C 验收与回归 + 测试质量，D 数据与迁移，E 可维护性。子代理结论必须由本地代码与测试证据核实。
 
-脚本为只读；不在 git 仓库中时仍会依据任务产物给出计划，并在 `warnings` 中说明无法统计改动。
+脚本为只读；不在 git 仓库或无法读取 diff 时不依据空改动判跳过，而是按 `auto` 触发并给出基线方向，同时在 `warnings` 中说明原因。
 
 ## 方案调研与搜索失败处理
 

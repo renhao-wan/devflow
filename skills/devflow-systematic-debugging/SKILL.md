@@ -41,5 +41,5 @@ description: Use when something fails, errors, or behaves unexpectedly. Enforces
 
 ## 与 devflow 阶段配合
 
-- 在 debug 阶段使用；修复后回到 test 验证。轻量修复的普通小 bug 测试通过即结束，是否需要 review 以 `debug.md` 顶部 `review: required` 为准；完整任务与轻量功能在测试通过后进入 review。
+- 在 debug 阶段使用；修复后回到 test 验证。轻量修复的普通小 bug 测试通过后由 test 阶段的 triage 按实际 diff 判定是否审查（`review: required`、用户指定方向/数量或安全/数据/并发等风险信号会进入 review）；需要显式要求时在 `debug.md` 顶部写 `review: required`，它优先于 triage 的跳过结论。完整任务与轻量功能在测试通过后进入 review。
 - 需要并行调查时，使用 `devflow:devflow-debug-investigator` 子代理（旧版本可能显示为 `devflow-debug-investigator`，以 `/agents` 列表为准）。

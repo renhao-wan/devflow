@@ -1,7 +1,9 @@
-import { existsSync } from 'node:fs';
+import {
+  existsSync, lstatSync, readFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readText } from './common.mjs';
+import { isPathInside, readText } from './common.mjs';
 
 export const DIRECTIONS = [
   'correctness',
@@ -146,6 +148,15 @@ const CONTENT_RULES = [
 
 const DOC_PATTERN = /(^|\/)(docs?|documentation)(\/|$)|\.(md|mdx|rst|txt)$/i;
 const GENERATED_PATTERN = /(^|\/)(dist|build|coverage|node_modules)(\/|$)|\.(min|map)$/i;
+const TEST_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$/i;
+// 测试与规则定义里的正则文本会命中自身规则，扫描内容时跳过，避免自我放大。
+const CONTENT_SKIP_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$|(^|\/)scripts\/lib\/review\.mjs$/i;
+// 未跟踪文件没有 diff，读取有限内容补足风险信号；超过该大小按路径计分。
+const UNTRACKED_LIMIT = 64 * 1024;
+
+function isCodeFile(path) {
+  return !DOC_PATTERN.test(path) && !GENERATED_PATTERN.test(path) && !TEST_PATTERN.test(path);
+}
 
 function addSignal(map, signal) {
   const entry = map.get(signal.direction) || { score: 0, rules: new Set(), files: new Set(), reasons: new Set() };
@@ -172,13 +183,15 @@ function scanPath(file, map) {
 function scanDiff(text, map) {
   const lines = String(text || '').split(/\r?\n/);
   let current = null;
+  let skipContent = false;
   for (const line of lines) {
     if (line.startsWith('+++ ')) {
       current = line.slice(4).replace(/^b\//, '');
+      skipContent = CONTENT_SKIP_PATTERN.test(current);
       continue;
     }
     if (line.startsWith('--- ') || line.startsWith('@@') || line.startsWith('diff ')) continue;
-    if (!/^[+-]/.test(line)) continue;
+    if (skipContent || !/^[+-]/.test(line)) continue;
     const body = line.slice(1);
     for (const rule of CONTENT_RULES) {
       if (rule.re.test(body)) {
@@ -217,8 +230,9 @@ export function profileChanges({
   scanDiff(diffText, map);
 
   const changedLines = normalizedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0);
-  const codeFiles = normalizedFiles.filter((f) => !DOC_PATTERN.test(f.path) && !GENERATED_PATTERN.test(f.path));
-  const testFiles = normalizedFiles.filter((f) => /(\.test\.|\.spec\.|__tests__|\/tests?\/)/i.test(f.path));
+  const codeFiles = normalizedFiles.filter((f) => isCodeFile(f.path));
+  const codeChangedLines = codeFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0);
+  const testFiles = normalizedFiles.filter((f) => TEST_PATTERN.test(f.path));
 
   // 多文件命中同一方向只小幅加分，防止“文件多”被误判为高危。
   for (const [direction, entry] of map) {
@@ -242,7 +256,7 @@ export function profileChanges({
   let level = 'low';
   if (maxScore >= 5 || highDirections >= 2) level = 'special';
   else if (maxScore >= 3) level = 'high';
-  else if (maxScore >= 1 || codeFiles.length >= 4 || changedLines >= 30) level = 'medium';
+  else if (maxScore >= 1 || codeFiles.length >= 4 || codeChangedLines >= 30) level = 'medium';
 
   const focusList = [...new Set(focus)].filter((d) => DIRECTIONS.includes(d));
   const userSpecified = focusList.length > 0;
@@ -269,17 +283,7 @@ export function profileChanges({
         selected.push({ direction, score: 0, reasons: ['用户指定'], files: [], bonus: 0 });
       }
     }
-    selected = selected.slice(0, cap);
-    const selectedDirections = new Set(selected.map((r) => r.direction));
-    // 用户点名但被上限截掉的方向必须留痕，不能当成没提过。
-    for (const direction of focusList) {
-      if (selectedDirections.has(direction)) continue;
-      const known = ranked.find((r) => r.direction === direction);
-      excluded.push({
-        ...(known || { direction, score: 0, reasons: ['用户指定'], files: [], bonus: 0 }),
-        reason: `超出代理上限 ${cap}`,
-      });
-    }
+    selected.sort((a, b) => focusList.indexOf(a.direction) - focusList.indexOf(b.direction));
     for (const r of ranked) {
       if (!focusList.includes(r.direction)) {
         excluded.push({ ...r, reason: `用户指定 ${focusList.join('、')}，其余方向让位` });
@@ -292,7 +296,6 @@ export function profileChanges({
     }
   } else {
     for (const r of ranked) {
-      if (r.score < 1) continue;
       if (r.direction === 'maintainability') {
         excluded.push({ ...r, reason: '低风险，主阶段基线检查覆盖；需要时用 --focus maintainability' });
         continue;
@@ -307,30 +310,22 @@ export function profileChanges({
       }
       selected.push(r);
     }
-    selected = selected.slice(0, cap);
   }
 
-  const selectedDirections = new Set(selected.map((r) => r.direction));
+  // 代理上限只限制实际派单，不裁剪选中方向：用户要求与风险信号必须可追溯。
+  const dispatched = selected.slice(0, cap);
+  const dispatchedDirections = new Set(dispatched.map((r) => r.direction));
+  const deferred = selected
+    .filter((r) => !dispatchedDirections.has(r.direction))
+    .map((r) => ({ ...r, reason: capReason(cap, capSource) }));
+  const assignments = buildAssignments(dispatched);
+
   // 未入选方向显式记为排除，避免“没派代理”被误读成“已覆盖”。
+  const selectedDirections = new Set(selected.map((r) => r.direction));
   const excludedDirections = new Set(excluded.map((r) => r.direction));
   for (const r of ranked) {
     if (selectedDirections.has(r.direction) || excludedDirections.has(r.direction)) continue;
-    excluded.push({
-      ...r,
-      reason: cap === 0 ? '风险等级低，主阶段基线检查覆盖' : `超出代理上限 ${cap}`,
-    });
-  }
-  const assignments = AGENT_GROUPS
-    .map((group) => ({
-      agent: group.id,
-      directions: group.directions.filter((d) => selectedDirections.has(d)),
-    }))
-    .filter((group) => group.directions.length > 0);
-
-  // 未落入预设分组的方向单独成组，避免静默丢弃。
-  const grouped = new Set(assignments.flatMap((g) => g.directions));
-  for (const r of selected) {
-    if (!grouped.has(r.direction)) assignments.push({ agent: `X${r.direction}`, directions: [r.direction] });
+    excluded.push({ ...r, reason: '未入选本次审查方向' });
   }
 
   return {
@@ -339,6 +334,7 @@ export function profileChanges({
     capSource,
     selected,
     excluded,
+    deferred,
     assignments,
     ranked,
     stats: {
@@ -346,9 +342,35 @@ export function profileChanges({
       codeFiles: codeFiles.length,
       testFiles: testFiles.length,
       changedLines,
+      codeChangedLines,
       untracked: normalizedFiles.filter((f) => f.untracked).length,
     },
   };
+}
+
+function capReason(cap, capSource) {
+  if (cap === 0) {
+    if (capSource === 'none') return '用户要求不派子代理，主上下文按此方向自查';
+    if (capSource === 'user') return '用户指定 0 个代理，主上下文按此方向自查';
+    return '未分配子代理，主上下文基线检查覆盖';
+  }
+  return `超出代理上限 ${cap}，主上下文补查`;
+}
+
+function buildAssignments(dispatched) {
+  const directions = new Set(dispatched.map((r) => r.direction));
+  const assignments = AGENT_GROUPS
+    .map((group) => ({
+      agent: group.id,
+      directions: group.directions.filter((d) => directions.has(d)),
+    }))
+    .filter((group) => group.directions.length > 0);
+  // 未落入预设分组的方向单独成组，避免静默丢弃。
+  const grouped = new Set(assignments.flatMap((g) => g.directions));
+  for (const r of dispatched) {
+    if (!grouped.has(r.direction)) assignments.push({ agent: `X${r.direction}`, directions: [r.direction] });
+  }
+  return assignments;
 }
 
 export function readReviewMarker(root, slug) {
@@ -375,14 +397,17 @@ export function detectFlow(root, slug) {
 /** 从 git 收集工作区或分支差异；base 为空时比较 HEAD（工作区 + 暂存）。 */
 export function collectChanges(root, { base = null } = {}) {
   const range = base ? `${base}...HEAD` : 'HEAD';
-  const numstat = spawnSync('git', ['diff', '--numstat', '--find-renames', range], {
-    cwd: root,
-    encoding: 'utf8',
-  });
-  const diff = spawnSync('git', ['diff', '--no-color', '--unified=0', range], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  const numstat = spawnSync(
+    'git',
+    ['diff', '--numstat', '--find-renames', '--no-ext-diff', '--no-textconv', range],
+    { cwd: root, encoding: 'utf8' },
+  );
+  const diff = spawnSync(
+    'git',
+    ['diff', '--no-color', '--unified=0', '--no-ext-diff', '--no-textconv', range],
+    { cwd: root, encoding: 'utf8' },
+  );
+  const warnings = [];
   const files = [];
   if (numstat.status === 0) {
     for (const line of numstat.stdout.split(/\r?\n/).filter(Boolean)) {
@@ -394,29 +419,89 @@ export function collectChanges(root, { base = null } = {}) {
         deletions: removed === '-' ? 0 : Number(removed) || 0,
       });
     }
+  } else {
+    warnings.push('无法统计 git diff 的文件改动，改动规模可能不完整');
   }
   // 未跟踪文件不属于 diff，但仍是本次改动的一部分。
   const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
     cwd: root,
     encoding: 'utf8',
   });
+  const untrackedPaths = [];
   if (untracked.status === 0) {
     for (const line of untracked.stdout.split(/\r?\n/).filter(Boolean)) {
-      files.push({ path: line.trim(), additions: 0, deletions: 0, untracked: true });
+      const path = line.trim();
+      files.push({ path, additions: 0, deletions: 0, untracked: true });
+      untrackedPaths.push(path);
     }
+  } else {
+    warnings.push('无法读取未跟踪文件列表，新增文件可能未计入');
   }
-  return { files, diffText: diff.status === 0 ? diff.stdout : '' };
+  const parts = [];
+  if (diff.status === 0) parts.push(diff.stdout);
+  else warnings.push('无法读取 git diff 内容，内容风险信号可能缺失');
+  // 未跟踪文件没有 diff，读取有限内容补足密钥、迁移等信号。
+  for (const rel of untrackedPaths) {
+    const content = readUntrackedText(root, rel);
+    if (!content) continue;
+    const added = content.split(/\r?\n/).map((line) => `+${line}`).join('\n');
+    parts.push(`diff --git a/${rel} b/${rel}\n--- /dev/null\n+++ b/${rel}\n${added}`);
+  }
+  return {
+    files,
+    diffText: parts.join('\n'),
+    warnings,
+    statsAvailable: numstat.status === 0 && diff.status === 0,
+  };
 }
 
-function autoTrigger(profile, { flow, reviewRequired, userSpecified }) {
+function readUntrackedText(root, rel) {
+  try {
+    const abs = join(root, rel);
+    if (!isPathInside(root, abs)) return '';
+    const stat = lstatSync(abs);
+    // 不跟随符号链接，也不读取超大或二进制文件。
+    if (!stat.isFile() || stat.size > UNTRACKED_LIMIT) return '';
+    const buffer = readFileSync(abs);
+    if (buffer.includes(0)) return '';
+    return buffer.toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+function autoTrigger(profile, {
+  flow, reviewRequired, userSpecified, statsAvailable = true,
+}) {
   if (flow === 'full' || flow === 'light-feature' || flow === 'unknown') return 'mandatory';
   if (userSpecified) return 'user';
   if (reviewRequired) return 'required';
+  // 无法统计改动时不能据空 diff 判跳过，否则会静默漏审。
+  if (!statsAvailable) return 'auto';
   const highRisk = profile.ranked.find((r) =>
     ['security', 'data', 'concurrency', 'deps', 'acceptance'].includes(r.direction) && r.score >= 2);
   if (highRisk) return 'auto';
-  if (profile.stats.changedLines > 200 || profile.stats.codeFiles > 10) return 'auto';
+  if (profile.stats.codeChangedLines > 200 || profile.stats.codeFiles > 10) return 'auto';
   return 'skipped';
+}
+
+/** 触发审查但未命中方向时，补一个可执行的基线方向，避免“必审但无方向”。 */
+function ensureBaseline(profile) {
+  if (profile.selected.length) return profile;
+  const candidate = profile.ranked.find((r) => r.score >= 1)
+    || { direction: 'correctness', score: 0, reasons: ['基线检查'], files: [], bonus: 0 };
+  const baseline = {
+    ...candidate,
+    reasons: [...new Set([...(candidate.reasons || []), '触发审查但未命中具体方向，按基线方向审查'])],
+  };
+  const cap = profile.maxAgents;
+  return {
+    ...profile,
+    selected: [baseline],
+    excluded: profile.excluded.filter((r) => r.direction !== baseline.direction),
+    assignments: cap > 0 ? buildAssignments([baseline]) : [],
+    deferred: cap > 0 ? [] : [{ ...baseline, reason: capReason(cap, profile.capSource) }],
+  };
 }
 
 /**
@@ -432,8 +517,9 @@ export function buildReviewPlan({
   agents = null,
   noSubagents = false,
   focusOnly = false,
+  statsAvailable = true,
 } = {}) {
-  const profile = profileChanges({ files, diffText, focus, agents, noSubagents, focusOnly });
+  let profile = profileChanges({ files, diffText, focus, agents, noSubagents, focusOnly });
   const userSpecified = [...new Set(focus)].filter((d) => DIRECTIONS.includes(d)).length > 0;
   // 用户显式要求派代理，等同于要求审查，不能因为风险低而判成跳过。
   const explicitAgents = agents !== null && agents !== undefined
@@ -442,7 +528,12 @@ export function buildReviewPlan({
     flow,
     reviewRequired,
     userSpecified: userSpecified || explicitAgents,
+    statsAvailable,
   });
+  // 标记、用户或风险信号触发时必须给出可执行方向；mandatory 的低风险改动仍可由基线覆盖。
+  if (['auto', 'user', 'required'].includes(trigger) && !focusOnly) {
+    profile = ensureBaseline(profile);
+  }
   const base = {
     flow,
     trigger,
@@ -457,6 +548,7 @@ export function buildReviewPlan({
       capSource: 'skipped',
       selected: [],
       assignments: [],
+      deferred: [],
       excluded: [
         ...profile.excluded,
         ...profile.selected.map((r) => ({
@@ -500,11 +592,16 @@ export function renderPlan(plan) {
   } else {
     lines.push('选中方向：无（主阶段基线检查）');
   }
-  if (plan.excluded.length) {
-    lines.push(`排除方向：${plan.excluded.map((r) => `${DIRECTION_LABELS[r.direction]}（${r.reason}）`).join('；')}`);
-  }
   if (plan.assignments.length) {
     lines.push(`代理编排：${plan.assignments.map((a) => `${a.agent}:${a.directions.map((d) => DIRECTION_LABELS[d]).join('+')}`).join('；')}`);
+  } else if (plan.selected.length) {
+    lines.push('代理编排：未派子代理（主上下文按选中方向自查）');
+  }
+  if (plan.deferred?.length) {
+    lines.push(`主上下文补查：${plan.deferred.map((r) => `${DIRECTION_LABELS[r.direction]}（${r.reason}）`).join('；')}`);
+  }
+  if (plan.excluded.length) {
+    lines.push(`排除方向：${plan.excluded.map((r) => `${DIRECTION_LABELS[r.direction]}（${r.reason}）`).join('；')}`);
   }
   return lines.join('\n');
 }

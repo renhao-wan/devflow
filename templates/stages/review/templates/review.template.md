@@ -13,8 +13,9 @@ triage 输出：`docs/devflow/<slug>/review-triage.json`
 
 - 触发：mandatory / required / auto / user / skipped
 - 风险等级：low / medium / high / special（子代理上限 0 / 1 / 2 / 4）
-- 实际派代理数：
-- 选中方向：
+- 选中方向（应审全集）：
+- 实际派单：
+- 主上下文补查（`deferred`）：
 - 排除方向与理由：
 - 跳过时（`trigger=skipped`）的基线检查结论与依据：
 

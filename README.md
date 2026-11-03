@@ -89,7 +89,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | 小功能 | `/devflow:req --light <需求>` | `brief.md → test.md → review.md` | review 无阻断项 |
 | 小 bug | `/devflow:debug <问题>` | `debug.md → test.md` | triage 判定为 `skipped` 时测试通过即结束；其他触发补 review |
 
-轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 测试后由 triage 按实际 diff 判定——`review: required`、用户指定方向/数量、或安全、数据、并发等风险信号会进入 review，其余记录基线检查后结束。升级条件与完整规则见 [usage.md](docs/usage.md#轻量流程)。
+轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 测试后由 triage 按实际 diff 判定——`review: required`、用户指定方向/数量、或安全、数据、并发等风险信号会进入 review，非 git 或无法统计改动时也按 `auto` 处理、不自动跳过，其余记录基线检查后结束。升级条件与完整规则见 [usage.md](docs/usage.md#轻量流程)。
 
 ## 命令
 
