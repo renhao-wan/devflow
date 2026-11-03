@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  DIRECTIONS, buildReviewPlan, detectFlow, profileChanges, readReviewMarker,
+  DIRECTIONS, buildReviewPlan, detectFlow, evaluateEscalation, profileChanges, readReviewMarker,
 } from '../scripts/lib/review.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -16,9 +16,7 @@ const SCRIPT = join(ROOT, 'scripts', 'review-triage.mjs');
 function run(args, cwd = ROOT) {
   const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', cwd });
   let json = null;
-  if (r.status === 0) {
-    try { json = JSON.parse(r.stdout); } catch { json = null; }
-  }
+  try { json = JSON.parse(r.stdout); } catch { json = null; }
   return { ...r, json };
 }
 
@@ -390,6 +388,91 @@ test('CLI 在非 git 目录的轻量修复不会据空 diff 跳过', () => {
     assert.equal(r.json.trigger, 'auto');
     assert.ok(r.json.selected.length > 0);
     assert.ok(r.json.warnings.some((w) => w.includes('不会据空 diff 自动跳过审查')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('evaluateEscalation：普通小改动不升级', () => {
+  const profile = profileChanges({
+    files: [{ path: 'src/util.js', additions: 4, deletions: 2 }],
+    diffText: '+++ b/src/util.js\n+const a = 1;\n',
+  });
+  const verdict = evaluateEscalation(profile, { files: [{ path: 'src/util.js' }] });
+  assert.equal(verdict.escalate, false);
+  assert.equal(verdict.confident, true);
+  assert.deepEqual(verdict.reasons, []);
+});
+
+test('evaluateEscalation：风险方向命中即升级', () => {
+  const profile = profileChanges({
+    files: [{ path: 'src/auth/login.js', additions: 5, deletions: 1 }],
+    diffText: '+++ b/src/auth/login.js\n+const password = input;\n',
+  });
+  const verdict = evaluateEscalation(profile, { files: [{ path: 'src/auth/login.js' }] });
+  assert.equal(verdict.escalate, true);
+  assert.ok(verdict.reasons.some((r) => r.includes('权限/认证/支付/安全边界')));
+  assert.ok(verdict.signals.some((s) => s.direction === 'security'));
+});
+
+test('evaluateEscalation：规模与子项目阈值命中', () => {
+  const profile = profileChanges({
+    files: [{ path: 'src/a.js', additions: 201, deletions: 0 }],
+    diffText: '',
+  });
+  const byLines = evaluateEscalation(profile, { files: [{ path: 'src/a.js' }] });
+  assert.equal(byLines.escalate, true);
+  assert.ok(byLines.reasons.some((r) => r.includes('201 行')));
+
+  const many = profileChanges({
+    files: ['a', 'b', 'c'].map((name) => ({ path: `services/${name}/x.js`, additions: 1, deletions: 0 })),
+    diffText: '',
+  });
+  const bySubs = evaluateEscalation(many, {
+    files: ['a', 'b', 'c'].map((name) => ({ path: `services/${name}/x.js` })),
+    subprojects: {
+      a: { path: 'services/a' }, b: { path: 'services/b' }, c: { path: 'services/c' },
+    },
+  });
+  assert.equal(bySubs.escalate, true);
+  assert.ok(bySubs.reasons.some((r) => r.includes('3 个子项目')));
+});
+
+test('evaluateEscalation：无法统计 diff 时标记不完整', () => {
+  const profile = profileChanges({ files: [], diffText: '' });
+  const verdict = evaluateEscalation(profile, { statsAvailable: false, files: [] });
+  assert.equal(verdict.escalate, false);
+  assert.equal(verdict.confident, false);
+  assert.ok(verdict.warnings.some((w) => w.includes('升级判断不完整')));
+});
+
+test('CLI --escalate 命中时退出码 1，未命中为 0', () => {
+  const root = initRepo('devflow-escalate-');
+  try {
+    writeFileSync(join(root, 'safe.js'), 'const a = 1;\n');
+    baseline(root);
+    writeFileSync(join(root, 'safe.js'), 'const a = 2;\n');
+    const low = run(['--root', root, '--escalate', '--json']);
+    assert.equal(low.status, 0, low.stderr);
+    assert.equal(low.json.escalate, false);
+
+    mkdirSync(join(root, 'src', 'auth'), { recursive: true });
+    writeFileSync(join(root, 'src', 'auth', 'login.js'), 'const password = input;\n');
+    const high = run(['--root', root, '--escalate', '--json']);
+    assert.equal(high.status, 1, high.stderr);
+    assert.equal(high.json.escalate, true);
+    assert.ok(high.json.reasons.length > 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI --escalate 拒绝与审查参数混用', () => {
+  const root = initRepo('devflow-escalate-');
+  try {
+    const r = run(['--root', root, '--escalate', '--write']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /--escalate/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
