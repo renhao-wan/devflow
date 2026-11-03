@@ -28,4 +28,4 @@ node scripts/devflow-test.mjs --command "<实际使用的命令>"
 7. 将结果写入 `docs/devflow/<slug>/test.md`，包括：实际 slug、命令、环境、结果、覆盖说明、未覆盖项、手动验证项。
 8. 报告时先给出实际 slug 与 `docs/devflow/<实际 slug>/test.md` 路径，再区分「自动化已通过」「手动验证过」「未验证」，不得混写。
 9. 可选：测试跨多回合时，提示用户运行 `/goal` 设置本阶段完成条件（全量与针对性用例已执行、`test.md` 记录真实结果、失败项已处理或明确标记；模板见 `.claude/hub/stages/test/SKILL.md`）。插件不会自动设置 goal；goal 不替代门禁；测试命令或环境未确定时不要建议启用。
-10. 全部通过后：轻量功能与完整任务进入 `/devflow:review <实际 slug>`；轻量修复读取 `debug.md` 顶部前 10 行，标记 `review: required` 才进入审查，否则到此结束。测试失败按第 5 步转入 `/devflow:debug`。
+10. 全部通过后：轻量功能与完整任务进入 `/devflow:review <实际 slug>`；轻量修复先运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`（未设置插件根时用 `node scripts/devflow-triage.mjs`），`trigger` 不是 `skipped`（`review: required`、用户指定方向/数量、安全/数据/并发等风险信号，或无法统计改动时的 `auto`）时进入审查，否则记录基线检查后结束。测试失败按第 5 步转入 `/devflow:debug`。

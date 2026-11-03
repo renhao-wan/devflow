@@ -12,6 +12,7 @@
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与工具检测 | `--root` `--json` |
 | `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
+| `scripts/review-triage.mjs` | 判定审查触发、风险方向与子代理上限 | `--root` `--slug` `--base` `--focus` `--agents` `--no-subagents` `--focus-only` `--json` `--write` |
 | `scripts/statusline.mjs` | 输出单行进度，供 Claude Code `statusLine` 使用 | `--root` `--json` |
 | `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板到个人库、团队库或上游 | `--stage` `--shared` `--all` `--to` `--pr` `--apply` `--revert` `--force` `--root` `--plugin-root` `--personal-library` `--team-library` |
@@ -19,7 +20,7 @@
 | `scripts/hub-sync.mjs` | 按来源优先级同步阶段与共享模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/mark-test.mjs` | 记录测试通过时间与命令 | `--root` `--command` |
 
-项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
 
 ## 目录结构
 
@@ -33,7 +34,7 @@ agents/                # 评审、测试、排障三个子代理
 hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
-scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test
+scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test / review-triage
 scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试

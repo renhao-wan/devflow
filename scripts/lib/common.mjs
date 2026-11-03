@@ -398,6 +398,12 @@ export function satisfies(version, range) {
 }
 
 export function argValue(argv, name, fallback = null) {
+  // 同时支持 --name value 与 --name=value，避免带等号时被静默忽略。
+  const inline = argv.find((arg) => arg.startsWith(`${name}=`));
+  if (inline !== undefined) {
+    const value = inline.slice(name.length + 1);
+    return value || fallback;
+  }
   const i = argv.indexOf(name);
   if (i === -1) return fallback;
   const value = argv[i + 1];

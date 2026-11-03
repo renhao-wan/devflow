@@ -265,7 +265,8 @@ test('轻量任务能被实现、测试与审查阶段消费', () => {
   assert.match(test, /debug\.md/);
   assert.match(test, /回归测试/);
   assert.match(test, /修复前失败/);
-  assert.match(test, /前 10 行/);
+  assert.match(test, /review-triage\.mjs/);
+  assert.match(test, /trigger/);
   assert.match(test, /测试通过即完成/);
 
   const review = read('templates/stages/review/SKILL.md');
@@ -314,7 +315,8 @@ test('流程技能说明轻量双通道且不跳测试，审查按通道决定',
   assert.match(skill, /## 轻量流程的升级条件/);
   assert.match(skill, /review: required/);
   assert.match(skill, /小功能始终 review/);
-  assert.match(skill, /测试通过即结束/);
+  assert.match(skill, /triage/);
+  assert.match(skill, /按实际 diff 判定/);
   assert.match(skill, /git diff --numstat/);
   assert.doesNotMatch(skill, /不减测试与审查/);
   assert.match(read('skills/status/SKILL.md'), /轻量功能/);

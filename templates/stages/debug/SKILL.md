@@ -17,7 +17,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 - 直接在本阶段修复，产出 `docs/devflow/<slug>/debug.md`，不要只写在对话里。slug 从问题描述提炼（小写字母、数字、连字符），已有任务复用其 slug；无法确定时先用 `AskUserQuestion` 询问，不要猜；无法提问时列出候选并等待用户回复。
 - 不切换 workflow 类工具（BMAD、Spec Kit、OpenSpec 等）；需要完整工作流时先升级完整流程。technique 类工具只借用排障技法，`debug.md` 是唯一产物。
 - 不要求 `req.md` / `plan.md` / implement 阶段；修复后进入 `/devflow:test <slug>`。
-- 普通小 bug 在 `test.md` 出现后结束；涉及安全、数据、认证/权限/并发等高风险、但不触发升级的修复，在 `debug.md` 顶部写 `review: required`，测试通过后再补 `/devflow:review`。不确定是否涉及风险时，按需要 review 处理。
+- 普通小 bug 在 `test.md` 出现后结束；涉及安全、数据、认证/权限/并发等高风险、但不触发升级的修复，在 `debug.md` 顶部写 `review: required`，测试通过后再补 `/devflow:review`。不确定是否涉及风险时，按需要 review 处理。测试后 review 阶段会运行 triage，按实际 diff 复核；标记是显式要求，不是唯一依据。
 - 硬触发（必须升级完整流程）：根因跨 >2 个文件/模块、连续 2 轮假设未收敛、修复要改公共接口/公共契约、涉及数据结构/迁移/依赖/不可逆操作、非测试/文档改动 >200 行或 >10 文件或 >2 子项目。80–200 行或 5–10 个文件先用 `AskUserQuestion` 询问一次，无法提问时回退为文本询问。无法稳定复现不是升级条件：停在 debug 记录证据与盲区，完整流程同样依赖复现。
 - 计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物；多个子项目按改动文件数分别计。
 
@@ -33,7 +33,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 8. **补回归测试**：先写一个在修复前会失败的测试，修复后确认它变绿；记录命令、修复前失败输出与修复后通过输出。
 9. **清除现场**：删除临时日志、调试代码、临时脚本。
 10. **落盘**：独立小 bug 必须写 `docs/devflow/<slug>/debug.md`（含正确行为依据、根因、修复、回归证据）。已有完整任务的排障可把调查记录写入 `debug.md` 作为补充材料，但流程类型仍由 `req.md`/`plan.md` 决定为完整流程，不会因为出现 `debug.md` 而降级为轻量修复。
-11. **判断后续**：普通小 bug 进入 `/devflow:test <slug>`，测试通过即结束；`review: required` 的修复在测试通过后进入 `/devflow:review <slug>`。
+11. **判断后续**：普通小 bug 进入 `/devflow:test <slug>`，由测试阶段的 triage 判定是否审查（`review: required`、用户指定方向/数量或风险信号会进入 `/devflow:review`；否则记录基线检查后结束）。
 
 ## 并行假设验证（可选）
 
@@ -71,7 +71,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 
 - 修复代码与回归测试。
 - 简短记录：现象、根因、修复方式、验证方式、结论（`fixed` / `partial` / `unresolved`）；如做了已知问题检索，记录查询词、来源与本地验证结果。独立小 bug 必须写入 `docs/devflow/<slug>/debug.md`；已有任务可写对话，但建议落盘以便 review。骨架见 `templates/debug-report.template.md`。
-- 需要独立 review 时，在 `debug.md` 顶部前 10 行写 `review: required`（小写、无引号最稳妥）；`devflow status` 会据此在测试通过后提示 `/devflow:review`。该标记只用于安全、数据、认证/权限/并发等不触发升级的风险修复；公共接口/迁移/依赖变更应升级完整流程，而不是只补 review。
+- 需要独立 review 时，在 `debug.md` 顶部前 10 行写 `review: required`（小写、无引号最稳妥）；`devflow status` 与审查 triage 都会识别该标记。`trigger` 的优先级为：用户指定方向/数量 > `review: required` > diff 风险信号 > 跳过。该标记只用于安全、数据、认证/权限/并发等不触发升级的风险修复；公共接口/迁移/依赖变更应升级完整流程，而不是只补 review。
 
 ## 边界
 

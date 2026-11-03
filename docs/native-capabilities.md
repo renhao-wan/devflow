@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | Skills / 斜杠命令 | 阶段入口、通用技能、`allowed-tools`、`argument-hint`、`disable-model-invocation` | 基础能力 | 仍可用 `/devflow:*` 手动调用 |
 | `Agent` / 子代理 | `debug`、`test`、`review` 可调用三个项目子代理；`debug` 支持并行假设验证 | 工具名可能为 `Task` 或 `Agent` | 工具不可用时在主上下文执行 |
-| 并行子代理 | `debug` 对 ≥2 个独立假设并行调查；`review` 高风险时并行双视角审查 | 一条消息发起多个 Agent 调用 | 串行执行或主上下文分视角自查 |
+| 并行子代理 | `debug` 对 ≥2 个独立假设并行调查；`review` 按 triage 画像分组、最多 4 个 | 一条消息发起多个 Agent 调用 | 按 `maxAgents` 降级；为 0 时主上下文按选中方向自查 |
 | 子代理命名 | 文档使用 `devflow:<agent>`；旧版本可能为裸名 | 取决于插件命名空间 | 以 `/agents` 列表中的名称为准 |
 | 子代理模型 | `devflow-test-runner` 用 `model: haiku`；reviewer 与 debug-investigator 用 `model: inherit` | 支持 agent `model` 字段的版本 | 不支持时删除 `model` 行，按默认模型运行 |
 | `AskUserQuestion` | 多 slug、软阈值、升级与委派确认 | 交互会话 | 非交互模式回退为文本提问 |
