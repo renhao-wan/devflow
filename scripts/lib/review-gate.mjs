@@ -23,7 +23,7 @@ function mentions(text, direction) {
  * 校验 review.md 是否完成了 triage 要求的审查记录。
  * 只做确定性检查：结论、未关闭阻断项、画像字段与 triage 快照的一致性。
  */
-export function checkReviewReport(root, slug, { triage = null } = {}) {
+export function checkReviewReport(root, slug, { triage = null, trace = null } = {}) {
   const file = join(root, 'docs', 'devflow', slug, 'review.md');
   const errors = [];
   const warnings = [];
@@ -65,23 +65,28 @@ export function checkReviewReport(root, slug, { triage = null } = {}) {
   }
 
   // 验收追踪只做提示：旧产物可能按顺序回退，硬失败交给 devflow trace --check。
-  const fullTrace = traceFor(root, slug);
-  const trace = summarizeTrace(fullTrace);
+  const fullTrace = trace || traceFor(root, slug);
+  const traceSummary = summarizeTrace(fullTrace);
   const acceptanceBody = section(text, '验收对照');
   if (acceptanceBody === null) {
     warnings.push('缺少「## 验收对照」段落');
   } else {
     const header = tableHeader(acceptanceBody) || [];
-    if (!header.some((value) => /验收项|验收 ID|^AC/i.test(value))
-      || !header.some((value) => /状态|结论/.test(value))) {
-      warnings.push('「验收对照」缺少「验收项」或「状态」列，无法按验收 ID 核对');
+    const hasIdColumn = header.some((value) => /验收项|验收 ID|^AC/i.test(value));
+    const hasStatusColumn = header.some((value) => /状态|结论/.test(value));
+    if (!hasStatusColumn) {
+      warnings.push('「验收对照」缺少「状态」列，无法核对结论');
+    } else if (!hasIdColumn) {
+      warnings.push('「验收对照」未按验收项列表头，已按行序回退映射；建议改为按验收 ID 逐条填写');
     }
     for (const warning of parseReviewCoverage(text, fullTrace.items || []).warnings) {
       if (warning.startsWith('无法识别的验收状态') && !warnings.includes(warning)) warnings.push(warning);
     }
   }
-  if (!trace.skipped && trace.gaps > 0) {
-    warnings.push(`验收跟踪存在 ${trace.gaps} 项缺口（${trace.gapIds.join('、')}）；运行 devflow trace --slug ${slug} --check 核对`);
+  if (!traceSummary.skipped && traceSummary.gaps > 0) {
+    const ids = traceSummary.gapIds.slice(0, 5).join('、');
+    const more = traceSummary.gapIds.length > 5 ? ' 等' : '';
+    warnings.push(`验收跟踪存在 ${traceSummary.gaps} 项缺口（${ids}${more}）；运行 devflow trace --slug ${slug} --check 核对`);
   }
   if (section(text, '复用与依赖检查') === null) warnings.push('缺少「## 复用与依赖检查」段落');
 

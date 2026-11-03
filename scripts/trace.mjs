@@ -19,7 +19,8 @@ function evidenceLine(item) {
 
 function render(result, { check }) {
   if (result.skipped) {
-    console.log(`[WARN] ${result.slug}：${result.reason}`);
+    const marker = check && result.flow === 'unknown' ? 'ERR' : 'WARN';
+    console.log(`[${marker}] ${result.slug}：${result.reason}`);
     return;
   }
   console.log(`[TRACE] ${result.slug} · ${SOURCE_LABELS[result.source] || result.source}（${result.flow}）`);
@@ -58,10 +59,16 @@ export function main(argv = process.argv.slice(2)) {
   if (json) console.log(JSON.stringify(result, null, 2));
   else render(result, { check });
 
-  if (check && !result.skipped && result.totals.gaps > 0) process.exitCode = 1;
+  if (check && result.flow === 'unknown') process.exitCode = 1;
+  else if (check && !result.skipped && result.totals.gaps > 0) process.exitCode = 1;
   return result;
 }
 
 if (isMain(import.meta.url)) {
-  main();
+  try {
+    main();
+  } catch (err) {
+    console.error(`[ERR] ${err.message}`);
+    process.exitCode = 1;
+  }
 }

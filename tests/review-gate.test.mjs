@@ -258,7 +258,7 @@ test('验收缺口与缺列只给 warning，不阻断门禁', () => {
     writeFileSync(join(dir, 'review.md'), report());
     const result = checkReviewReport(root, 'trace-task', { triage: triage() });
     assert.equal(result.ok, true, result.errors.join('；'));
-    assert.ok(result.warnings.some((w) => w.includes('缺少「验收项」或「状态」列')));
+    assert.ok(result.warnings.some((w) => w.includes('未按验收项列表头')));
     assert.ok(result.warnings.some((w) => w.includes('验收跟踪存在 1 项缺口（AC-2）')));
   } finally {
     rmSync(root, { recursive: true, force: true });
