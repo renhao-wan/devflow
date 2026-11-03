@@ -58,7 +58,24 @@ function checkUpgrade(errors, warnings, text, { required = true } = {}) {
   }
 }
 
-function checkCommon(errors, text, { requirements = true } = {}) {
+const AC_ID = /^\s*AC[-_ ]?(\d+)\b/i;
+
+function checkAcceptanceIds(errors, warnings, acceptance) {
+  if (acceptance === null) return;
+  const ids = [];
+  let missing = 0;
+  for (const item of checkboxes(acceptance)) {
+    if (!meaningful(item.text)) continue;
+    const match = AC_ID.exec(item.text);
+    if (match) ids.push(`AC-${Number(match[1])}`);
+    else missing += 1;
+  }
+  const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  if (duplicates.length) errors.push(`「验收标准」存在重复的验收 ID：${duplicates.join('、')}`);
+  if (ids.length && missing) warnings.push('部分验收项缺少 AC ID，建议统一写成 AC-1、AC-2');
+}
+
+function checkCommon(errors, warnings, text, { requirements = true } = {}) {
   const goal = requireSection(errors, text, '目标');
   if (goal !== null && !hasContent(goal)) errors.push('「目标」为空');
 
@@ -66,6 +83,7 @@ function checkCommon(errors, text, { requirements = true } = {}) {
   if (acceptance !== null && meaningfulCheckboxes(acceptance).length < 2) {
     errors.push('「验收标准」至少需要 2 条可勾选的验收项');
   }
+  checkAcceptanceIds(errors, warnings, acceptance);
 
   const excluded = requireSection(errors, text, '本次不做');
   if (excluded !== null && !hasContent(excluded)) errors.push('「本次不做」为空');
@@ -85,7 +103,7 @@ function checkCommon(errors, text, { requirements = true } = {}) {
 export function checkReq(text, { light = false } = {}) {
   const errors = [];
   const warnings = [];
-  checkCommon(errors, text, { requirements: !light });
+  checkCommon(errors, warnings, text, { requirements: !light });
 
   if (light) {
     const scope = requireSection(errors, text, '改动范围与测试计划');

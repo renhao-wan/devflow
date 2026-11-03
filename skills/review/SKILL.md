@@ -25,7 +25,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
    - 非 git、无 HEAD 或 diff 读取失败时不判跳过，而是按 `auto` 触发并给出基线方向。
    - 结果写入 `docs/devflow/<slug>/review-triage.json`；`trigger=skipped` 时仍要做基线检查并写明跳过依据。
 4. 查看全量 diff（`git status`、`git diff`、必要时 `git diff --staged`），确认改动范围。
-5. 按验收来源逐条对照：完整任务读 `req.md` 与 `plan.md`；轻量功能读 `brief.md`；轻量修复读 `debug.md` 的「正确行为依据」。每条验收标准是否有实现或测试支撑，未覆盖项是否已明确接受。结果写入 review 的「验收对照」表。
+5. 按验收来源逐条对照：完整任务读 `req.md` 与 `plan.md`；轻量功能读 `brief.md`；轻量修复读 `debug.md` 的「正确行为依据」。按验收 ID（`AC-1`、`AC-2`…）在「验收对照」表逐条填写，确认每条验收标准是否有实现或测试支撑，未覆盖项是否已明确接受。结论前运行 `node scripts/devflow-trace.mjs --root . --slug <slug> --check`（插件根可用时用 `devflow trace --slug <slug> --check`），退出码 1 时补齐证据或明确接受缺口。
 6. 核对复用与依赖：完整任务读 `plan.md` 的「调研与复用判断」；确认来源可核对、许可证与技术约束不冲突、依赖维护状态与已知漏洞、搜索失败或未验证项已披露。轻量任务未涉及依赖与调研时写“不适用”，涉及新增依赖则必须已升级完整流程。结果写入「复用与依赖检查」表。
 7. 核对轻量任务的「升级判断」：轻量功能按 req 的硬触发（依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界、不可逆、>200 行、>10 文件、>2 子项目）；轻量修复按 debug 的硬触发（根因跨 >2 文件或 >2 模块、连续 2 轮假设未收敛、公共契约、数据结构/迁移、依赖、不可逆、规模阈值），并核对安全/数据/认证/并发风险是否已标记 `review: required`。命中却未记录、或该升级却只补 review 时，列为阻断项。
 8. 按 triage 的 `selected` 顺序检查：正确性 → 安全 → 兼容 → 可维护 → 测试缺口 → 复用与依赖；`excluded` 中的方向不派代理，但要确认理由成立。

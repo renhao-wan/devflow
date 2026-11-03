@@ -6,6 +6,31 @@ import { join, resolve } from 'node:path';
 const ROOT = resolve(import.meta.dirname, '..');
 const read = (rel) => readFileSync(join(ROOT, ...rel.split('/')), 'utf8');
 
+test('验收追踪模板带 AC ID 与下游引用列', () => {
+  assert.match(read('templates/stages/req/templates/req.template.md'), /AC-1/);
+  assert.match(read('templates/stages/req/templates/brief.template.md'), /AC-1/);
+  assert.match(read('templates/stages/debug/templates/debug-report.template.md'), /AC-1/);
+  assert.match(read('templates/stages/plan/templates/plan.template.md'), /验收项/);
+  assert.match(read('templates/stages/test/templates/test-report.template.md'), /## 验收覆盖/);
+  assert.match(read('templates/stages/test/templates/test-report.template.md'), /验收项 \| 测试\/证据 \| 结论/);
+  assert.match(read('templates/stages/review/templates/review.template.md'), /验收项 \| 验收标准 \| 实现\/测试 \| 状态/);
+});
+
+test('阶段规则要求验收 ID 并接入 trace 检查', () => {
+  assert.match(read('templates/stages/req/SKILL.md'), /唯一验收 ID/);
+  assert.match(read('templates/stages/plan/SKILL.md'), /「验收项」列/);
+  assert.match(read('templates/stages/test/SKILL.md'), /## 验收覆盖/);
+  const review = read('templates/stages/review/SKILL.md');
+  assert.match(review, /验收 ID/);
+  assert.match(review, /devflow trace --slug <slug> --check|devflow-trace\.mjs/);
+  assert.match(read('templates/stages/debug/SKILL.md'), /AC-1/);
+  assert.match(read('templates/stages/implement/SKILL.md'), /devflow trace --slug <slug>|devflow-trace\.mjs/);
+  for (const stage of ['req', 'plan', 'test', 'review', 'debug', 'implement']) {
+    const entry = read(`skills/${stage}/SKILL.md`);
+    assert.match(entry, /AC-1|验收 ID/, `skills/${stage} 未提及验收 ID`);
+  }
+});
+
 test('plan 阶段要求先调研已有实现并分级', () => {
   const skill = read('templates/stages/plan/SKILL.md');
   assert.match(skill, /调研已有实现/);

@@ -18,9 +18,10 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 3. **跑针对性用例**：覆盖本次改动的正常路径、边界、错误路径。可先运行 `node scripts/devflow-test.mjs --changed`（或 `devflow test --changed`）列出可能受影响的已存在测试；它只按文件命名与目录约定提示，不执行测试、不阻断，无法映射的源码文件会标为 `[UNMAPPED]`，这类改动优先跑全量。
 4. **手动验证不能替代测试**：涉及 UI/接口时补充手动步骤，但要在报告中单列。
 5. **检查测试缺口**：运行 `node scripts/devflow-test.mjs --gaps`（插件根可用时也可用 `devflow test --gaps`）。它按实际 diff 列出没有同名测试文件或测试改动的源码文件，只提示、不阻断；逐条确认是“已有测试覆盖（写明测试文件与依据）”“新增测试”还是“明确不测（写明原因）”。
-6. **记录结果**：记录一次真实运行：`node scripts/devflow-test.mjs --command "<命令>" --exit-code <退出码> --duration-ms <耗时>`。退出码 0 写入通过并清除待测试标记；非 0 记为失败、保留待测试标记，不更新通过时间。缺省 `--exit-code 0` 兼容旧用法。
-7. **失败处理**：测试失败先进入 debug 阶段，不修改断言迁就实现；失败记录也要如实写入（带非 0 退出码），不要用通过记录覆盖。
-8. **判断后续**：同一 slug 存在多套产物时按完整流程优先（`plan.md` > `brief.md` > `debug.md`）。轻量修复运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`（未设置插件根时用 `node scripts/devflow-triage.mjs`）：`trigger` 为 `skipped` 时测试通过即完成，并记录基线检查结论；其他触发（`review: required`、用户指定方向/数量、安全/数据/并发等风险信号，或无法统计改动时的 `auto`）进入 `/devflow:review`。轻量功能与完整任务始终进入 review。
+6. **记录验收覆盖**：在 `## 验收覆盖` 表中按验收 ID（`req.md` / `brief.md` / `debug.md` 中的 `AC-1`、`AC-2`…）逐条填写测试或证据与结论；没有证据的项写“未覆盖（原因）”，不得写成通过。
+7. **记录结果**：记录一次真实运行：`node scripts/devflow-test.mjs --command "<命令>" --exit-code <退出码> --duration-ms <耗时>`。退出码 0 写入通过并清除待测试标记；非 0 记为失败、保留待测试标记，不更新通过时间。缺省 `--exit-code 0` 兼容旧用法。
+8. **失败处理**：测试失败先进入 debug 阶段，不修改断言迁就实现；失败记录也要如实写入（带非 0 退出码），不要用通过记录覆盖。
+9. **判断后续**：同一 slug 存在多套产物时按完整流程优先（`plan.md` > `brief.md` > `debug.md`）。轻量修复运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`（未设置插件根时用 `node scripts/devflow-triage.mjs`）：`trigger` 为 `skipped` 时测试通过即完成，并记录基线检查结论；其他触发（`review: required`、用户指定方向/数量、安全/数据/并发等风险信号，或无法统计改动时的 `auto`）进入 `/devflow:review`。轻量功能与完整任务始终进入 review。
 
 ## 可选完成条件（/goal）
 
@@ -39,6 +40,7 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - [ ] 测试结果已用 `devflow-test.mjs` 记录，含真实退出码；失败结果没有被写成通过。
 - [ ] 新增逻辑至少有一条测试直接覆盖。
 - [ ] 已运行 `--gaps` 测试缺口提示，或在 `test.md` 说明无法运行的原因；提示的每个源码文件都有对应测试或明确的不测理由。
+- [ ] `## 验收覆盖` 已按验收 ID 逐条填写证据与结论；没有证据的项未写成通过。
 - [ ] 边界与错误路径各有验证，或有明确未覆盖说明。
 - [ ] 没有“暂时跳过”的测试未说明原因。
 - [ ] 手动验证项（如有）已列出，且没有伪装成自动化结果。

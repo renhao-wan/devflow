@@ -33,7 +33,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 7. **修根因**：修触发条件背后的原因，不吞异常、不加无意义重试。
 8. **补回归测试**：先写一个在修复前会失败的测试，修复后确认它变绿；记录命令、修复前失败输出与修复后通过输出。
 9. **清除现场**：删除临时日志、调试代码、临时脚本。
-10. **落盘**：独立小 bug 必须写 `docs/devflow/<slug>/debug.md`（含正确行为依据、根因、修复、回归证据）。已有完整任务的排障可把调查记录写入 `debug.md` 作为补充材料，但流程类型仍由 `req.md`/`plan.md` 决定为完整流程，不会因为出现 `debug.md` 而降级为轻量修复。写完后运行 `node scripts/devflow-check.mjs --root . --stage debug --slug <slug>`（插件根可用时用 `devflow check --stage debug`）；退出码非 0 表示结论未单选、根因/复现步骤为空、回归证据缺失或升级判断未填，按输出补齐后重跑。
+10. **落盘**：独立小 bug 必须写 `docs/devflow/<slug>/debug.md`（含正确行为依据、根因、修复、回归证据）；「正确行为依据」按 `AC-1`、`AC-2`… 带验收 ID，供 test / review 逐条追踪。已有完整任务的排障可把调查记录写入 `debug.md` 作为补充材料，但流程类型仍由 `req.md`/`plan.md` 决定为完整流程，不会因为出现 `debug.md` 而降级为轻量修复。写完后运行 `node scripts/devflow-check.mjs --root . --stage debug --slug <slug>`（插件根可用时用 `devflow check --stage debug`）；退出码非 0 表示结论未单选、根因/复现步骤为空、回归证据缺失或升级判断未填，按输出补齐后重跑。
 11. **判断后续**：普通小 bug 进入 `/devflow:test <slug>`，由测试阶段的 triage 判定是否审查（`review: required`、用户指定方向/数量或风险信号会进入 `/devflow:review`；否则记录基线检查后结束）。
 
 ## 并行假设验证（可选）
@@ -64,7 +64,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 - [ ] 若检索了已知问题，来源与本地验证结果已记录，未验证项已披露。
 - [ ] 没有引入新的跳过或吞错。
 - [ ] 调试残留已清理。
-- [ ] 独立小 bug 已写 `debug.md`，包含正确行为依据与回归证据。
+- [ ] 独立小 bug 已写 `debug.md`，包含带 AC ID 的正确行为依据与回归证据。
 - [ ] 已运行 `devflow check --stage debug` 且退出码为 0（或写明无法运行的原因）。
 - [ ] 独立小 bug 的 slug 已确定，且未与已有任务的流程类型混用。
 - [ ] 涉及安全、数据或认证/权限/并发风险时，已标记 `review: required`；已运行 `--escalate` 升级自检，命中硬触发时已升级，未命中时已人工核对根因范围与不可逆操作。

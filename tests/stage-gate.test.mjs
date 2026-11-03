@@ -102,6 +102,27 @@ const DEBUG = `# 排障记录
 - 触发项：无
 `;
 
+test('验收 ID：重复报错，显式与缺省混用只提示，全无 ID 不提示', () => {
+  const duplicate = checkReq(REQ.replace('- [ ] 点击导出生成 CSV\n- [ ] 空数据时提示',
+    '- [ ] AC-1 点击导出生成 CSV\n- [ ] AC-1 空数据时提示'));
+  assert.equal(duplicate.ok, false);
+  assert.ok(duplicate.errors.some((e) => e.includes('验收 ID')));
+
+  const mixed = checkReq(REQ.replace('- [ ] 点击导出生成 CSV\n- [ ] 空数据时提示',
+    '- [ ] AC-1 点击导出生成 CSV\n- [ ] 空数据时提示'));
+  assert.equal(mixed.ok, true, mixed.errors.join('；'));
+  assert.ok(mixed.warnings.some((w) => w.includes('AC ID')));
+
+  const legacy = checkReq(REQ);
+  assert.equal(legacy.ok, true);
+  assert.equal(legacy.warnings.some((w) => w.includes('AC ID')), false);
+
+  const brief = checkReq(BRIEF.replace('- [ ] 点击后开始下载\n- [ ] 失败时有错误提示',
+    '- [ ] AC-1 点击后开始下载\n- [ ] AC-2 失败时有错误提示'), { light: true });
+  assert.equal(brief.ok, true);
+  assert.equal(brief.warnings.some((w) => w.includes('AC ID')), false);
+});
+
 test('完整的 req.md 结构通过', () => {
   const result = checkReq(REQ);
   assert.equal(result.ok, true, result.errors.join('；'));
