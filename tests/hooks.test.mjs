@@ -784,6 +784,9 @@ test('guard-generated 拒绝手改投影、账本与 loader', () => {
       'scripts/devflow-gen.mjs',
       'scripts/devflow-route.mjs',
       'scripts/devflow-test.mjs',
+      'scripts/devflow-triage.mjs',
+      'scripts/devflow-check.mjs',
+      'scripts/devflow-trace.mjs',
     ];
     for (const rel of protectedFiles) {
       const out = JSON.parse(runHook('guard-generated.mjs', {

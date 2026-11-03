@@ -17,6 +17,7 @@ const COMMANDS = {
   test: ['mark-test.mjs', '记录一次测试结果（--gaps 查看测试缺口，--changed 查看受影响测试）'],
   triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限（--since 增量复审）'],
   check: ['stage-check.mjs', '校验 req / debug 产物结构是否完整'],
+  trace: ['trace.mjs', '查看验收项到 plan / test / review 的追踪矩阵（--check 缺失时退出 1）'],
 };
 
 const HELP = `devflow CLI
@@ -47,6 +48,9 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow triage --escalate
   devflow check --stage req --slug add-login
   devflow check --stage debug --json
+  devflow trace --slug add-login
+  devflow trace --slug add-login --check
+  devflow trace --slug add-login --json
   devflow test --gaps
   devflow test --changed
   devflow test --command "npm test" --exit-code 0 --duration-ms 1200
