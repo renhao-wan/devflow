@@ -21,7 +21,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
    - 先复述目标，再只问阻塞性问题（一次最多 3 个）。
    - 能通过读代码确认的事实，先读代码，不反问用户。
    - 记录技术约束（是否允许新增依赖、许可证政策、运行时、离线/部署要求），作为 plan 阶段复用判断的输入。
-4. 严格遵守 SKILL 中的门禁，逐条自查；不满足就继续澄清，不进入方案。
+4. 严格遵守 SKILL 中的门禁，逐条自查；验收标准统一带唯一验收 ID（`AC-1`、`AC-2`…），不满足就继续澄清，不进入方案。
 5. 产出写入 `docs/devflow/<slug>/req.md`。slug 使用 kebab-case，从需求内容提炼；目录不存在时创建。
    - 参数含 `--light` 时走轻量功能：产出 `brief.md`（合并 req 与 plan），不写 `req.md`/`plan.md`；硬触发（依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界、不可逆操作、>200 行、>10 文件、>2 子项目）必须升级完整流程。
    - 轻量模式在进入 implement 前后运行升级自检 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --escalate`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --escalate`）。退出码 1 表示命中可由 diff 推导的硬触发，停止轻量并写 `## 升级判断`；退出码 0 也不能替代人工判断不可逆操作与跨模块影响。

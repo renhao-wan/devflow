@@ -36,7 +36,7 @@ test('init → gen → doctor → mark-test 全链路', () => {
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'review', 'templates', 'review.template.md')));
     assert.ok(existsSync(join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'prior-art-research.md')));
     assert.ok(existsSync(join(root, '.devflow.json')));
-    for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-route.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs', 'devflow-triage.mjs', 'devflow-check.mjs']) {
+    for (const file of ['devflow-gen.mjs', 'devflow-doctor.mjs', 'devflow-route.mjs', 'devflow-upstream.mjs', 'devflow-test.mjs', 'devflow-triage.mjs', 'devflow-check.mjs', 'devflow-trace.mjs']) {
       assert.ok(existsSync(join(root, 'scripts', file)), `缺少 loader ${file}`);
     }
     assert.ok(existsSync(join(root, '.claude', 'hub', 'ecosystem.yaml')));
@@ -324,6 +324,7 @@ test('init 写入的 .gitignore 忽略 loader 且重复运行不会叠加片段'
     assert.match(gitignore, /scripts\/devflow-test\.mjs/);
     assert.match(gitignore, /scripts\/devflow-triage\.mjs/);
     assert.match(gitignore, /scripts\/devflow-check\.mjs/);
+    assert.match(gitignore, /scripts\/devflow-trace\.mjs/);
 
     assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
     assert.equal(run('hub-init.mjs', ['--root', root, '--force'], root).status, 0);

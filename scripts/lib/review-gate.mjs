@@ -2,9 +2,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
 import {
-  bulletValue, isOptionPlaceholder, meaningful, section, tableDataRows,
+  bulletValue, isOptionPlaceholder, meaningful, section, tableDataRows, tableHeader,
 } from './markdown.mjs';
 import { DIRECTION_LABELS } from './review.mjs';
+import { parseReviewCoverage, summarizeTrace, traceFor } from './trace.mjs';
 
 const TRIGGER_OPTIONS = ['mandatory', 'required', 'auto', 'user', 'skipped'];
 const LEVEL_OPTIONS = ['low', 'medium', 'high', 'special'];
@@ -63,7 +64,25 @@ export function checkReviewReport(root, slug, { triage = null } = {}) {
     }
   }
 
-  if (section(text, '验收对照') === null) warnings.push('缺少「## 验收对照」段落');
+  // 验收追踪只做提示：旧产物可能按顺序回退，硬失败交给 devflow trace --check。
+  const fullTrace = traceFor(root, slug);
+  const trace = summarizeTrace(fullTrace);
+  const acceptanceBody = section(text, '验收对照');
+  if (acceptanceBody === null) {
+    warnings.push('缺少「## 验收对照」段落');
+  } else {
+    const header = tableHeader(acceptanceBody) || [];
+    if (!header.some((value) => /验收项|验收 ID|^AC/i.test(value))
+      || !header.some((value) => /状态|结论/.test(value))) {
+      warnings.push('「验收对照」缺少「验收项」或「状态」列，无法按验收 ID 核对');
+    }
+    for (const warning of parseReviewCoverage(text, fullTrace.items || []).warnings) {
+      if (warning.startsWith('无法识别的验收状态') && !warnings.includes(warning)) warnings.push(warning);
+    }
+  }
+  if (!trace.skipped && trace.gaps > 0) {
+    warnings.push(`验收跟踪存在 ${trace.gaps} 项缺口（${trace.gapIds.join('、')}）；运行 devflow trace --slug ${slug} --check 核对`);
+  }
   if (section(text, '复用与依赖检查') === null) warnings.push('缺少「## 复用与依赖检查」段落');
 
   if (!triage) {

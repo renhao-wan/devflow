@@ -59,6 +59,8 @@ test 阶段除运行测试外，还用 `devflow test --gaps` 按 diff 列出“�
 
 req 与 debug 阶段各有结构门禁 `devflow check --stage req|debug`：只检查产物是否写全（目标、验收数量、本次不做、约束与影响面；结论单选、根因、复现、回归证据与升级判断），不判断需求质量或根因是否正确。`devflow status` 另外把计划声明文件与实际 diff 对照，提示计划外改动与计划未改动文件，但不改变阶段推断。
 
+验收项通过 AC ID 贯穿阶段：需求带 ID，计划任务表标注「验收项」，测试报告的「验收覆盖」按 ID 记录证据，审查的「验收对照」按 ID 给结论。`devflow trace --slug <slug>` 把这些引用合并成矩阵并列出缺口，默认只读；`--check` 才在存在未覆盖、未映射或阻断项时退出 1。状态优先级为 `blocked > covered > accepted > planned > uncovered`，`accepted`（review 明确接受）不计缺口；test 与 review 冲突时以 review 为准。旧产物无 ID 时按出现顺序推导并在旧表头下按行序回退，均只给 warning，避免迁移期阻断。`devflow status` 与 review 门禁读取同一份追踪结果，但只作提示，硬失败交给显式 `--check`。
+
 ## 审查触发与画像
 
 审查不再对所有改动一律平铺检查，而是先做一次确定性 triage（`scripts/review-triage.mjs`），再按结果分配注意力：

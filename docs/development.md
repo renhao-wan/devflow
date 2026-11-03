@@ -6,7 +6,7 @@
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` / `check` / `trace` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具 | `--root` `--force` `--plugin-root` `--source-root` |
 | `scripts/hub-onboard.mjs` | 扫描项目并生成/更新 `.claude/hub/project-overview.md` | `--root` `--print` `--json` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
@@ -20,8 +20,9 @@
 | `scripts/hub-sync.mjs` | 按来源优先级同步阶段与共享模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/mark-test.mjs` | 记录最近一次测试结果（退出码、耗时、命令）；`--gaps` 提示测试缺口；`--changed` 列出受影响的已存在测试 | `--root` `--command` `--exit-code` `--duration-ms` `--gaps` `--changed` `--base` `--json` |
 | `scripts/stage-check.mjs` | 校验 req / debug 产物的结构完整性，未通过时退出码 1 | `--root` `--stage` `--slug` `--json` |
+| `scripts/trace.mjs` | 输出验收项到 plan / test / review 的追踪矩阵；`--check` 存在缺口时退出码 1 | `--root` `--slug` `--check` `--json` |
 
-项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`、`devflow-check.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`、`devflow-check.mjs`、`devflow-trace.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
 
 ## 目录结构
 
@@ -86,7 +87,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 395 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、增量复审、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 414 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

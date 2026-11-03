@@ -25,7 +25,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
    - 复杂架构或取舍困难时，可调用 `Plan` 子代理产出方案与风险，由本阶段核对后写入 `plan.md`，不替用户决策。
 6. 按 SKILL 产出方案：推荐方案 + 候选取舍 + 被否方案及原因、任务拆分表、测试策略、回滚、风险。
 7. 已有 superpowers `brainstorming` 结果或 `writing-plans` 计划时，把结论吸收进 `plan.md`，不并存两份设计/计划。
-8. 逐条对照需求验收标准，确认都能映射到任务或测试；不能映射的指出来。
+8. 逐条对照需求验收标准，确认都能映射到任务或测试；在任务拆分表的「验收项」列填写对应验收 ID 并覆盖全部验收项，不能映射的指出来。
 9. 需要逐条与用户确认方案时，先征得同意再 `EnterPlanMode`；plan mode 内不改代码、不写文件，写 `plan.md` 前先 `ExitPlanMode`，批准后再写。无法使用或用户拒绝时，直接按 SKILL 产出 `plan.md`，不阻塞流程。
 10. 写入 `docs/devflow/<slug>/plan.md`，并报告实际 slug、写入路径、任务数、最大风险、复用结论与未验证项。
 11. 方案确认后进入实现阶段：`/devflow:implement <实际 slug>`。

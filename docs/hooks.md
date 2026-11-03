@@ -23,7 +23,7 @@ devflow 通过 Claude Code hooks 提供尽力而为的安全门禁与状态提�
 - `.claude/skills/devflow-*/SKILL.md`（阶段投影，改 `.claude/hub/stages/` 后运行 `node scripts/devflow-gen.mjs`）；
 - `.claude/.hub-manifest.json`、`.claude/.hub-sources.json`（生成账本）；
 - `.devflow.json`（init 写入的工作区元数据）；
-- `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-route.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`、`scripts/devflow-triage.mjs`、`scripts/devflow-check.mjs`（loader，重跑 `/devflow:init` 刷新）。
+- `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-route.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`、`scripts/devflow-triage.mjs`、`scripts/devflow-check.mjs`、`scripts/devflow-trace.mjs`（loader，重跑 `/devflow:init` 刷新）。
 
 `docs/devflow/**` 与 `.claude/hub/**` 的改动被视为流程数据而非业务代码：前者不计入待验证改动，后者会提示重新生成投影，但都不会阻止 Stop。
 
