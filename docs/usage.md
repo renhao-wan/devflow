@@ -26,8 +26,14 @@
 ### 测试阶段辅助
 
 - `devflow test --gaps`（或 `node scripts/devflow-test.mjs --gaps`）读取本次 diff，列出没有同名测试文件、也没有测试改动痕迹的源码文件。它只按文件名与常见测试目录（同目录、`__tests__`、`test/`、`tests/`）做存在性判断，不解析测试内容，因此**只提示、不阻断**。
+- `devflow test --changed` 反向列出“可能受本次改动影响的已存在测试”，供先跑针对性用例；同样只按命名与目录约定推断，不执行测试、不写状态。无法映射到测试的源码文件标为 `[UNMAPPED]`，这类改动优先跑全量。`--changed` 与 `--gaps` 互斥。
 - 每条提示都要在 `test.md` 里落一个结论：已有测试覆盖（写明测试文件）、新增测试、或明确不测（写明原因）。非 git 目录会标记“提示不完整”，不要把空结果当成已覆盖。
-- 记录测试通过仍用 `devflow test --command "<命令>"`；`--gaps` 不会写入状态。
+- 记录一次真实运行用 `devflow test --command "<命令>" --exit-code <退出码> --duration-ms <耗时>`：退出码 0 更新通过时间并清除待测试标记；非 0 记为失败并保留待测试标记，不会覆盖上次通过时间。工具不解析测试框架输出。
+
+### 计划漂移与阶段产物门禁
+
+- `devflow status` 会把 `plan.md` 的「任务拆分」或 `brief.md` 的「改动范围与测试计划」里声明的文件与实际 git 改动对照，提示“计划外改动”和“计划未改动”。它只提示、不改变阶段判定；无法读取 git 或计划未列文件时明确标注跳过，不误报。
+- `devflow check --stage req` 校验 `req.md`（完整流程）或 `brief.md`（轻量功能）的结构：目标、≥2 条验收、本次不做、技术约束/影响面，以及轻量模式必填的测试计划、回滚与升级判断。`devflow check --stage debug` 校验 `debug.md` 的结论单选、根因、复现步骤、回归证据与升级判断。退出码 1 表示结构未写全；它不判断需求质量或根因是否正确。
 
 ### 审查触发与画像
 
@@ -44,6 +50,7 @@ review 阶段先运行 `scripts/review-triage.mjs`，用任务产物与真实 di
 - 用户优先：`--focus security`（可重复或逗号分隔）只审指定方向；`--agents 0-4` 覆盖上限；`--no-subagents` 只审不派；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
 - 统计口径：规模只计源码行数与源码文件数，文档、测试与生成物不计入；内容规则跳过测试与规则定义文件，避免自我放大；未跟踪文件会读取有限内容补足风险信号。
 - `--base <ref>` 对比分支基线，默认比较工作区与暂存改动；`--write` 把计划写入 `docs/devflow/<slug>/review-triage.json`，写入前校验真实路径不越出项目，`devflow status` 会读取其中的触发结果。
+- `--since <ref>` 只复审该提交之后的改动（含工作区），并在 `review-triage.json` 写入 `scope.mode=incremental`；锚点必须是 HEAD 的祖先，rebase 或 force-push 后不可达时报错，应改用 `--base` 或全量。增量模式必须在 `review.md` 补「增量复审」小节，逐项交代旧阻断项是沿用、已修复还是失效；`--check` 会拦截缺失或仍停留在模板选项的情况。`--since` 不能与 `--base`、`--check`、`--escalate` 同时使用。
 - 写完 `review.md` 后用 `--check` 自检：结论必须勾选、不能有未关闭阻断项、画像字段要与 `review-triage.json` 一致。`devflow status` 使用同一门禁，未通过时任务留在 review 并提示补全。
 - `--escalate` 复用同一套画像但不依赖任务产物，只读当前 git 改动，输出是否命中轻量流程的硬触发；由 req/debug 阶段调用，避免“文档里写着升级条件、实际执行时忘了判断”。
 
@@ -256,7 +263,7 @@ node scripts/devflow-gen.mjs
 node scripts/devflow-doctor.mjs
 ```
 
-`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与六个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
+`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与七个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
 
 ## 项目概览（onboard）
 

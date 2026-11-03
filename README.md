@@ -131,8 +131,13 @@ devflow ship --stage review --dry-run
 devflow triage --slug add-login --write
 devflow triage --slug fix-auth --focus security --agents 2
 devflow triage --slug add-login --check
+devflow triage --slug add-login --since v1.2.0
 devflow triage --escalate
+devflow check --stage req --slug add-login
+devflow check --stage debug --json
 devflow test --gaps
+devflow test --changed
+devflow test --command "npm test" --exit-code 0 --duration-ms 1200
 devflow upstream --revert <id>
 ```
 
