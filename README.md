@@ -12,7 +12,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
 - **安全门禁**：系统级破坏命令直接拒绝，有丢数据风险的操作要求确认，未测试改动只提醒不阻止。
-- **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到插件模板，本地写入或直接开 PR；插件升级后用 `/devflow:sync` 非破坏性同步，手改文件自动三方合并、冲突时保留并可备份。
+- **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到**个人库**（跨项目复用）、**团队库**（团队共享，可开 PR）或**上游插件**；插件升级后用 `/devflow:sync` 非破坏性同步，多来源按团队 > 个人 > 上游合并，手改文件自动三方合并、冲突时保留并可备份。
 
 ## 前置要求
 
@@ -51,7 +51,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`）。
 2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令。
-3. 在 `scripts/` 放五个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
+3. 在 `scripts/` 放六个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
 4. 生成 `.claude/skills/devflow-*` 投影。
 5. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
@@ -95,7 +95,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 
 | 命令 | 作用 |
 | --- | --- |
-| `/devflow:init [--force] [--source-root <插件源码仓库>]` | 初始化工作区 hub，探测子项目与测试命令 |
+| `/devflow:init [--force] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目与测试命令；库路径会记录到 `.devflow.json` |
 | `/devflow:req <需求> [--light]` | 需求澄清，产出 `req.md`；`--light` 时合并为 `brief.md` |
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
 | `/devflow:implement <slug>` | 按计划或 `brief.md` 小步实现，测试先行 |
@@ -105,9 +105,9 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
-| `/devflow:upstream [--stage <stage>] [--shared] [--all] [--to local\|remote] [--apply] [--bump patch\|minor\|major] [--revert <id>]` | 把项目经验回灌到插件模板（本地或远程 PR） |
-| `/devflow:ship [--stage <stage>] [--shared] [--all] [--bump patch\|minor\|major] [--dry-run] [--resume <branch>]` | 回灌后提交到分支、推送并生成 PR |
-| `/devflow:sync [--dry-run] [--force]` | 插件升级后非破坏性同步阶段与共享模板，手改内容自动三方合并 |
+| `/devflow:upstream [--stage <stage>] [--shared] [--all] [--to personal\|team\|upstream] [--pr] [--apply] [--revert <id>] [--force]` | 把项目经验回灌到个人库、团队库或上游插件；`team` 默认只写工作区，加 `--pr` 提交并开 PR |
+| `/devflow:ship [--stage <stage>] [--shared] [--all] [--profile upstream\|team] [--plugin-root <模板库根>] [--dry-run] [--resume <branch>]` | 上游回灌后提交到分支、推送并生成 PR；`--profile team` 可推到团队库 |
+| `/devflow:sync [--dry-run] [--force] [--personal-library <path>] [--team-library <path>]` | 插件升级后按来源优先级同步阶段与共享模板，手改内容自动三方合并 |
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
@@ -123,7 +123,10 @@ devflow status --json
 devflow route --stage plan
 devflow route --detect
 devflow sync --dry-run
-devflow upstream --shared --apply
+devflow upstream --shared --to personal --apply
+devflow upstream --stage plan --to team --apply
+devflow upstream --stage plan --to team --pr --apply
+devflow upstream --stage review --to upstream --pr --dry-run
 devflow ship --stage review --dry-run
 devflow triage --slug add-login --write
 devflow triage --slug fix-auth --focus security --agents 2

@@ -11,8 +11,8 @@ const COMMANDS = {
   onboard: ['hub-onboard.mjs', '扫描项目并生成/更新 .claude/hub/project-overview.md'],
   statusline: ['statusline.mjs', '输出单行进度，供 Claude Code statusLine 配置使用'],
   route: ['hub-route.mjs', '判断当前阶段是否应先用其他工具（--detect 自动检测）'],
-  sync: ['hub-sync.mjs', '把插件新版阶段与共享模板同步到项目（三方合并，--dry-run 预览）'],
-  upstream: ['hub-upstream.mjs', '预览或回灌阶段/共享规则到插件（默认预览，--to remote 走 PR）'],
+  sync: ['hub-sync.mjs', '按团队/个人/上游优先级同步阶段与共享模板到项目（三方合并，--dry-run 预览）'],
+  upstream: ['hub-upstream.mjs', '预览或回灌阶段/共享规则到个人库、团队库或上游插件（默认预览）'],
   ship: ['hub-ship.mjs', '回灌、提交并创建或更新 PR'],
   test: ['mark-test.mjs', '记录一次测试通过'],
   triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限'],
@@ -36,7 +36,7 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow sync --dry-run
   devflow upstream --stage review
   devflow upstream --stage review --apply
-  devflow upstream --shared --to remote --apply
+  devflow upstream --shared --to upstream --pr --apply
   devflow upstream --revert 20261102120000-1234
   devflow ship --stage review --dry-run
   devflow triage --slug add-login --write

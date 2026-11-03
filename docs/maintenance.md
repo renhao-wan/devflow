@@ -4,44 +4,74 @@
 
 ## 回灌
 
-回灌把项目里打磨过的规则送回插件模板。范围与出口是两个独立维度：
+回灌把项目里打磨过的规则送回模板库。**范围**与**目标库**是两个独立维度：
 
 | 维度 | 取值 | 含义 |
 | --- | --- | --- |
 | 范围 | `--stage <name>` | 单个阶段，`.claude/hub/stages/<name>/` → `templates/stages/<name>/` |
 | 范围 | `--shared` | 共享规则，`.claude/hub/_shared/` → `templates/shared/` |
 | 范围 | `--all` | 所有阶段；`_shared` 存在时一并回灌 |
-| 出口 | `--to local`（默认） | 直接写入插件源码目录，不提交 |
-| 出口 | `--to remote` | 在临时 worktree 中回灌、建分支、提交、推送并创建 PR（等价于 `/devflow:ship`） |
+| 目标 | `--to personal` | 个人库（默认 `~/.claude/devflow`）：A 项目回灌，B 项目复用 |
+| 目标 | `--to team` | 团队库（`hub.yaml` 配置）：团队共用模板，默认只写工作区 |
+| 目标 | `--to upstream`（默认） | 上游插件源码仓库，不提交 |
+| 修饰 | `--pr` | 团队库或上游库走分支 + 提交 + 推送 + PR |
+
+三个库共用 `<root>/templates/stages/**` 与 `<root>/templates/shared/**` 布局。项目里的 `.claude/hub/` 是同步落盘目标，不作为回灌来源。
 
 ```bash
 # 预览：显示分类与差异，不写文件
 /devflow:upstream --stage plan
 
-# 写入插件模板（默认不 bump 版本）
-/devflow:upstream --stage plan --apply
+# 写入个人库
+/devflow:upstream --stage plan --to personal --apply
 
-# 同时升级版本并更新 CHANGELOG
-/devflow:upstream --stage plan --apply --bump minor
+# 写入团队库：只改工作区，不提交
+/devflow:upstream --stage plan --to team --apply
 
-# 回灌共享规则 / 回灌全部
-/devflow:upstream --shared --apply
-/devflow:upstream --all --apply
+# 写入上游插件源码
+/devflow:upstream --stage plan --to upstream --plugin-root D:/projects/devflow --apply
 
-# 走远程 PR
-/devflow:upstream --stage plan --to remote --apply
+# 上游 PR
+/devflow:upstream --stage plan --to upstream --pr --apply
 
-# 从 marketplace 安装时，运行时插件根在安装缓存里；需显式指定源码仓库
-/devflow:upstream --stage plan --plugin-root D:/projects/devflow --apply
+# 个人库 / 团队库也支持共享规则与全量
+/devflow:upstream --shared --to personal --apply
+/devflow:upstream --all --to team --apply
 ```
 
-回灌目标必须是**插件源码仓库**。安装缓存（`~/.claude/plugins/cache/...`）会在升级时被覆盖，脚本会直接拒绝写入。若不想每次都传 `--plugin-root`，在项目根执行一次：
+### 目标库路径
+
+个人库按以下顺序解析，路径不存在时视为空库，首次回灌自动创建：
+
+1. `--personal-library <path>`
+2. 环境变量 `DEVFLOW_PERSONAL_LIBRARY`
+3. `.devflow.json` 的 `personalLibraryPath`
+4. 默认 `~/.claude/devflow`
+
+团队库在 `hub.yaml` 配置，不自动 clone；路径不存在会报错并提示 clone 命令。团队库必须是本机已 clone 或 `git init` 的 **git 仓库顶层**，回灌与 `--pr` 都依赖 git：
+
+```yaml
+templates:
+  order: [team, personal, upstream]   # 先出现者优先，同名文件整文件覆盖
+  team:
+    enabled: true
+    repo: https://github.com/org/devflow-templates.git   # 仅用于提示
+    base: main
+    path: ../devflow-templates                           # 相对项目根，或绝对路径
+  personal:
+    enabled: true
+```
+
+本机路径可用 `--team-library <path>` 或 `.devflow.json` 的 `teamLibraryPath` 覆盖，优先于 `hub.yaml` 的 `team.path`。团队库路径解析顺序：`--team-library` > `DEVFLOW_TEAM_LIBRARY` > `teamLibraryPath` > `templates.team.path`。`init` / `sync` 时显式传入的 `--personal-library` / `--team-library` 会写入 `.devflow.json`，之后不用重复传；相对路径按运行时工作目录解析，`hub.yaml` 的 `path` 相对项目根。
+
+上游库按 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根解析。**上游回灌目标必须是插件源码仓库**；安装缓存（`~/.claude/plugins/cache/...`）会在升级时被覆盖，脚本会直接拒绝。若不想每次都传 `--plugin-root`：
 
 ```bash
 /devflow:init --source-root D:/projects/devflow
 ```
 
 `--source-root` 会写入 `.devflow.json` 的 `pluginSourceRoot`，之后 `upstream` 与 `ship` 自动使用它；显式 `--plugin-root` 仍然优先。
+
 
 ### 显式分区标记
 
@@ -65,22 +95,45 @@
 
 ### 写入与回滚
 
-`--apply` 会：
+写入行为由 `--to` 决定：
+
+| 目标 | 写入位置 | 版本文件 | 提交 |
+| --- | --- | --- | --- |
+| `personal` | `<个人库>/templates/` | 不碰 | 不提交 |
+| `team` | `<团队库>/templates/` | 不碰 | 默认不提交 |
+| `upstream` | 插件源码的 `templates/` | 不碰 | 不提交 |
+
+个人库与团队库的备份、journal 与日志都在各自库根：`.devflow/backups/<id>/`、`.devflow/upstream-journal.json`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。写入流程与上游一致：只复制有变化的可回灌文件、先备份、中断可续做。续做会核对上次写入的文件；中断后被手工修改或删除的文件会拒绝覆盖，确认覆盖时加 `--force`。三个库的回灌都不改版本文件。
+
+团队库额外约束：
+
+- 必须是 git 仓库顶层；否则报错，不会写进任意子目录。
+- 目标文件已有未提交改动时拒绝写入；确认放弃这些改动时加 `--force`，会先备份再覆盖。
+- 其他无关的未提交改动只提示，不阻断。
+
+上游 `--apply` 会：
 
 1. 复制有变化的可回灌文件到 `templates/stages/<stage>/` 或 `templates/shared/`，保留相对路径；与插件一致的文件跳过；
 2. 把被覆盖的旧文件备份到 `.devflow/backups/<id>/`，并写一份 journal，中断后重跑同一命令可续做；
-3. 默认**不 bump** 版本；传 `--bump patch|minor|major` 时才同步更新 `.claude-plugin/plugin.json`、`package.json`、`.claude-plugin/marketplace.json` 的 `plugins[].version`（`metadata.version` 作为市场自身元数据一并更新），并写入 `CHANGELOG.md`；
+3. 不改版本文件与 `CHANGELOG.md`；发版是独立流程，见 [development.md 的发版流程](development.md#发版流程)；
 4. 追加回灌日志到 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`。
 
 回滚到某次回灌之前：
 
 ```bash
+# 指定目标库
+/devflow:upstream --to personal --revert <记录 ID>
+/devflow:upstream --to team --revert <记录 ID>
+
+# 不指定时依次在个人、团队、上游日志中查找
 /devflow:upstream --revert <记录 ID>
 ```
 
-记录 ID 在命令输出和 `docs/upstream-log.md` 中。回滚会恢复被覆盖的模板与版本文件，并删除该次新建的文件。
+记录 ID 在命令输出和对应库的 `docs/upstream-log.md` 中。个人库与团队库只恢复模板文件；上游回滚还会恢复版本文件与 CHANGELOG。团队库的 `--pr` 记录写进 PR 分支的日志，需先合并该 PR 才能在本地按 ID 回滚。
 
-回灌会修改插件仓库，建议单独提交并在回灌后运行 `/devflow:doctor`。
+回灌会修改目标库，建议单独提交后在项目里运行 `/devflow:doctor`。
+
+其他项目要复用这些内容，需在各自 `hub.yaml` 的 `templates.order` 中启用对应库（个人库默认启用），然后运行 `/devflow:sync`；AI 读取规则的完整时机见 [usage.md 的“AI 何时读取这些规则”](usage.md#ai-何时读取这些规则)。
 
 ## 升级插件
 
@@ -94,18 +147,19 @@
 /devflow:sync
 ```
 
-判定依据是 `.claude/.hub-sources.json`（schema v2）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local }` 两个哈希，快照保存上次同步时的模板原文，作为三方合并的共同祖先。同步读取的是**当前安装的插件版本**，不会从 `pluginSourceRoot` 拉未发布模板。`stages/` 与 `_shared/` 都会同步。
+判定依据是 `.claude/.hub-sources.json`（schema v3）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local, source }`，`source` 标明内容来自 `team`、`personal` 还是 `upstream`。同步按 `hub.yaml` 的 `templates.order` 读取所有启用库，同名文件先到先得、整文件覆盖；项目里的手改仍由基线快照做三方合并保留。旧项目没有 `templates` 块时只读上游，行为不变；v2 账本会在下次 `sync` 自动升级到 v3。同步不会从 `pluginSourceRoot` 拉未发布模板。`stages/` 与 `_shared/` 都会同步。
 
 | 情况 | 行为 |
 | --- | --- |
 | 本地文件与模板完全一致 | 记为一致，不重写 |
 | 本地文件哈希与账本一致（未手改） | 更新为新模板 |
-| 模板与基线一致、本地手改 | 保留手改，只刷新账本 |
+| 模板与基线一致、本地手改 | 保留手改，只刷新账本与来源 |
+| 来源切换但模板内容相同 | 保留本地内容，只把账本的 `source` 更新为高优先库 |
 | 本地与模板都改过，且有基线快照 | `git merge-file` 三方合并：无冲突则写入合并结果并报告「自动合并」 |
 | 三方合并冲突 | 保留本地内容并报告冲突，手工合并后重跑 |
 | `--force` | 跳过合并直接用模板覆盖，覆盖前生成 `.bak-<时间戳>` 备份 |
 | 模板新增的资源文件 | 直接补入 |
-| 模板已删除的文件 | 账本移除，本地保留（不删你的内容） |
+| 高优先库删除同名文件 | 回落到下一来源；所有库都不再提供时才从账本移除，本地文件保留 |
 | 本地缺少账本（老版本 init） | 一律按“可能手改”处理，只报告冲突 |
 
 确认要用手改内容覆盖冲突文件时加 `--force`，覆盖前会在原文件旁生成 `.bak-<时间戳>` 备份。**不要用 `--force` 重跑 `init`**：那会覆盖 `hub.yaml`，而 `sync` 从不改 `hub.yaml` 与 `overrides/`。
@@ -134,17 +188,14 @@
 
 ## 提交与 PR
 
-`/devflow:upstream --apply` 只写本地文件，不提交。要用 PR 的方式把回灌结果送出去，用 `/devflow:ship`，或 `/devflow:upstream --to remote`（两者共用同一套计划与提交逻辑）：
+个人库只写本地文件，不提交。团队库默认只写工作区，加 `--pr` 才提交、推送并开 PR。上游回灌用 `/devflow:ship`，或 `/devflow:upstream --to upstream --pr`（两者共用同一套计划与提交逻辑）：
 
 ```bash
-# 预览：显示分支名、将提交的文件、版本变化，不写文件
+# 预览：显示分支名与将提交的文件，不写文件
 /devflow:ship --stage plan --plugin-root D:/projects/devflow --dry-run
 
-# 执行：回灌 → 建分支 → 提交 → 推送 → 生成 PR（默认不 bump 版本）
+# 执行：回灌 → 建分支 → 提交 → 推送 → 生成 PR
 /devflow:ship --stage plan --plugin-root D:/projects/devflow
-
-# 显式升级版本
-/devflow:ship --stage plan --plugin-root D:/projects/devflow --bump minor
 
 # 多个范围一起回灌
 /devflow:ship --stage plan --stage review --shared
@@ -156,9 +207,21 @@
 /devflow:ship --resume devflow/upstream-plan-20260101120000
 ```
 
-回灌目标必须是**插件源码仓库**（含 `.git`）。已安装的插件缓存没有 git 历史，无法提 PR。
+团队库 PR 复用同一套 worktree 流程，但不读取版本文件、不写 CHANGELOG：
 
-默认**不 bump 版本**，只更新模板与回灌日志；传 `--bump` 才升级三处版本号并写入 CHANGELOG。这样多次回灌可以先攒在一起，发布时统一升版。
+```bash
+# 预览：目标分支、将提交的模板
+/devflow:upstream --to team --stage plan --pr
+
+# 执行：建分支 → 提交 → 推送 → 开 PR
+/devflow:upstream --to team --stage plan --pr --apply
+```
+
+团队库默认分支取 `hub.yaml` 的 `templates.team.base`（缺省 `main`），分支名前缀为 `devflow/team-`。也可直接调用 `/devflow:ship --profile team --plugin-root <团队库根>`。
+
+上游 PR 目标是**插件源码仓库**（含 `.git`）；团队库 PR 目标是团队模板 git 仓库。已安装的插件缓存没有 git 历史，无法提 PR。
+
+回灌与 `ship` 只更新模板与回灌日志，不改版本文件与 CHANGELOG；版本号由维护者在发版时统一修改，流程见 [development.md 的发版流程](development.md#发版流程)。
 
 PR 创建按优先级降级：
 
@@ -179,7 +242,8 @@ gh auth login --web
 
 安全约束：
 
-- 只提交白名单文件：`templates/stages/`、`templates/shared/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。
+- 上游白名单：`templates/stages/`、`templates/shared/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。
+- 团队库白名单收窄为 `templates/stages/`、`templates/shared/`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`；不会改动任何版本文件或 CHANGELOG。
 - 这些文件在回灌前必须干净，否则脚本拒绝执行，避免把无关改动混进 PR。
 - 工作区其他未提交改动不会进入提交，脚本会列出来。
 - 提交前重新扫描写出的文件：仍含疑似密钥则停止；`SKILL.md` 的 frontmatter `name` 必须与目录名一致且 `description` 非空。
@@ -210,8 +274,13 @@ gh auth login --web
 | 插件已安装但命令报 `Unknown command` | `~/.claude/settings.json` 的 `enabledPlugins` 缺少 `"devflow@devflow-marketplace": true`；补上后重启会话。若使用 cc-switch，切换供应商会整体覆盖 `settings.json`，需把该启用项同步进各供应商快照 |
 | 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand`；root 无构建文件时默认写 `npm test`，必须替换 |
 | 升级后模板还是旧的 | 运行 `/devflow:sync --dry-run` 查看是否有冲突；手改文件需确认后加 `--force` |
-| 回灌后版本号没变 | 默认不 bump；需要发版时加 `--bump patch\|minor\|major` |
-| 想撤销某次回灌 | `/devflow:upstream --revert <记录 ID>`；ID 见命令输出或 `docs/upstream-log.md` |
+| 回灌后版本号没变 | 预期行为；回灌不改版本文件，发版按 [development.md 的发版流程](development.md#发版流程) 操作 |
+| 团队库报路径不存在 | 按报错里的 clone 命令把团队模板仓库 clone 到 `templates.team.path`，或用 `--team-library` / `.devflow.json` 的 `teamLibraryPath` 指向本机已有 clone |
+| 团队库目标文件有未提交改动 | 先提交或 stash；确认放弃时加 `--force`，脚本会先备份再覆盖 |
+| 团队库报“必须是 git 仓库顶层” | 把 `templates.team.path` 指到仓库根，而不是子目录 |
+| 个人库目录不存在 | 正常；首次 `--to personal --apply` 会自动创建，路径见 `/devflow:doctor` 输出 |
+| doctor 提示模板来源账本为 v2 | 运行 `/devflow:sync` 升级到 v3，补全每个文件的 `source` |
+| 想撤销某次回灌 | `/devflow:upstream --revert <记录 ID>`；ID 见命令输出或对应库的 `docs/upstream-log.md` |
 | 回灌后 `SKILL.md` 校验失败 | frontmatter `name` 必须与目录名一致，`description` 不能为空；修正后重新回灌 |
 | 同步显示「自动合并」 | 本地与模板都改过，已按基线三方合并；检查结果后提交，冲突文件需手工合并 |
 | 找不到回灌备份 | 备份在 `.devflow/backups/<记录 ID>/`；日志在 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md` |

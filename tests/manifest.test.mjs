@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import './support.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import './support.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,7 +87,7 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
   try {
     const root = makeProject();
     const { repo, bare } = makePluginRepo(base);
-    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--bump', 'patch'], repo);
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
 
     assert.match(r.stdout, /compare\/main\.\.\.devflow\/upstream-review/);
@@ -99,11 +100,12 @@ test('ship 提交回灌并推送分支，输出 PR 链接', () => {
     assert.match(subject, /回灌 review 阶段规则/);
 
     const plugin = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/plugin.json`]));
-    assert.equal(plugin.version, '1.0.1');
+    assert.equal(plugin.version, '1.0.0');
     const pkg = JSON.parse(git(bare, ['show', `${branchName}:package.json`]));
-    assert.equal(pkg.version, '1.0.1');
+    assert.equal(pkg.version, '1.0.0');
     const market = JSON.parse(git(bare, ['show', `${branchName}:.claude-plugin/marketplace.json`]));
-    assert.equal(market.metadata.version, '1.0.1');
+    assert.equal(market.metadata.version, '1.0.0');
+    assert.doesNotMatch(git(bare, ['show', `${branchName}:CHANGELOG.md`]), /## 1\.0\.1/);
 
     const template = git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]);
     assert.match(template, /先看正确性/);
@@ -288,15 +290,12 @@ test('PR 正文复用仓库模板', () => {
       stage: 'review',
       projectName: 'demo',
       files: ['templates/stages/review/SKILL.md'],
-      oldVersion: '1.0.0',
-      newVersion: '1.1.0',
-      kind: 'minor',
     });
     assert.match(body, /回灌.*review 阶段.*来源项目：demo/);
     assert.match(body, /## 类型[\s\S]*- \[x\] feat/);
     assert.match(body, /范围：review 阶段/);
     assert.match(body, /templates\/stages\/review\/SKILL\.md/);
-    assert.match(body, /1\.0\.0 → 1\.1\.0（minor）/);
+    assert.match(body, /仅模板变更，不涉及插件版本/);
     assert.doesNotMatch(body, /<!-- 说明 -->/);
   } finally {
     rmSync(base, { recursive: true, force: true });
@@ -310,7 +309,6 @@ test('PR 正文在缺少模板时退回内置结构', () => {
     mkdirSync(repo, { recursive: true });
     const body = buildPrBody(repo, {
       stage: 'test', projectName: 'demo', files: ['templates/stages/test/SKILL.md'],
-      oldVersion: '1.0.0', newVersion: '1.0.1', kind: 'patch',
     });
     assert.match(body, /## 变更内容/);
     assert.match(body, /## 影响面/);
@@ -352,7 +350,7 @@ test('ship 的版本号来自 --base 分支而非当前分支', () => {
     git(repo, ['add', '-A']);
     git(repo, ['commit', '-m', 'chore: 当前分支预发布版本']);
 
-    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main', '--bump', 'patch'], repo);
+    const r = run(['--root', root, '--stage', 'review', '--plugin-root', repo, '--base', 'main'], repo);
     assert.equal(r.status, 0, r.stderr + r.stdout);
 
     const branches = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n');
@@ -360,10 +358,9 @@ test('ship 的版本号来自 --base 分支而非当前分支', () => {
     assert.ok(branch, `未找到回灌分支：${branches.join('、')}`);
 
     const message = git(repo, ['log', '-1', '--format=%B', branch]);
-    assert.match(message, /版本：1\.0\.0 → 1\.0\.1/);
     assert.doesNotMatch(message, /1\.1\.0/);
     const plugin = JSON.parse(git(repo, ['show', `${branch}:.claude-plugin/plugin.json`]));
-    assert.equal(plugin.version, '1.0.1');
+    assert.equal(plugin.version, '1.0.0');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -391,7 +388,7 @@ test('redactText 覆盖 URL 凭据与查询参数 token', () => {
   assert.match(text, /\*\*\*/);
 });
 
-test('ship 默认不 bump 版本，只更新模板', () => {
+test('ship 只更新模板，不改版本文件', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-ship-nobump-'));
   try {
     const root = makeProject();

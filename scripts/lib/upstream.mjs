@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
   readText, writeAtomic, ensureDir, walk, relPosix, isGeneratedArtifact,
-  normalizeEol, isPathInside, isRealPathInside, posix, bumpVersion,
+  normalizeEol, isPathInside, isRealPathInside, posix,
   parseFrontmatter,
 } from './common.mjs';
 
@@ -223,58 +223,6 @@ export function makeId() {
   return `${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${process.pid}`;
 }
 
-export function updateVersionFiles(pluginRoot, next) {
-  const targets = [
-    join(pluginRoot, '.claude-plugin', 'plugin.json'),
-    join(pluginRoot, 'package.json'),
-    join(pluginRoot, '.claude-plugin', 'marketplace.json'),
-  ];
-  let pluginName = null;
-  try {
-    pluginName = JSON.parse(readText(join(pluginRoot, '.claude-plugin', 'plugin.json'))).name;
-  } catch { /* 缺失时按唯一插件处理 */ }
-
-  const changed = [];
-  for (const file of targets) {
-    if (!existsSync(file)) continue;
-    let data;
-    try {
-      data = JSON.parse(readText(file));
-    } catch (err) {
-      throw new Error(`无法解析版本文件 ${posix(file)}：${err.message}。请修复后再回灌。`);
-    }
-    if (file.endsWith('marketplace.json')) {
-      data.metadata = { ...(data.metadata || {}), version: next };
-      if (Array.isArray(data.plugins)) {
-        for (const plugin of data.plugins) {
-          if (!pluginName || plugin.name === pluginName) plugin.version = next;
-        }
-      }
-    } else {
-      data.version = next;
-    }
-    writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
-    changed.push(posix(file));
-  }
-  return changed;
-}
-
-export function updateChangelog(pluginRoot, next, units, files) {
-  const changelog = join(pluginRoot, 'CHANGELOG.md');
-  const old = existsSync(changelog) ? readText(changelog) : '';
-  const unitText = units.map((u) => (u.kind === 'shared' ? '共享规则' : `${u.name} 阶段`)).join('、');
-  const block = `\n## ${next}\n\n- 从项目回灌 ${unitText}（${files.join('、')}）\n`;
-  const withTitle = /^# Changelog\b/m.test(old) ? old : `# Changelog\n${old}`;
-  const heading = /^# Changelog[^\n]*\n?/m.exec(withTitle);
-  const versionRe = new RegExp(`^##\\s+${next.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm');
-  const updated = versionRe.test(withTitle)
-    ? withTitle
-    : heading
-      ? `${withTitle.slice(0, heading.index + heading[0].length)}${block}${withTitle.slice(heading.index + heading[0].length)}`
-      : `${withTitle}${block}`;
-  writeAtomic(changelog, updated);
-}
-
 export function appendLog(pluginRoot, entry) {
   const jsonl = join(pluginRoot, ...LOG_JSONL.split('/'));
   ensureDir(dirname(jsonl));
@@ -289,7 +237,11 @@ export function appendLog(pluginRoot, entry) {
     `- 模式：${entry.mode}`,
     `- 项目：${entry.project}`,
     `- 文件：${entry.files.length ? entry.files.join('、') : '（无）'}`,
-    entry.oldVersion ? `- 插件版本：${entry.oldVersion} → ${entry.newVersion}` : '- 插件版本：未变更',
+    entry.oldVersion
+      ? `- 插件版本：${entry.oldVersion} → ${entry.newVersion}`
+      : (entry.mode === 'upstream' || entry.mode === 'remote'
+        ? '- 插件版本：未变更'
+        : '- 模板库版本：不适用（个人库与团队库没有版本文件）'),
     `- 记录 ID：\`${entry.id}\``,
     '',
   ].join('\n');
@@ -304,12 +256,13 @@ export function readLog(pluginRoot) {
   }).filter(Boolean);
 }
 
-export function revertFromLog(pluginRoot, id) {
-  const entry = readLog(pluginRoot).find((e) => e.id === id);
+/** 回滚还会尝试恢复版本文件，兼容早期回灌记录里包含版本备份的情况。 */
+export function revertFromLog(root, id, { restoreVersionFiles = true } = {}) {
+  const entry = readLog(root).find((e) => e.id === id);
   if (!entry) throw new Error(`找不到回灌记录：${id}`);
   const restore = (rel) => {
-    const bak = join(pluginRoot, ...BACKUP_ROOT.split('/'), id, ...rel.split('/'));
-    const target = join(pluginRoot, ...rel.split('/'));
+    const bak = join(root, ...BACKUP_ROOT.split('/'), id, ...rel.split('/'));
+    const target = join(root, ...rel.split('/'));
     if (existsSync(bak)) {
       ensureDir(dirname(target));
       copyFileSync(bak, target);
@@ -322,8 +275,10 @@ export function revertFromLog(pluginRoot, id) {
     return false;
   };
   for (const rel of entry.files || []) restore(rel);
-  for (const rel of ['.claude-plugin/plugin.json', 'package.json', '.claude-plugin/marketplace.json', 'CHANGELOG.md']) {
-    restore(rel);
+  if (restoreVersionFiles) {
+    for (const rel of ['.claude-plugin/plugin.json', 'package.json', '.claude-plugin/marketplace.json', 'CHANGELOG.md']) {
+      restore(rel);
+    }
   }
   return entry;
 }
@@ -365,12 +320,3 @@ export function mergeTexts(baseText, localText, templateText) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
-
-export function bumpKind(value) {
-  if (!['patch', 'minor', 'major'].includes(value)) {
-    throw new Error(`--bump 只支持 patch|minor|major，收到：${value}`);
-  }
-  return value;
-}
-
-export { bumpVersion };

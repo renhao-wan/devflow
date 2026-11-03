@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import './support.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -332,6 +333,68 @@ test('init 写入的 .gitignore 忽略 loader 且重复运行不会叠加片段'
   }
 });
 
+test('init 记录库路径，--force 重跑保留 templates 与 blocklist', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-init-keep-'));
+  const root = join(base, 'project');
+  const personal = join(base, 'personal');
+  const team = join(base, 'team');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(team, { recursive: true });
+    const first = run('hub-init.mjs', [
+      '--root', root, '--personal-library', personal, '--team-library', team,
+    ], root);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+
+    const meta = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8'));
+    assert.equal(resolve(meta.personalLibraryPath), resolve(personal));
+    assert.equal(resolve(meta.teamLibraryPath), resolve(team));
+
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    const edited = readFileSync(hub, 'utf8')
+      .replace('  order: [personal, upstream]', '  order: [team, personal, upstream]')
+      .replace(/  # team:\n(?:  #.*\n)+/, `  team:\n    enabled: true\n    path: ${JSON.stringify(team.replace(/\\/g, '/'))}\n`)
+      .replace('  blocklist: []', '  blocklist: ["acme"]');
+    assert.notEqual(edited, readFileSync(hub, 'utf8'), 'hub.yaml 测试改写未生效');
+    writeFileSync(hub, edited);
+
+    const forced = run('hub-init.mjs', ['--root', root, '--force', '--team-library', team], root);
+    assert.equal(forced.status, 0, forced.stderr + forced.stdout);
+    const yaml = readFileSync(hub, 'utf8');
+    assert.match(yaml, /order: \[team, personal, upstream\]/);
+    assert.match(yaml, /blocklist: \["acme"\]/);
+    assert.match(yaml, /  team:\n    enabled: true/);
+
+    // 不带参数的普通重跑也应保留 .devflow.json 中已记录的库路径。
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const kept = JSON.parse(readFileSync(join(root, '.devflow.json'), 'utf8'));
+    assert.equal(resolve(kept.personalLibraryPath), resolve(personal));
+    assert.equal(resolve(kept.teamLibraryPath), resolve(team));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 对未启用个人库的项目不误报个人库目录', () => {
+  const root = makeSandbox();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    writeFileSync(hub, `${readFileSync(hub, 'utf8')}\n`
+      + 'templates:\n'
+      + '  order: [upstream]\n'
+      + '  personal:\n'
+      + '    enabled: false\n');
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
+    assert.match(doctor.stdout, /个人库未启用/);
+    assert.doesNotMatch(doctor.stdout, /个人库目录尚未创建/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('生成器拒绝越界阶段名，不写到 .claude/skills 之外', () => {
   const root = makeSandbox();
   try {
@@ -438,7 +501,7 @@ test('init 忽略指向工作区外的 Maven 模块', () => {
 
     const yaml = readFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'utf8');
     assert.doesNotMatch(yaml, new RegExp(escapedName));
-    assert.doesNotMatch(yaml, /\.\.\//);
+    assert.doesNotMatch(yaml, /path:\s*"\.\.\//);
     const config = parseYaml(yaml);
     assert.deepEqual(Object.keys(config.subprojects), ['service']);
   } finally {

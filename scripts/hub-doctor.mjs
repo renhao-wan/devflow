@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve, delimiter } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath,
@@ -14,6 +15,7 @@ import {
   ECOSYSTEM_FILE, STATE_FILE, isStale, loadEcosystem, loadState,
   summarizeState, validateConfig,
 } from './lib/ecosystem.mjs';
+import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -197,6 +199,67 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
+  if (config && pluginRoot) {
+    let libs = null;
+    try {
+      libs = describeLibraries(root, config, { pluginRoot, meta });
+    } catch (err) {
+      add('error', `模板库解析失败：${err.message}`);
+    }
+    if (libs) {
+      const invalid = libs.requested.filter((kind) => !LIBRARY_KINDS.includes(kind));
+      if (invalid.length) {
+        add('warn', `templates.order 含未知库：${invalid.join('、')}`,
+          'templates.order 只支持 team|personal|upstream');
+      }
+      if (libs.requested.length && new Set(libs.requested).size !== libs.requested.length) {
+        add('warn', 'templates.order 有重复项', '删除 .claude/hub/hub.yaml 中 templates.order 的重复库');
+      }
+      if (!libs.requested.includes('upstream')) {
+        add('warn', 'templates.order 未显式包含 upstream', '保留 upstream 作为兜底来源；缺失时运行时会自动补到最后');
+      }
+      if (libs.requested.includes('team') && !libs.team.enabled) {
+        add('warn', 'templates.order 含 team，但团队库未启用',
+          '在 hub.yaml 的 templates.team 配置 enabled: true 与 path，或从 order 移除 team');
+      }
+      if (libs.team.configured && !libs.order.includes('team')) {
+        add('warn', '团队库已配置，但 templates.order 未包含 team，当前不会使用',
+          '把 team 加入 templates.order，或删除 templates.team 配置');
+      }
+
+      add('ok', `上游库：${posix(libs.upstream.root)}`);
+      if (libs.order.includes('personal')) {
+        add('ok', `个人库：${posix(libs.personal.root)}`);
+        if (!libs.personal.exists) {
+          add('warn', `个人库目录尚未创建：${posix(libs.personal.root)}`, '/devflow:upstream --to personal --stage <name> --apply');
+        }
+      } else {
+        add('ok', '个人库未启用（templates.order 不含 personal）');
+      }
+
+      if (libs.team.error) {
+        add('error', `团队库不可用：${libs.team.error}`);
+      } else if (libs.team.enabled) {
+        add('ok', `团队库：${posix(libs.team.root)}${libs.team.repo ? `（${libs.team.repo}）` : ''}`);
+        // 团队库回灌与 --pr 都要求 git；sync 仅读取模板则不强制。
+        const top = spawnSync('git', ['-C', libs.team.root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+        if (top.status !== 0) {
+          add('warn', `团队库不是 git 仓库：${posix(libs.team.root)}`,
+            '回灌与 --pr 需要 git 仓库；在该目录 git init，或改为 clone 的仓库');
+        } else if (!samePath(top.stdout.trim(), libs.team.root)) {
+          add('warn', `团队库不是 git 仓库顶层：${posix(libs.team.root)} 位于 ${posix(top.stdout.trim())} 内`,
+            `请把 templates.team.path 指到仓库根 ${posix(top.stdout.trim())}`);
+        }
+      } else {
+        add('ok', '团队库未启用（可选；在 hub.yaml 配置 templates.team 启用）');
+      }
+
+      const enabled = libs.order.filter((kind) =>
+        kind !== 'team' || (libs.team.enabled && !libs.team.error));
+      add('ok', `模板来源优先级：${enabled.join(' > ')}`);
+    }
+  }
+
   if (config) {
     const overviewFile = join(root, OVERVIEW_FILE);
     if (!existsSync(overviewFile)) {
@@ -288,6 +351,12 @@ export async function main(argv = process.argv.slice(2)) {
       : '缺少 .claude/.hub-sources.json，运行 /devflow:sync 可重建', '/devflow:sync');
   } else {
     add('ok', `阶段源账本记录 ${Object.keys(sources.files || {}).length} 个文件`);
+    const schema = Number(sources.schemaVersion ?? 2);
+    if (schema < 3) {
+      add('warn', `模板来源账本为 v${schema}，缺少来源信息，运行 /devflow:sync 升级到 v3`, '/devflow:sync');
+    } else if (schema > 3) {
+      add('warn', `模板来源账本为 v${schema}，高于当前支持的 v3，可能由更新版本生成`, '升级 devflow 插件后重试');
+    }
   }
   if (manifest?.skills?.length) {
     const withResources = manifest.skills.filter((s) => Array.isArray(s.resources) && s.resources.length).length;
