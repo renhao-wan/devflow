@@ -1,20 +1,16 @@
 #!/usr/bin/env node
 import { existsSync, copyFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub, satisfies,
-  readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir, walk, relPosix,
+  readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir,
   readMeta, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
 import { mergeTexts } from './lib/upstream.mjs';
+import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
 const HUB_PREFIX = '.claude/hub/';
-
-const TEMPLATE_ROOTS = [
-  { sub: 'stages', src: 'templates/stages' },
-  { sub: '_shared', src: 'templates/shared' },
-];
 
 function stamp() {
   return new Date().toISOString().replace(/[-:]/g, '').replace('.', '').slice(0, 15);
@@ -31,20 +27,6 @@ function label(type) {
   })[type] || type;
 }
 
-function templateFiles(pluginRoot) {
-  const out = [];
-  for (const def of TEMPLATE_ROOTS) {
-    const base = join(pluginRoot, ...def.src.split('/'));
-    if (!existsSync(base)) continue;
-    for (const abs of walk(base)) {
-      const rel = relPosix(base, abs);
-      if (isGeneratedArtifact(rel) || rel.split('/').pop() === '_feedback-log.md') continue;
-      out.push({ hubRel: `${def.sub}/${rel}`, destRel: `${HUB_PREFIX}${def.sub}/${rel}`, src: abs });
-    }
-  }
-  return out.sort((a, b) => a.hubRel.localeCompare(b.hubRel));
-}
-
 function readSources(root) {
   const file = join(root, '.claude', '.hub-sources.json');
   if (!existsSync(file)) return null;
@@ -58,8 +40,10 @@ function readSources(root) {
 function recordOf(sources, rel) {
   const raw = sources?.files?.[rel];
   if (!raw) return null;
-  if (typeof raw === 'string') return { base: raw, local: raw, legacy: true };
-  if (typeof raw === 'object' && raw.base && raw.local) return { base: raw.base, local: raw.local };
+  if (typeof raw === 'string') return { base: raw, local: raw, legacy: true, source: 'upstream' };
+  if (typeof raw === 'object' && raw.base && raw.local) {
+    return { base: raw.base, local: raw.local, source: raw.source || 'upstream' };
+  }
   return null;
 }
 
@@ -93,8 +77,14 @@ export async function main(argv = process.argv.slice(2)) {
     log('warn', '缺少 .claude/.hub-sources.json：已有文件一律按“可能手改”处理，冲突时需 --force 才会覆盖。');
   }
 
-  const files = templateFiles(pluginRoot);
-  if (!files.length) throw new Error(`插件里没有阶段或共享模板：${posix(join(pluginRoot, 'templates'))}`);
+  const personalLibrary = argValue(argv, '--personal-library', null);
+  const teamLibrary = argValue(argv, '--team-library', null);
+  const files = collectTemplateFiles(resolveLibraries(root, hub.config, {
+    pluginRoot,
+    personalLibrary,
+    teamLibrary,
+  }));
+  if (!files.length) throw new Error(`没有可用的阶段或共享模板：${posix(join(pluginRoot, 'templates'))}`);
 
   const actions = [];
   for (const file of files) {
@@ -172,7 +162,7 @@ export async function main(argv = process.argv.slice(2)) {
     for (const a of actions) {
       if (a.type === 'same') continue;
       const detail = a.reason ? `（${a.reason}）` : '';
-      log(a.type === 'conflict' ? 'warn' : '..', `${label(a.type)} ${a.destRel}${detail}`);
+      log(a.type === 'conflict' ? 'warn' : '..', `${label(a.type)} [${a.source}] ${a.destRel}${detail}`);
     }
     for (const hubRel of removed) log('..', `模板已移除，本地保留 ${HUB_PREFIX}${hubRel}`);
     console.log(`\n[dry-run] 新增 ${counts.add}，更新 ${counts.update}，自动合并 ${counts.merged}，`
@@ -184,7 +174,7 @@ export async function main(argv = process.argv.slice(2)) {
   const backupStamp = stamp();
   const meta = readMeta(root);
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     pluginVersion: info.version,
     files: {},
@@ -210,7 +200,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (const a of actions) {
     if (a.type === 'same') {
       writeBase(a.hubRel, a.templateText);
-      manifest.files[a.destRel] = { base: a.templateHash, local: a.templateHash };
+      manifest.files[a.destRel] = { base: a.templateHash, local: a.templateHash, source: a.source };
       persist();
       continue;
     }
@@ -218,15 +208,25 @@ export async function main(argv = process.argv.slice(2)) {
       // 模板没变、本地手改：基线保持不变，只确保快照存在以便下次三方合并。
       const baseFile = baseSnapshotPath(root, a.hubRel);
       if (!existsSync(baseFile)) writeBase(a.hubRel, a.templateText);
-      manifest.files[a.destRel] = {
-        base: contentHash(readText(baseFile)),
-        local: contentHash(readText(a.dest)),
-      };
+      // local 记录“上次同步的干净内容”，不能记手改后的哈希，
+      // 否则下次会把这份手改误判成未改动而直接覆盖。
+      const baseHash = contentHash(readText(baseFile));
+      manifest.files[a.destRel] = { base: baseHash, local: baseHash, source: a.source };
       persist();
       continue;
     }
     if (a.type === 'conflict') {
-      log('warn', `跳过冲突 ${a.destRel}${a.reason ? `（${a.reason}）` : ''}`);
+      // 本地内容保留，但把当前模板记为基线：用户手工合并后重跑即可被接受；
+      // 模板再次更新时，仍以“上次模板 + 当前本地”做三方合并。
+      // local 同样只记基线：手改内容不算“同步写入的内容”，下次仍按手改处理。
+      writeBase(a.hubRel, a.templateText);
+      manifest.files[a.destRel] = {
+        base: a.templateHash,
+        local: a.templateHash,
+        source: a.source,
+      };
+      persist();
+      log('warn', `跳过冲突 ${a.destRel}${a.reason ? `（${a.reason}）` : ''}；本地内容保留，已把当前模板记为基线`);
       continue;
     }
 
@@ -241,15 +241,18 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (a.type === 'merged') {
       writeAtomic(a.dest, a.mergedText);
-      log('ok', `${label(a.type)} ${a.destRel}`);
+      log('ok', `${label(a.type)} [${a.source}] ${a.destRel}`);
     } else {
       copyFileSync(a.src, a.dest);
-      log('ok', `${label(a.type)} ${a.destRel}`);
+      log('ok', `${label(a.type)} [${a.source}] ${a.destRel}`);
     }
     writeBase(a.hubRel, a.templateText);
+    // local 记录“上次同步写入的干净内容”，合并结果含本地改动，不算干净内容。
+    // 若记录合并结果的哈希，下次模板未变时会被误判为未手改并用模板覆盖。
     manifest.files[a.destRel] = {
       base: a.templateHash,
-      local: contentHash(readText(a.dest)),
+      local: a.templateHash,
+      source: a.source,
     };
     persist();
   }
@@ -270,6 +273,8 @@ export async function main(argv = process.argv.slice(2)) {
       ...meta,
       pluginRoot,
       pluginVersion: info.version,
+      ...(personalLibrary ? { personalLibraryPath: resolve(personalLibrary) } : {}),
+      ...(teamLibrary ? { teamLibraryPath: resolve(teamLibrary) } : {}),
     }, null, 2)}\n`);
   }
 

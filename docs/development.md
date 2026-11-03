@@ -14,9 +14,9 @@
 | `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
 | `scripts/statusline.mjs` | 输出单行进度，供 Claude Code `statusLine` 使用 | `--root` `--json` |
 | `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
-| `scripts/hub-upstream.mjs` | 回灌阶段模板 | `--stage` `--apply` `--bump` `--root` `--plugin-root` |
-| `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR | `--stage` `--plugin-root` `--base` `--bump` `--dry-run` `--no-pr` |
-| `scripts/hub-sync.mjs` | 插件升级后同步阶段模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` |
+| `scripts/hub-upstream.mjs` | 回灌阶段模板到个人库、团队库或上游 | `--stage` `--shared` `--all` `--to` `--pr` `--apply` `--revert` `--force` `--root` `--plugin-root` `--personal-library` `--team-library` |
+| `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR（上游或团队 profile） | `--stage` `--plugin-root` `--profile` `--base` `--dry-run` `--resume` `--no-pr` |
+| `scripts/hub-sync.mjs` | 按来源优先级同步阶段与共享模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/mark-test.mjs` | 记录测试通过时间与命令 | `--root` `--command` |
 
 项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
@@ -73,7 +73,7 @@ package.json           # 发布元数据与 npm test 脚本
 .claude/.devflow-state.json  # 测试状态
 .claude/.ecosystem-state.json # 工具检测结果（gitignore）
 scripts/               # 薄 loader，指向插件内的真实脚本
-.devflow.json          # 插件位置、版本与回灌源码根
+.devflow.json          # 插件位置、版本、回灌源码根与个人/团队库本机路径
 ```
 
 ## 开发与测试
@@ -84,7 +84,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 280 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 307 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、模板库解析、多来源同步、回灌、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
@@ -111,13 +111,32 @@ claude plugin eval evals --no-publish --allow-tools Read,Glob,Grep,Bash
 
 `plugin.json` 是插件版本的权威来源；另外两处是镜像，必须与之一致（`tests/manifest.test.mjs` 会校验）：
 
-- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.5.0`）
+- 权威来源：`.claude-plugin/plugin.json` 的 `version`（当前 `1.6.0`）
 - 包元数据：`package.json` 的 `version`
 - 市场条目：`.claude-plugin/marketplace.json` 中同名插件的 `plugins[].version`
 
-`marketplace.metadata.version` 是市场自身的元数据，`upstream` / `ship` 会一并同步，但它不决定插件安装版本。
+`marketplace.metadata.version` 是市场自身的元数据，不决定插件安装版本，但为保持市场展示一致也随发版一同更新。
 
-回灌与 `ship` 的 `--apply` 会同时更新以上位置；手工改版本时也要保持同步。
+回灌与 `ship` 只改模板和回灌日志，**不碰任何版本文件**；版本号只在实际发版时手动同步。
+
+### 发版流程
+
+版本号服务于两件事：Claude Code 按插件版本区分安装缓存并判断 `claude plugin update`，以及项目 `hub.yaml` 的 `requiresPlugin` 门槛。回灌与模板同步按内容哈希判定，不依赖版本号。发版是与回灌分开的独立动作，按以下步骤执行：
+
+1. 确认要发布的改动都已合入 `main`。`main` 受保护，功能改动须经 PR 合入。
+2. 选择版本级别：修 bug 或文案用 `patch`，新增向后兼容的能力用 `minor`，破坏兼容或用例大幅调整用 `major`。
+3. 同步四处版本号，保持完全一致：
+   - `.claude-plugin/plugin.json` 的 `version`（权威来源）
+   - `package.json` 的 `version`
+   - `.claude-plugin/marketplace.json` 的 `plugins[].version`
+   - `.claude-plugin/marketplace.json` 的 `metadata.version`
+4. 在 `CHANGELOG.md` 顶部新增 `## x.y.z` 小节，按「增强 / 修复 / 变更」归类本次内容。
+5. 运行 `node --test`（`tests/manifest.test.mjs` 会校验四处版本一致）与 `node scripts/hub-doctor.mjs`，确认全绿、无漂移。
+6. 提交：`chore(release): 发布 x.y.z`。
+7. 推送功能分支并开 PR 合入 `main`。
+8. 合入后更新本机插件：`claude plugin update` 或 `/plugin update devflow`，然后重启会话。已初始化项目重新运行 `/devflow:sync` 与 `/devflow:doctor`，按需调整 `requiresPlugin`。
+
+发版由维护者决定时机，不在功能提交中顺带升版。
 
 其他记录：
 

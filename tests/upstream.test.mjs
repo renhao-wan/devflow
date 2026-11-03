@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import './support.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,6 +59,9 @@ function makePluginCopy(base) {
   const market = join(copy, '.claude-plugin', 'marketplace.json');
   const marketData = JSON.parse(readFileSync(market, 'utf8'));
   marketData.metadata = { ...(marketData.metadata || {}), version: '1.0.0' };
+  marketData.plugins = (marketData.plugins || []).map((p) => (
+    p.name === 'devflow' ? { ...p, version: '1.0.0' } : p
+  ));
   writeFileSync(market, JSON.stringify(marketData, null, 2));
   return copy;
 }
@@ -79,7 +83,7 @@ test('回灌预览：逐行剔除项目专属内容且不写插件', () => {
   }
 });
 
-test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
+test('回灌 apply：写入模板与日志，不改版本文件', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
   try {
@@ -106,52 +110,19 @@ test('回灌 apply：写入模板、bump 版本、更新 CHANGELOG', () => {
     const template = readFileSync(join(pluginCopy, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8');
     assert.match(template, /先看正确性/);
 
+    // 回灌只写模板，版本文件与 CHANGELOG 保持不变。
     const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
-    assert.equal(plugin.version, '1.0.1');
-
-    // 版本升级要同步到 package.json 与 marketplace
+    assert.equal(plugin.version, '1.0.0');
     const pkg = JSON.parse(readFileSync(join(pluginCopy, 'package.json'), 'utf8'));
-    assert.equal(pkg.version, '1.0.1');
+    assert.equal(pkg.version, '1.0.0');
     const market = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'marketplace.json'), 'utf8'));
-    assert.equal(market.metadata.version, '1.0.1');
-    assert.equal((market.plugins || []).find((p) => p.name === 'devflow')?.version, '1.0.1');
+    assert.equal(market.metadata.version, '1.0.0');
+    assert.equal((market.plugins || []).find((p) => p.name === 'devflow')?.version, '1.0.0');
+    assert.doesNotMatch(readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8'), /## 1\.0\.1/);
 
-    const changelog = readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8');
-    assert.match(changelog, /1\.0\.1/);
     assert.ok(existsSync(join(pluginCopy, '.devflow', 'upstream-log.jsonl')));
     assert.match(readFileSync(join(pluginCopy, 'docs', 'upstream-log.md'), 'utf8'), /review 阶段/);
     assert.equal(existsSync(join(pluginCopy, 'templates', 'stages', '_feedback-log.md')), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('回灌在 CHANGELOG 缺少标题时仍写入版本条目', () => {
-  const root = makeProject();
-  const pluginCopy = makePluginCopy(root);
-  try {
-    const skill = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
-    writeFileSync(skill, '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
-    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
-      'version: 1',
-      'requiresPlugin: "^1.0.0"',
-      'stages:',
-      '  - review',
-      'subprojects: {}',
-      'defaults:',
-      '  testCommand: "npm test"',
-      'upstream:',
-      '  blocklist: []',
-      '',
-    ].join('\n'));
-    writeFileSync(join(pluginCopy, 'CHANGELOG.md'), '历史内容\n');
-
-    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
-    assert.equal(result.status, 0, result.stderr);
-    const changelog = readFileSync(join(pluginCopy, 'CHANGELOG.md'), 'utf8');
-    assert.match(changelog, /^# Changelog\n/);
-    assert.match(changelog, /## 1\.0\.1/);
-    assert.match(changelog, /历史内容/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -239,7 +210,7 @@ test('回灌跳过备份与临时文件', () => {
   }
 });
 
-test('回灌重复执行是幂等的，不重复升级版本', () => {
+test('回灌重复执行是幂等的，不重复写入', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
   try {
@@ -256,37 +227,7 @@ test('回灌重复执行是幂等的，不重复升级版本', () => {
     assert.match(second.stdout, /一致|未修改/);
 
     const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
-    assert.equal(plugin.version, '1.0.1');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('回灌支持 --bump minor', () => {
-  const root = makeProject();
-  const pluginCopy = makePluginCopy(root);
-  try {
-    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), '---\nname: review\ndescription: 审查\n---\n\n通用内容。\n');
-    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
-      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
-      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
-    ].join('\n'));
-
-    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply', '--bump', 'minor'], root);
-    assert.equal(result.status, 0, result.stderr);
-    const plugin = JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8'));
-    assert.equal(plugin.version, '1.1.0');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('回灌拒绝无法识别的 --bump', () => {
-  const root = makeProject();
-  try {
-    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--bump', 'huge'], root);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /--bump/);
+    assert.equal(plugin.version, '1.0.0');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -354,7 +295,7 @@ test('回灌把含 URL 的通用内容判为可回灌，不误伤 http(s)://', (
   }
 });
 
-test('回灌中途失败后重跑会补齐版本，不重复升级', () => {
+test('回灌中途失败后重跑会续做，不重复写日志', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
   try {
@@ -365,49 +306,23 @@ test('回灌中途失败后重跑会补齐版本，不重复升级', () => {
       'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
     ].join('\n'));
 
-    // 让 CHANGELOG 无法写入：模拟“模板已复制、版本已升级、收尾失败”。
-    const changelog = join(pluginCopy, 'CHANGELOG.md');
-    rmSync(changelog, { force: true });
-    mkdirSync(changelog);
+    // 让日志无法写入：模拟“模板已复制、日志未写、进程中断”。
+    const jsonl = join(pluginCopy, '.devflow', 'upstream-log.jsonl');
+    mkdirSync(jsonl, { recursive: true });
 
     const first = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
     assert.equal(first.status, 1);
     assert.match(first.stderr, /EISDIR/);
-    assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.1');
     assert.ok(existsSync(join(pluginCopy, '.devflow', 'upstream-journal.json')), '应保留中断记录');
+    assert.match(readFileSync(join(pluginCopy, 'templates', 'stages', 'review', 'SKILL.md'), 'utf8'), /先看正确性/);
 
-    rmSync(changelog, { recursive: true, force: true });
+    rmSync(jsonl, { recursive: true, force: true });
     const second = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
     assert.equal(second.status, 0, second.stderr);
-
-    // 重跑只补齐收尾，不会把 1.0.1 再升到 1.0.2
-    assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.1');
     assert.equal(existsSync(join(pluginCopy, '.devflow', 'upstream-journal.json')), false);
-    assert.match(readFileSync(changelog, 'utf8'), /## 1\.0\.1/);
 
-    const log = readFileSync(join(pluginCopy, '.devflow', 'upstream-log.jsonl'), 'utf8').trim().split('\n');
+    const log = readFileSync(jsonl, 'utf8').trim().split('\n');
     assert.equal(log.length, 1, '回灌日志不应重复');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('回灌遇到损坏的版本文件时报错而不是静默跳过', () => {
-  const root = makeProject();
-  const pluginCopy = makePluginCopy(root);
-  try {
-    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
-      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性。\n');
-    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
-      'version: 1', 'requiresPlugin: "^1.0.0"', 'stages:', '  - review',
-      'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
-    ].join('\n'));
-    writeFileSync(join(pluginCopy, '.claude-plugin', 'marketplace.json'), '{ 损坏的 JSON');
-
-    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /无法解析版本文件/);
-    assert.match(result.stderr, /marketplace\.json/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -500,7 +415,7 @@ test('回灌按显式标记剔除项目块并保留可复用块', () => {
   }
 });
 
-test('回灌 --no-bump 保持版本不变', () => {
+test('回灌不改版本文件，模板变化也不会触发升版', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
   try {
@@ -511,16 +426,21 @@ test('回灌 --no-bump 保持版本不变', () => {
       'subprojects: {}', 'defaults:', '  testCommand: "npm test"', 'upstream:', '  blocklist: []', '',
     ].join('\n'));
 
-    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply', '--no-bump'], root);
+    const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0');
-    assert.match(result.stdout, /版本未变/);
+
+    writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'),
+      '---\nname: review\ndescription: 审查\n---\n\n通用内容：先看正确性，再补边界。\n');
+    const again = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(JSON.parse(readFileSync(join(pluginCopy, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('回灌 --revert 恢复模板与版本', () => {
+test('回灌 --revert 恢复模板', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
   try {

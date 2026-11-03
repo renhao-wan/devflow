@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseYaml, parseFrontmatter, satisfies, bumpPatch, sha256, argValue, loadHub } from '../scripts/lib/common.mjs';
+import { parseYaml, parseFrontmatter, satisfies, sha256, argValue, loadHub } from '../scripts/lib/common.mjs';
 
 test('parseYaml 解析嵌套 map、块列表与行内列表', () => {
   const config = parseYaml(`
@@ -74,8 +74,7 @@ test('satisfies 支持 ^ ~ 比较符与 *', () => {
   assert.equal(satisfies('2.0.0', '>=1.0.0 <2.0.0'), false);
 });
 
-test('bumpPatch 与 sha256 稳定', () => {
-  assert.equal(bumpPatch('1.2.9'), '1.2.10');
+test('sha256 稳定', () => {
   assert.equal(sha256('a'), sha256('a'));
   assert.notEqual(sha256('a'), sha256('b'));
 });
