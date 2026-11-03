@@ -167,14 +167,15 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       : false;
     const triageStale = triage ? triageIsStale(root, item.slug) : false;
     let stage = stageOf(item.files, pending, reviewRequired);
+    const fullTrace = traceFor(root, item.slug);
     // review.md 存在时校验内容；有未关闭阻断项或画像缺失时不能判完成。
     const reviewGate = item.files.includes('review.md') && (stage === 'done' || stage === 'review')
-      ? checkReviewReport(root, item.slug, { triage: triageOf(root, item.slug) })
+      ? checkReviewReport(root, item.slug, { triage: triageOf(root, item.slug), trace: fullTrace })
       : null;
     if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
     const planDrift = changes ? planDriftFor(root, item.slug, { changes }) : null;
-    const trace = summarizeTrace(traceFor(root, item.slug));
+    const trace = summarizeTrace(fullTrace);
     return {
       slug: item.slug,
       stage,
@@ -217,7 +218,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     }
   }
   for (const row of rows) {
-    if (row.trace && row.trace.gaps > 0) {
+    if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
       const ids = row.trace.gapIds.slice(0, 3).join('、');
       suggestions.push(`${row.slug}：验收跟踪 ${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${row.trace.gapIds.length > 3 ? ' 等' : ''}；补齐证据或运行 devflow trace --slug ${row.slug} --check`);
     }
@@ -310,7 +311,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  ${row.slug}`);
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
-      if (row.trace && row.trace.gaps > 0) {
+      if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
         console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${row.trace.gapIds.join('、')}`);
       }
       console.log(`    下一步：${row.next}`);
