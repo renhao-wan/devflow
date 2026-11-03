@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync, renameSync, rmSync, realpathSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
+import { join, dirname, basename, resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -11,7 +11,22 @@ export function canonicalPath(p) {
   try {
     out = realpathSync.native(p);
   } catch {
-    out = resolve(p);
+    // 路径尚不存在：用最近的已存在祖先做真实路径解析，再拼回剩余段。
+    // 否则 Windows 的 8.3 短名会让同一目录出现短名与长名两种写法。
+    let anchor = resolve(p);
+    const rest = [];
+    while (!existsSync(anchor)) {
+      const up = dirname(anchor);
+      if (up === anchor) break;
+      rest.unshift(basename(anchor));
+      anchor = up;
+    }
+    try {
+      anchor = realpathSync.native(anchor);
+    } catch {
+      anchor = resolve(anchor);
+    }
+    out = rest.length ? join(anchor, ...rest) : anchor;
   }
   // Windows 可能返回 8.3 短路径或 \\?\ 长路径前缀，统一后再比较
   out = out.replace(/\\/g, '/').replace(/^\/\/\?\/?/, '');
