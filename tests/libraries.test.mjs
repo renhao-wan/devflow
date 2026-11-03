@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   resolveLibraries, collectTemplateFiles, assertLibraryRoot, defaultPersonalRoot, describeLibraries,
 } from '../scripts/lib/libraries.mjs';
@@ -158,6 +159,38 @@ test('模板库不能与项目互相嵌套，也不能落在插件缓存', () =>
     assert.equal(assertLibraryRoot(project, sibling), true);
     assert.equal(assertLibraryRoot(project, join(base, 'plugins', 'cache', 'x'), 'upstream'), true);
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('模板库嵌套与缓存校验会解析 junction', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('仅在 Windows 上验证 junction');
+    return;
+  }
+  const base = mkdtempSync(join(tmpdir(), 'devflow-libs-junction-'));
+  const links = [];
+  try {
+    const project = makeDir(base, 'project');
+    const inside = makeDir(project, '.claude/devflow');
+    const cache = makeDir(base, 'plugins/cache/x');
+
+    const linkInside = join(base, 'link-inside');
+    const linkCache = join(base, 'link-cache');
+    for (const [link, target] of [[linkInside, inside], [linkCache, cache]]) {
+      const made = spawnSync('cmd', ['/c', 'mklink', '/J', link, target], { encoding: 'utf8' });
+      if (made.status !== 0) {
+        t.skip('mklink /J 不可用');
+        return;
+      }
+      links.push(link);
+    }
+
+    // junction 指向项目内目录：原始路径看起来在项目外，必须按真实路径拒绝。
+    assert.throws(() => assertLibraryRoot(project, linkInside), /不能位于当前项目内/);
+    assert.throws(() => assertLibraryRoot(project, linkCache, 'personal'), /安装缓存/);
+  } finally {
+    for (const link of links) spawnSync('cmd', ['/c', 'rmdir', link], { encoding: 'utf8' });
     rmSync(base, { recursive: true, force: true });
   }
 });

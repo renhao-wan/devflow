@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { contentHash } from '../scripts/lib/common.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -201,6 +202,99 @@ test('个人库中断续做：文件已写入但日志缺失时，重跑补写�
     ], root);
     assert.equal(revert.status, 0, revert.stderr + revert.stdout);
     assert.equal(existsSync(target), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('个人库中断续做：中断后修改目标文件时拒绝，--force 才覆盖', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-personal-resume-dirty-'));
+  try {
+    const root = makeProject(base);
+    const personal = join(base, 'personal');
+    const target = join(personal, 'templates', 'stages', 'review', 'SKILL.md');
+    const first = run('hub-upstream.mjs', [
+      '--root', root, '--to', 'personal', '--personal-library', personal, '--stage', 'review', '--apply',
+    ], root);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+
+    const id = readLog(personal).at(-1).id;
+    const rel = 'templates/stages/review/SKILL.md';
+    const journalFile = join(personal, '.devflow', 'upstream-journal.json');
+    writeFileSync(journalFile, JSON.stringify({
+      id,
+      units: ['stage:review'],
+      files: [rel],
+      created: [],
+      hashes: { [rel]: contentHash(readFileSync(target, 'utf8')) },
+      before: { [rel]: contentHash(readFileSync(target, 'utf8')) },
+      createdAt: new Date().toISOString(),
+    }));
+
+    // 模拟中断后用户又改了同一个目标文件。
+    writeFileSync(target, '中断后手改\n');
+    const denied = run('hub-upstream.mjs', [
+      '--root', root, '--to', 'personal', '--personal-library', personal, '--stage', 'review', '--apply',
+    ], root);
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /中断后被修改/);
+    assert.equal(readFileSync(target, 'utf8'), '中断后手改\n');
+    assert.ok(existsSync(journalFile));
+
+    const forced = run('hub-upstream.mjs', [
+      '--root', root, '--to', 'personal', '--personal-library', personal, '--stage', 'review', '--apply', '--force',
+    ], root);
+    assert.equal(forced.status, 0, forced.stderr + forced.stdout);
+    assert.match(readFileSync(target, 'utf8'), /通用内容/);
+    assert.equal(existsSync(journalFile), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('团队库中断续做：放行上次写入的脏文件，但拒绝中断后又被修改的文件', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-team-resume-'));
+  try {
+    const root = makeProject(base);
+    const team = join(base, 'team');
+    mkdirSync(team, { recursive: true });
+    assert.equal(git(team, ['init']).status, 0);
+
+    const args = ['--root', root, '--to', 'team', '--team-library', team, '--stage', 'review', '--shared'];
+    const first = run('hub-upstream.mjs', [...args, '--apply'], root);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+
+    const id = readLog(team).at(-1).id;
+    const review = 'templates/stages/review/SKILL.md';
+    const shared = 'templates/shared/common.md';
+    const journalFile = join(team, '.devflow', 'upstream-journal.json');
+    const writeJournal = () => writeFileSync(journalFile, JSON.stringify({
+      id,
+      units: ['stage:review', 'shared:shared'],
+      files: [shared, review],
+      created: [],
+      hashes: {
+        [review]: contentHash(readFileSync(join(team, review), 'utf8')),
+        [shared]: contentHash(readFileSync(join(team, shared), 'utf8')),
+      },
+      before: { [review]: null, [shared]: null },
+      createdAt: new Date().toISOString(),
+    }));
+
+    // 上次写入的团队文件在 git 里是脏的，但内容与 journal 一致：续做应放行。
+    writeJournal();
+    const resumed = run('hub-upstream.mjs', [...args, '--apply'], root);
+    assert.equal(resumed.status, 0, resumed.stderr + resumed.stdout);
+    assert.match(resumed.stdout, /继续完成/);
+    assert.equal(existsSync(journalFile), false);
+
+    // 再模拟一次中断，这次用户改了尚未完成的目标文件：必须拒绝。
+    writeJournal();
+    writeFileSync(join(team, review), '中断后手改\n');
+    const denied = run('hub-upstream.mjs', [...args, '--apply'], root);
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /中断后被修改/);
+    assert.equal(readFileSync(join(team, review), 'utf8'), '中断后手改\n');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

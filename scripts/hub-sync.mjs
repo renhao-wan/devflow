@@ -247,9 +247,11 @@ export async function main(argv = process.argv.slice(2)) {
       log('ok', `${label(a.type)} [${a.source}] ${a.destRel}`);
     }
     writeBase(a.hubRel, a.templateText);
+    // local 记录“上次同步写入的干净内容”，合并结果含本地改动，不算干净内容。
+    // 若记录合并结果的哈希，下次模板未变时会被误判为未手改并用模板覆盖。
     manifest.files[a.destRel] = {
       base: a.templateHash,
-      local: contentHash(readText(a.dest)),
+      local: a.templateHash,
       source: a.source,
     };
     persist();

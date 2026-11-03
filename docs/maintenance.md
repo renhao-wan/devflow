@@ -103,7 +103,7 @@ templates:
 | `team` | `<团队库>/templates/` | 不碰 | 默认不提交 |
 | `upstream` | 插件源码的 `templates/` | 仅在 `--bump` 时更新 | 不提交 |
 
-个人库与团队库的备份、journal 与日志都在各自库根：`.devflow/backups/<id>/`、`.devflow/upstream-journal.json`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。写入流程与上游一致：只复制有变化的可回灌文件、先备份、中断可续做。个人库与团队库没有版本文件，显式 `--bump` 会报错。
+个人库与团队库的备份、journal 与日志都在各自库根：`.devflow/backups/<id>/`、`.devflow/upstream-journal.json`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。写入流程与上游一致：只复制有变化的可回灌文件、先备份、中断可续做。续做会核对上次写入的文件；中断后被手工修改或删除的文件会拒绝覆盖，确认覆盖时加 `--force`。个人库与团队库没有版本文件，显式 `--bump` 会报错。
 
 团队库额外约束：
 

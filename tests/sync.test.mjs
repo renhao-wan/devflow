@@ -314,10 +314,23 @@ test('sync 对双方都修改的文件做三方合并', () => {
     assert.match(merged, /模板新增/);
 
     const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    const record = sources.files['.claude/hub/stages/review/SKILL.md'];
     assert.equal(sources.schemaVersion, 3);
-    assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].base);
-    assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].local);
-    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'upstream');
+    assert.ok(record.base);
+    assert.equal(record.source, 'upstream');
+    // 合并结果含本地改动，账本 local 只能记录同步写入的模板内容。
+    assert.equal(record.local, record.base);
+
+    // 模板未再变化时重跑：必须保留合并结果，不能被原始模板覆盖。
+    const again = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(again.status, 0, again.stderr + again.stdout);
+    assert.match(again.stdout, /保留手改/);
+    const preserved = readFileSync(local, 'utf8');
+    assert.match(preserved, /本地追加/);
+    assert.match(preserved, /模板新增/);
+    const after = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(after.files['.claude/hub/stages/review/SKILL.md'].local,
+      after.files['.claude/hub/stages/review/SKILL.md'].base);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

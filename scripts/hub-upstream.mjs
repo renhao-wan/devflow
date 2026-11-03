@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import {
   argValue, hasFlag, log, posix, isMain, projectRoot, readText, writeAtomic,
   resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub, pluginInfo,
-  isValidStageName, normalizeEol, canonicalPath, relPosix, readMeta,
+  isValidStageName, normalizeEol, canonicalPath, relPosix, readMeta, contentHash,
 } from './lib/common.mjs';
 import {
   JOURNAL, resolveUnits, planUnits, applyPlan, backupFile, makeId,
@@ -36,7 +36,7 @@ function gitAt(dir, args) {
 }
 
 /** 团队库默认只写工作区：必须是 git 顶层；目标文件已有未提交改动时拒绝，除非 --force。 */
-function assertTeamWorkspace(teamRoot, plans, force) {
+function assertTeamWorkspace(teamRoot, plans, force, { allowDirty = new Set() } = {}) {
   const top = gitAt(teamRoot, ['rev-parse', '--show-toplevel']);
   if (top.status !== 0) {
     throw new Error(`团队模板库必须是 git 仓库：${posix(teamRoot)}。先 git clone，或在该目录 git init。`);
@@ -51,6 +51,7 @@ function assertTeamWorkspace(teamRoot, plans, force) {
     .map((file) => relPosix(teamRoot, file.targetAbs)));
   const dirty = [];
   for (const rel of targets) {
+    if (allowDirty.has(rel)) continue;
     if (!existsSync(join(teamRoot, ...rel.split('/')))) continue;
     const status = gitAt(teamRoot, ['status', '--porcelain', '--', rel]);
     if (status.status !== 0) throw new Error(`无法读取团队模板库状态：${(status.stderr || '').trim()}`);
@@ -78,6 +79,27 @@ function assertTeamWorkspace(teamRoot, plans, force) {
         + `${unrelated.length > 5 ? ' 等' : ''}`);
     }
   }
+}
+
+/**
+ * 续做前确认 journal 记录的文件没有被中断后的手工修改覆盖：
+ * 当前内容应等于“写入后”或“写入前”的哈希；两者都不是，说明中断后有人改过。
+ */
+function assertResumeTargets(libRoot, journal, force) {
+  if (!journal.hashes || !journal.before) return;
+  const changed = [];
+  for (const rel of journal.files || []) {
+    const abs = join(libRoot, ...rel.split('/'));
+    const now = existsSync(abs) ? contentHash(readText(abs)) : null;
+    if (now === journal.hashes[rel] || now === journal.before[rel]) continue;
+    changed.push(rel);
+  }
+  if (!changed.length) return;
+  if (!force) {
+    throw new Error(`上次回灌的文件在中断后被修改或删除：${changed.join('、')}。`
+      + '先还原或提交这些改动，确认以本次回灌覆盖时加 --force。');
+  }
+  log('warn', `续做将覆盖中断后被修改的文件：${changed.join('、')}`);
 }
 
 function showDiff(content, target, label) {
@@ -304,6 +326,11 @@ export async function main(argv = process.argv.slice(2)) {
         throw new Error(`上次未完成的回灌属于 ${journal.units.join('、')}，请先完成或删除 ${posix(journalFile)}。`);
       }
       log('warn', `检测到上次未完成的回灌，继续完成 ${journal.units.join('、')}`);
+      // 中断后目标文件可能被手工改过：放行上次写入的文件，但内容必须对得上。
+      assertResumeTargets(libRoot, journal, force);
+      if (target.kind === 'team') {
+        assertTeamWorkspace(libRoot, plans, force, { allowDirty: new Set(journal.files || []) });
+      }
     } else {
       if (!totals.pending) {
         if (!json) {
@@ -311,18 +338,29 @@ export async function main(argv = process.argv.slice(2)) {
         }
         return json ? { ...summary, ...totals, applied: false } : { ...totals, applied: false };
       }
-      // 续做时工作区里的脏文件来自上次写入，不再拦截。
+      // 首次写入前检查团队库工作区；续做路径在上面单独处理。
       if (target.kind === 'team') assertTeamWorkspace(libRoot, plans, force);
     }
 
     const pendingFiles = plans.flatMap((plan) => plan.pending);
     if (!journal) {
+      const files = pendingFiles.map((file) => relPosix(libRoot, file.targetAbs));
+      // 续做时用它区分“上次已写入”与“中断后被手工修改”的文件。
+      const hashes = {};
+      const before = {};
+      for (const file of pendingFiles) {
+        const rel = relPosix(libRoot, file.targetAbs);
+        hashes[rel] = contentHash(file.verdict.content);
+        before[rel] = existsSync(file.targetAbs) ? contentHash(readText(file.targetAbs)) : null;
+      }
       journal = {
         id: makeId(),
         units: units.map((u) => `${u.kind}:${u.name}`),
-        files: pendingFiles.map((file) => relPosix(libRoot, file.targetAbs)),
+        files,
         created: pendingFiles.filter((file) => !existsSync(file.targetAbs))
           .map((file) => relPosix(libRoot, file.targetAbs)),
+        hashes,
+        before,
         createdAt: new Date().toISOString(),
       };
       writeAtomic(journalFile, `${JSON.stringify(journal, null, 2)}\n`);

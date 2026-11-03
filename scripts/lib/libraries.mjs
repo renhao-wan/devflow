@@ -202,18 +202,19 @@ export function collectTemplateFiles(libraries) {
 
 /** 回灌写入前校验：库不能与项目互相嵌套，个人/团队库不能落在插件安装缓存。 */
 export function assertLibraryRoot(projectRoot, libRoot, kind = 'personal') {
+  // 两侧都按真实路径比较：junction/符号链接可能让库路径看起来在项目外。
   const project = canonicalPath(projectRoot);
   const library = canonicalPath(libRoot);
   if (library === project) {
     throw new Error(`模板库不能是当前项目根：${posix(libRoot)}`);
   }
-  if (isPathInside(projectRoot, libRoot)) {
+  if (isPathInside(project, library)) {
     throw new Error(`模板库不能位于当前项目内：${posix(libRoot)}`);
   }
-  if (isPathInside(libRoot, projectRoot)) {
+  if (isPathInside(library, project)) {
     throw new Error(`当前项目不能位于模板库内：${posix(libRoot)}`);
   }
-  if (kind !== 'upstream' && isPluginCache(libRoot)) {
+  if (kind !== 'upstream' && isPluginCache(library)) {
     throw new Error(`模板库不能位于插件安装缓存：${posix(libRoot)}；插件升级会清空该目录。`);
   }
   return true;
