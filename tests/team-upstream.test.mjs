@@ -102,17 +102,11 @@ test('个人库回灌支持共享规则，并可被另一个项目同步复用',
   }
 });
 
-test('个人库不接受 --bump 与 --pr', () => {
+test('个人库不支持 --pr', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-personal-args-'));
   try {
     const root = makeProject(base);
     const personal = join(base, 'personal');
-    const bump = run('hub-upstream.mjs', [
-      '--root', root, '--to', 'personal', '--personal-library', personal, '--stage', 'review', '--bump', 'patch',
-    ], root);
-    assert.notEqual(bump.status, 0);
-    assert.match(bump.stderr, /不支持 --bump/);
-
     const pr = run('hub-upstream.mjs', [
       '--root', root, '--to', 'personal', '--personal-library', personal, '--stage', 'review', '--pr',
     ], root);
@@ -405,7 +399,7 @@ test('团队库 --pr：在 bare remote 上创建分支与提交，不升版本',
       '--root', root, '--to', 'team', '--team-library', team, '--stage', 'review', '--pr',
     ], root);
     assert.equal(preview.status, 0, preview.stderr + preview.stdout);
-    assert.match(preview.stdout, /团队库没有版本文件/);
+    assert.match(preview.stdout, /不改版本文件/);
 
     const result = run('hub-upstream.mjs', [
       '--root', root, '--to', 'team', '--team-library', team,

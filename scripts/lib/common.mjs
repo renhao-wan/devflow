@@ -382,17 +382,6 @@ export function satisfies(version, range) {
   return true;
 }
 
-export function bumpVersion(version, kind = 'patch') {
-  const [a, b, c] = String(version).split('.').map(Number);
-  if (kind === 'major') return `${a + 1}.0.0`;
-  if (kind === 'minor') return `${a}.${b + 1}.0`;
-  return `${a}.${b}.${c + 1}`;
-}
-
-export function bumpPatch(version) {
-  return bumpVersion(version, 'patch');
-}
-
 export function argValue(argv, name, fallback = null) {
   const i = argv.indexOf(name);
   if (i === -1) return fallback;

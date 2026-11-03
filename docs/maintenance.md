@@ -22,13 +22,13 @@
 # 预览：显示分类与差异，不写文件
 /devflow:upstream --stage plan
 
-# 写入个人库（默认不 bump 版本）
+# 写入个人库
 /devflow:upstream --stage plan --to personal --apply
 
 # 写入团队库：只改工作区，不提交
 /devflow:upstream --stage plan --to team --apply
 
-# 写入上游插件源码（默认不 bump 版本）
+# 写入上游插件源码
 /devflow:upstream --stage plan --to upstream --plugin-root D:/projects/devflow --apply
 
 # 上游 PR
@@ -101,9 +101,9 @@ templates:
 | --- | --- | --- | --- |
 | `personal` | `<个人库>/templates/` | 不碰 | 不提交 |
 | `team` | `<团队库>/templates/` | 不碰 | 默认不提交 |
-| `upstream` | 插件源码的 `templates/` | 仅在 `--bump` 时更新 | 不提交 |
+| `upstream` | 插件源码的 `templates/` | 不碰 | 不提交 |
 
-个人库与团队库的备份、journal 与日志都在各自库根：`.devflow/backups/<id>/`、`.devflow/upstream-journal.json`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。写入流程与上游一致：只复制有变化的可回灌文件、先备份、中断可续做。续做会核对上次写入的文件；中断后被手工修改或删除的文件会拒绝覆盖，确认覆盖时加 `--force`。个人库与团队库没有版本文件，显式 `--bump` 会报错。
+个人库与团队库的备份、journal 与日志都在各自库根：`.devflow/backups/<id>/`、`.devflow/upstream-journal.json`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。写入流程与上游一致：只复制有变化的可回灌文件、先备份、中断可续做。续做会核对上次写入的文件；中断后被手工修改或删除的文件会拒绝覆盖，确认覆盖时加 `--force`。三个库的回灌都不改版本文件。
 
 团队库额外约束：
 
@@ -115,7 +115,7 @@ templates:
 
 1. 复制有变化的可回灌文件到 `templates/stages/<stage>/` 或 `templates/shared/`，保留相对路径；与插件一致的文件跳过；
 2. 把被覆盖的旧文件备份到 `.devflow/backups/<id>/`，并写一份 journal，中断后重跑同一命令可续做；
-3. 默认**不 bump** 版本；传 `--bump patch|minor|major` 时才同步更新 `.claude-plugin/plugin.json`、`package.json`、`.claude-plugin/marketplace.json` 的 `plugins[].version`（`metadata.version` 作为市场自身元数据一并更新），并写入 `CHANGELOG.md`；
+3. 不改版本文件与 `CHANGELOG.md`；发版是独立流程，见 [development.md 的发版流程](development.md#发版流程)；
 4. 追加回灌日志到 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`。
 
 回滚到某次回灌之前：
@@ -191,14 +191,11 @@ templates:
 个人库只写本地文件，不提交。团队库默认只写工作区，加 `--pr` 才提交、推送并开 PR。上游回灌用 `/devflow:ship`，或 `/devflow:upstream --to upstream --pr`（两者共用同一套计划与提交逻辑）：
 
 ```bash
-# 预览：显示分支名、将提交的文件、版本变化，不写文件
+# 预览：显示分支名与将提交的文件，不写文件
 /devflow:ship --stage plan --plugin-root D:/projects/devflow --dry-run
 
-# 执行：回灌 → 建分支 → 提交 → 推送 → 生成 PR（默认不 bump 版本）
+# 执行：回灌 → 建分支 → 提交 → 推送 → 生成 PR
 /devflow:ship --stage plan --plugin-root D:/projects/devflow
-
-# 显式升级版本
-/devflow:ship --stage plan --plugin-root D:/projects/devflow --bump minor
 
 # 多个范围一起回灌
 /devflow:ship --stage plan --stage review --shared
@@ -224,7 +221,7 @@ templates:
 
 上游 PR 目标是**插件源码仓库**（含 `.git`）；团队库 PR 目标是团队模板 git 仓库。已安装的插件缓存没有 git 历史，无法提 PR。
 
-默认**不 bump 版本**，只更新模板与回灌日志；上游传 `--bump` 才升级三处版本号并写入 CHANGELOG。这样多次回灌可以先攒在一起，发布时统一升版。团队库没有版本文件，传 `--bump` 会直接报错。
+回灌与 `ship` 只更新模板与回灌日志，不改版本文件与 CHANGELOG；版本号由维护者在发版时统一修改，流程见 [development.md 的发版流程](development.md#发版流程)。
 
 PR 创建按优先级降级：
 
@@ -277,7 +274,7 @@ gh auth login --web
 | 插件已安装但命令报 `Unknown command` | `~/.claude/settings.json` 的 `enabledPlugins` 缺少 `"devflow@devflow-marketplace": true`；补上后重启会话。若使用 cc-switch，切换供应商会整体覆盖 `settings.json`，需把该启用项同步进各供应商快照 |
 | 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand`；root 无构建文件时默认写 `npm test`，必须替换 |
 | 升级后模板还是旧的 | 运行 `/devflow:sync --dry-run` 查看是否有冲突；手改文件需确认后加 `--force` |
-| 回灌后版本号没变 | 默认不 bump；需要发版时加 `--bump patch\|minor\|major`（仅上游库支持） |
+| 回灌后版本号没变 | 预期行为；回灌不改版本文件，发版按 [development.md 的发版流程](development.md#发版流程) 操作 |
 | 团队库报路径不存在 | 按报错里的 clone 命令把团队模板仓库 clone 到 `templates.team.path`，或用 `--team-library` / `.devflow.json` 的 `teamLibraryPath` 指向本机已有 clone |
 | 团队库目标文件有未提交改动 | 先提交或 stash；确认放弃时加 `--force`，脚本会先备份再覆盖 |
 | 团队库报“必须是 git 仓库顶层” | 把 `templates.team.path` 指到仓库根，而不是子目录 |

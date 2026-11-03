@@ -5,22 +5,14 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
   argValue, hasFlag, log, posix, isMain, projectRoot, readText, writeAtomic,
-  resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub, pluginInfo,
-  isValidStageName, normalizeEol, canonicalPath, relPosix, readMeta, contentHash,
+  resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub,
+  isValidStageName, canonicalPath, relPosix, readMeta, contentHash,
 } from './lib/common.mjs';
 import {
-  JOURNAL, resolveUnits, planUnits, applyPlan, backupFile, makeId,
-  updateVersionFiles, updateChangelog, appendLog, readLog, revertFromLog,
-  bumpKind, bumpVersion,
+  JOURNAL, resolveUnits, planUnits, applyPlan, makeId,
+  appendLog, readLog, revertFromLog,
 } from './lib/upstream.mjs';
 import { resolveLibraryRoot, assertLibraryRoot } from './lib/libraries.mjs';
-
-const VERSION_FILES = [
-  '.claude-plugin/plugin.json',
-  'package.json',
-  '.claude-plugin/marketplace.json',
-  'CHANGELOG.md',
-];
 
 function normalizeTarget(raw, pr) {
   if (['personal', 'team', 'upstream'].includes(raw)) return { kind: raw, pr: Boolean(pr) };
@@ -181,7 +173,7 @@ async function runRemote(argv, { root, pluginRoot, units, target }) {
     if (unit.kind === 'stage') args.push('--stage', unit.name);
   }
   if (units.some((u) => u.kind === 'shared')) args.push('--shared');
-  args.push(...passthrough(argv, ['--base', '--bump', '--remote', '--resume', '--pr-repo']));
+  args.push(...passthrough(argv, ['--base', '--remote', '--resume', '--pr-repo']));
   if (hasFlag(argv, '--fork')) args.push('--fork');
   if (hasFlag(argv, '--no-pr')) args.push('--no-pr');
   // 远程回灌只有加 --apply 才真正推送；不带时等价于 ship --dry-run。
@@ -204,12 +196,6 @@ export async function main(argv = process.argv.slice(2)) {
   const teamLibrary = argValue(argv, '--team-library', null);
   const pluginArg = argValue(argv, '--plugin-root', null);
 
-  const bumpArg = argValue(argv, '--bump', null);
-  // 无论是否 --apply，只要显式给了 --bump 就先校验，避免预览时静默忽略非法值。
-  if (bumpArg !== null) bumpKind(bumpArg);
-  if (target.kind !== 'upstream' && bumpArg !== null) {
-    throw new Error('个人库与团队库没有版本文件，不支持 --bump。');
-  }
   if (target.kind === 'personal' && target.pr) {
     throw new Error('个人库不支持 --pr；直接使用 --to personal 写入本地模板库。');
   }
@@ -257,7 +243,6 @@ export async function main(argv = process.argv.slice(2)) {
   const cacheTarget = target.kind === 'upstream' && isPluginCache(libRoot);
   if (cacheTarget && apply) throw new Error(cacheGuardMessage(libRoot));
   if (target.kind !== 'upstream') assertLibraryRoot(root, libRoot, target.kind);
-  const info = target.kind === 'upstream' ? pluginInfo(libRoot) : null;
 
   if (target.pr) {
     return runRemote(argv, { root, pluginRoot: libRoot, units, target });
@@ -399,9 +384,7 @@ export async function main(argv = process.argv.slice(2)) {
     return json ? { ...summary, ...body } : body;
   }
 
-  const kind = bumpArg === null ? null : bumpKind(bumpArg);
-
-  // 上次中断可能停在“文件已复制、版本未升级”：先记账再写入，重跑时续做。
+  // 先记账再写入，中断后重跑同一命令可续做。
   const journalFile = join(libRoot, ...JOURNAL.split('/'));
   let journal = null;
   if (existsSync(journalFile)) {
@@ -414,13 +397,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (!same) {
       throw new Error(`上次未完成的回灌属于 ${journal.units.join('、')}，请先完成或删除 ${posix(journalFile)}。`);
     }
-    if (info.version !== journal.oldVersion && info.version !== journal.nextVersion) {
-      throw new Error(
-        `插件版本 ${info.version} 与未完成回灌记录的 ${journal.oldVersion} → ${journal.nextVersion} 不一致，`
-        + `请检查后删除 ${posix(journalFile)}。`,
-      );
-    }
-    log('warn', `检测到上次未完成的回灌，继续完成 ${journal.oldVersion} → ${journal.nextVersion}`);
+    log('warn', `检测到上次未完成的回灌，继续完成 ${journal.units.join('、')}`);
   } else {
     if (!totals.pending) {
       if (!json) {
@@ -428,14 +405,9 @@ export async function main(argv = process.argv.slice(2)) {
       }
       return json ? { ...summary, ...totals, applied: false } : { ...totals, applied: false };
     }
-    const oldVersion = info.version;
-    const nextVersion = kind ? bumpVersion(oldVersion, kind) : oldVersion;
     journal = {
       id: makeId(),
       units: units.map((u) => `${u.kind}:${u.name}`),
-      oldVersion,
-      nextVersion,
-      bumped: Boolean(kind),
       files: plans.flatMap((plan) => plan.pending.map((f) => `${plan.unit.targetRel}/${f.rel}`)),
       created: plans.flatMap((plan) => plan.pending
         .filter((f) => !existsSync(f.targetAbs))
@@ -446,16 +418,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const backupId = journal.id;
-  for (const rel of VERSION_FILES) backupFile(libRoot, backupId, rel);
   const result = applyPlan({ pending: plans.flatMap((p) => p.pending) }, libRoot, { backupId });
   // 中断续做时本次 pending 可能为空，历史清单仍要进入日志与回滚范围。
   const written = [...new Set([...(journal.files || []), ...result.written])];
   const created = [...new Set([...(journal.created || []), ...result.created])];
-
-  if (journal.bumped) {
-    updateVersionFiles(libRoot, journal.nextVersion);
-    updateChangelog(libRoot, journal.nextVersion, units, written);
-  }
 
   appendLog(libRoot, {
     id: backupId,
@@ -465,21 +431,21 @@ export async function main(argv = process.argv.slice(2)) {
     project: posix(root).split('/').pop(),
     files: written,
     created,
-    oldVersion: journal.bumped ? journal.oldVersion : null,
-    newVersion: journal.bumped ? journal.nextVersion : null,
+    oldVersion: null,
+    newVersion: null,
   });
 
   rmSync(journalFile, { force: true });
 
   if (!json) {
-    log('ok', `已回灌 ${written.length} 个文件${journal.bumped ? `，插件版本 ${journal.oldVersion} → ${journal.nextVersion}` : '（版本未变）'}`);
+    log('ok', `已回灌 ${written.length} 个文件`);
     log('ok', `回灌日志：${posix(join(libRoot, '.devflow', 'upstream-log.jsonl'))}`);
     log('ok', `可回滚：/devflow:upstream --revert ${backupId}`);
   }
 
   return json
-    ? { ...summary, ...totals, applied: true, target: 'upstream', version: journal.nextVersion, id: backupId, written }
-    : { ...totals, applied: true, target: 'upstream', version: journal.nextVersion, id: backupId, written };
+    ? { ...summary, ...totals, applied: true, target: 'upstream', id: backupId, written }
+    : { ...totals, applied: true, target: 'upstream', id: backupId, written };
 }
 
 if (isMain(import.meta.url)) {

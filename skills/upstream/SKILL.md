@@ -1,7 +1,7 @@
 ---
 name: upstream
 description: 回灌：把项目里改进过的阶段/共享规则回馈到个人库、团队库或上游插件（默认只预览）
-argument-hint: --stage <stage> | --shared | --all [--to personal|team|upstream] [--pr] [--apply] [--bump patch|minor|major] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]
+argument-hint: --stage <stage> | --shared | --all [--to personal|team|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]
 allowed-tools: Bash(node:*), Bash(git diff:*), Read, Glob, Grep, Write, Edit
 disable-model-invocation: true
 ---
@@ -13,7 +13,7 @@ disable-model-invocation: true
    - `personal`：写入个人库（默认 `~/.claude/devflow`），供自己其他项目复用；直接写本地，不提交。
    - `team`：写入 `hub.yaml` 配置的团队库；默认只写工作区，不提交。加 `--pr` 才建分支、提交、推送并创建/更新 PR。
    - `upstream`：写入插件源码仓库的 `templates/`，不提交。加 `--pr` 才建分支、提交、推送并创建/更新 PR。
-   - `personal` 与 `team` 没有版本文件：显式 `--bump` 会报错；`personal` 不支持 `--pr`。
+   - `personal` 不支持 `--pr`；三个库的回灌都不改版本文件。
 3. 默认先预览（不加 `--apply`）：
 
 ```bash
@@ -24,7 +24,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-upstream.mjs" --root "${CLAUDE_PROJECT_D
    - `[可回灌]`：通用内容。命中敏感行时只剔除对应行，其余内容仍可回灌。
    - `[项目专属]`：位于 `<!-- devflow:local -->` 块内，或剔除后没有正文，不会回灌。
    - `<!-- devflow:reusable -->` 块一定会保留，但仍会做敏感扫描。
-5. 只有用户明确同意后才追加 `--apply`。默认**不 bump** 版本；只有用户明确要求发版时才加 `--bump patch|minor|major`（仅 `upstream` 支持）。个人库与团队库写入后由用户自行提交（团队库 `--pr` 例外）。
+5. 只有用户明确同意后才追加 `--apply`。回灌只写模板与回灌日志，不改版本文件；发版由维护者另行处理。个人库与团队库写入后由用户自行提交（团队库 `--pr` 例外）。
 6. 回灌后可用的后续动作：
    - 回滚本次写入：`--to <库> --revert <记录 ID>`；未指定 `--to` 时依次在个人、团队、上游日志中查找；
    - 同步到项目：`/devflow:sync`；

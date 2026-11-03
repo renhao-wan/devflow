@@ -5,11 +5,10 @@ import { spawnSync } from 'node:child_process';
 import {
   argValue, hasFlag, projectRoot,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
-  bumpVersion, samePath, isValidStageName, loadHub,
+  samePath, isValidStageName, loadHub,
 } from './lib/common.mjs';
 import {
   resolveUnits, planUnits, applyPlan, validateWrittenFiles, appendLog,
-  updateVersionFiles, updateChangelog, bumpKind,
 } from './lib/upstream.mjs';
 
 const UPSTREAM_WHITELIST = [
@@ -93,18 +92,6 @@ function githubRemote(url) {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
-/** 版本号必须来自实际建分支的基分支，而不是主工作区当前分支。 */
-function versionAtRef(cwd, ref) {
-  const r = git(cwd, ['show', `${ref}:.claude-plugin/plugin.json`]);
-  if (r.status !== 0) return null;
-  try {
-    const version = JSON.parse(r.stdout).version;
-    return typeof version === 'string' && version ? version : null;
-  } catch {
-    return null;
-  }
-}
-
 function uniqueBranch(cwd, base, remoteName = 'origin') {
   let name = base;
   let i = 2;
@@ -153,17 +140,12 @@ function unitNames(units) {
 
 /** 复用仓库 PR 模板，没有模板时退回内置结构。 */
 export function buildPrBody(pluginRoot, {
-  stage, stages, shared, projectName, files, oldVersion, newVersion, kind,
+  stage, stages, shared, projectName, files,
 }) {
   const names = [];
   for (const name of [...(stages || []), ...(stage ? [stage] : [])]) names.push(`${name} 阶段`);
   if (shared) names.push('共享规则');
   const unitText = names.join('、') || '阶段规则';
-  const versionText = oldVersion == null
-    ? '团队模板库（不升版本）'
-    : oldVersion === newVersion
-      ? `版本保持 ${oldVersion}（未 bump）`
-      : `版本 ${oldVersion} → ${newVersion}（${kind}）`;
   const tplFile = join(pluginRoot, '.github', 'pull_request_template.md');
   const sections = {
     '变更内容': `## 变更内容\n\n回灌${unitText}，来源项目：${projectName}。`,
@@ -180,7 +162,7 @@ export function buildPrBody(pluginRoot, {
       '## 影响面',
       '',
       `- 影响范围：${files.join('、')}`,
-      `- 兼容性：${versionText}`,
+      `- 兼容性：仅模板变更，不涉及插件版本`,
     ].join('\n'),
   };
 
@@ -279,12 +261,6 @@ export async function main(argv = process.argv.slice(2)) {
   const resume = argValue(argv, '--resume', null);
   const remoteName = argValue(argv, '--remote', 'origin');
   const fork = hasFlag(argv, '--fork') || remoteName !== 'origin';
-  const bumpArg = argValue(argv, '--bump', null);
-  if (profile === 'team' && bumpArg !== null) {
-    throw new Error('团队模板库没有版本文件，不支持 --bump。');
-  }
-  const kind = bumpArg ? bumpKind(bumpArg) : null;
-  const versioned = profile === 'upstream';
 
   if (!stages.length && !shared && !all && !resume) {
     throw new Error('必须指定 --stage <name>、--shared 或 --all');
@@ -357,16 +333,6 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
-  let oldVersion = null;
-  let newVersion = null;
-  if (versioned) {
-    oldVersion = versionAtRef(pluginRoot, resume ? branch : baseRef);
-    if (!oldVersion) {
-      throw new Error(`基分支 ${resume ? branch : baseRef} 缺少可解析的 .claude-plugin/plugin.json 版本，无法回灌。`);
-    }
-    newVersion = kind ? bumpVersion(oldVersion, kind) : oldVersion;
-  }
-
   const units = resume ? [] : resolveUnits(root, { stages, shared, all });
   const plans = resume ? [] : planUnits(root, pluginRoot, units, config);
   const pending = plans.flatMap((p) => p.pending);
@@ -385,12 +351,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
       console.log('\n[dry-run] 不会创建分支或提交。');
       console.log(`将创建分支：${branch}（基于 ${base}）`);
-      console.log(`将提交 ${pending.length} 个有变化的可回灌文件${kind ? ' + 版本与 CHANGELOG' : '（不 bump 版本）'}`);
-      if (versioned) {
-        console.log(`插件版本：${oldVersion}${kind ? ` → ${newVersion}（${kind}）` : '（保持不变）'}`);
-      } else {
-        console.log('模板库版本：团队库没有版本文件，本次不升版本');
-      }
+      console.log(`将提交 ${pending.length} 个有变化的可回灌文件（不改版本文件）`);
       console.log(`推送远端：${remoteName}${remoteRepo ? `（${remoteRepo.owner}/${remoteRepo.repo}）` : ''}`);
       if (needsForkOwner) console.log(`PR head：${headOwner}:${branch} → ${prRepo.owner}/${prRepo.repo}:${base}`);
     }
@@ -436,11 +397,6 @@ export async function main(argv = process.argv.slice(2)) {
         throw new Error(`回灌结果未通过提交前校验：\n- ${errors.join('\n- ')}`);
       }
 
-      if (kind) {
-        updateVersionFiles(worktreeDir, newVersion);
-        updateChangelog(worktreeDir, newVersion, units, result.written);
-      }
-
       appendLog(worktreeDir, {
         id: `ship-${stamp()}`,
         at: new Date().toISOString(),
@@ -449,8 +405,8 @@ export async function main(argv = process.argv.slice(2)) {
         project: basename(root),
         files: result.written,
         created: result.created,
-        oldVersion: kind ? oldVersion : null,
-        newVersion: kind ? newVersion : null,
+        oldVersion: null,
+        newVersion: null,
       });
     }
 
@@ -487,8 +443,7 @@ export async function main(argv = process.argv.slice(2)) {
         '',
         `来源：${projectName}`,
         `文件：${toAdd.join('、')}`,
-        kind ? `版本：${oldVersion} → ${newVersion}` : versioned ? `版本：保持 ${oldVersion}` : null,
-      ].filter((line) => line !== null).join('\n');
+      ].join('\n');
       gitOut(worktreeDir, ['commit', '-m', message]);
       log('ok', `已提交到分支 ${branch}`);
     }
@@ -508,7 +463,7 @@ export async function main(argv = process.argv.slice(2)) {
 
     if (noPr || !prRepo) {
       if (!prRepo) console.log(`远端不是 GitHub，无法生成 PR 链接：${redactText(remoteUrl.stdout.trim())}`);
-      return { stages, branch, applied: true, version: newVersion, prUrl: null };
+      return { stages, branch, applied: true, prUrl: null };
     }
 
     const url = compareUrl(prRepo, base, needsForkOwner ? headOwner : null, branch);
@@ -517,9 +472,6 @@ export async function main(argv = process.argv.slice(2)) {
       shared: units.some((u) => u.kind === 'shared'),
       projectName,
       files: toAdd.length ? toAdd : ['（续做，无新增文件）'],
-      oldVersion,
-      newVersion,
-      kind,
     });
 
     const ghAvailable = spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;
@@ -529,7 +481,7 @@ export async function main(argv = process.argv.slice(2)) {
       });
       if (result.url) {
         log('ok', `${result.updated ? '已更新' : '已创建'} PR：${result.url}`);
-        return { stages, branch, applied: true, version: newVersion, prUrl: result.url };
+        return { stages, branch, applied: true, prUrl: result.url };
       }
       console.error(`[WARN] gh pr 操作失败：${redactText(result.error || '')}`);
     }
@@ -546,14 +498,14 @@ export async function main(argv = process.argv.slice(2)) {
           token,
         });
         log('ok', `已创建或更新 PR（API）：${prUrl}`);
-        return { stages, branch, applied: true, version: newVersion, prUrl };
+        return { stages, branch, applied: true, prUrl };
       } catch (err) {
         console.error(`[WARN] GitHub API 操作 PR 失败：${err.message}`);
       }
     }
 
     console.log(`\n已推送分支，请打开以下链接创建 PR：\n${url}`);
-    return { stages, branch, applied: true, version: newVersion, prUrl: url };
+    return { stages, branch, applied: true, prUrl: url };
   } finally {
     if (worktreeAdded) removeWorktree(pluginRoot, worktreeDir);
     // 没有提交时删除刚创建的空分支；已提交（含 push 失败）则保留，便于用户续推。
