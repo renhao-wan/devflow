@@ -12,7 +12,7 @@ import {
   updateVersionFiles, updateChangelog, bumpKind,
 } from './lib/upstream.mjs';
 
-const WHITELIST = [
+const UPSTREAM_WHITELIST = [
   (p) => p === '.claude-plugin/plugin.json',
   (p) => p === '.claude-plugin/marketplace.json',
   (p) => p === 'package.json',
@@ -24,9 +24,18 @@ const WHITELIST = [
   (p) => p.startsWith('templates/shared/'),
 ];
 
-function isWhitelisted(path) {
+// 团队模板库只提交模板与回灌日志，不碰版本文件与 CHANGELOG。
+const TEAM_WHITELIST = [
+  (p) => p === '.devflow/upstream-log.jsonl',
+  (p) => p === 'docs/upstream-log.md',
+  (p) => p.startsWith('templates/stages/'),
+  (p) => p.startsWith('templates/shared/'),
+];
+
+function isWhitelisted(path, profile = 'upstream') {
   const p = path.replace(/\\/g, '/');
-  return WHITELIST.some((match) => match(p));
+  const rules = profile === 'team' ? TEAM_WHITELIST : UPSTREAM_WHITELIST;
+  return rules.some((match) => match(p));
 }
 
 function argValues(argv, name) {
@@ -96,12 +105,12 @@ function versionAtRef(cwd, ref) {
   }
 }
 
-function uniqueBranch(cwd, base) {
+function uniqueBranch(cwd, base, remoteName = 'origin') {
   let name = base;
   let i = 2;
   for (;;) {
     const local = git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]).status === 0;
-    const remote = git(cwd, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`]).status === 0;
+    const remote = git(cwd, ['show-ref', '--verify', '--quiet', `refs/remotes/${remoteName}/${name}`]).status === 0;
     if (!local && !remote) return name;
     name = `${base}-${i}`;
     i += 1;
@@ -150,9 +159,11 @@ export function buildPrBody(pluginRoot, {
   for (const name of [...(stages || []), ...(stage ? [stage] : [])]) names.push(`${name} 阶段`);
   if (shared) names.push('共享规则');
   const unitText = names.join('、') || '阶段规则';
-  const versionText = oldVersion === newVersion
-    ? `版本保持 ${oldVersion}（未 bump）`
-    : `版本 ${oldVersion} → ${newVersion}（${kind}）`;
+  const versionText = oldVersion == null
+    ? '团队模板库（不升版本）'
+    : oldVersion === newVersion
+      ? `版本保持 ${oldVersion}（未 bump）`
+      : `版本 ${oldVersion} → ${newVersion}（${kind}）`;
   const tplFile = join(pluginRoot, '.github', 'pull_request_template.md');
   const sections = {
     '变更内容': `## 变更内容\n\n回灌${unitText}，来源项目：${projectName}。`,
@@ -256,14 +267,24 @@ export async function main(argv = process.argv.slice(2)) {
   const stages = argValues(argv, '--stage');
   const shared = hasFlag(argv, '--shared');
   const all = hasFlag(argv, '--all');
-  const base = argValue(argv, '--base', 'main');
+  const profile = argValue(argv, '--profile', 'upstream');
+  if (!['upstream', 'team'].includes(profile)) {
+    throw new Error(`--profile 只支持 upstream|team，收到：${profile}`);
+  }
+  const { config } = loadHub(root);
+  const teamConfig = config?.templates?.team || {};
+  const base = argValue(argv, '--base', profile === 'team' ? (teamConfig.base || 'main') : 'main');
   const dryRun = hasFlag(argv, '--dry-run');
   const noPr = hasFlag(argv, '--no-pr');
   const resume = argValue(argv, '--resume', null);
   const remoteName = argValue(argv, '--remote', 'origin');
   const fork = hasFlag(argv, '--fork') || remoteName !== 'origin';
   const bumpArg = argValue(argv, '--bump', null);
+  if (profile === 'team' && bumpArg !== null) {
+    throw new Error('团队模板库没有版本文件，不支持 --bump。');
+  }
   const kind = bumpArg ? bumpKind(bumpArg) : null;
+  const versioned = profile === 'upstream';
 
   if (!stages.length && !shared && !all && !resume) {
     throw new Error('必须指定 --stage <name>、--shared 或 --all');
@@ -275,7 +296,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const cwdIsPlugin = existsSync(join(process.cwd(), '.claude-plugin', 'plugin.json'));
-  const pluginRoot = argValue(argv, '--plugin-root', null)
+  const pluginRootArg = argValue(argv, '--plugin-root', null);
+  if (profile === 'team' && !pluginRootArg) {
+    throw new Error('团队模板库 PR 需要 --plugin-root <团队模板库根>。');
+  }
+  const pluginRoot = pluginRootArg
     || (cwdIsPlugin ? process.cwd() : resolveUpstreamRoot(root));
 
   if (isPluginCache(pluginRoot)) throw new Error(cacheGuardMessage(pluginRoot));
@@ -283,8 +308,8 @@ export async function main(argv = process.argv.slice(2)) {
   const top = git(pluginRoot, ['rev-parse', '--show-toplevel']);
   if (top.status !== 0) {
     throw new Error(
-      `插件目录不是 git 仓库：${posix(pluginRoot)}。\n`
-      + '回灌并提交只能在插件源码仓库中执行；已安装的插件缓存无法提 PR。\n'
+      `${profile === 'team' ? '团队模板库' : '插件目录'}不是 git 仓库：${posix(pluginRoot)}。\n`
+      + '回灌并提交只能在源码仓库中执行；已安装的插件缓存无法提 PR。\n'
       + '请用 --plugin-root 指向源码仓库，或运行 /devflow:init --source-root <源码仓库> 记录一次。',
     );
   }
@@ -312,10 +337,11 @@ export async function main(argv = process.argv.slice(2)) {
   const slug = (resume ? 'resume' : [...stages, ...(shared ? ['shared'] : []), ...(all ? ['all'] : [])].join('-'))
     .replace(/[^A-Za-z0-9_-]/g, '-')
     .replace(/-+/g, '-') || 'upstream';
-  const branch = resume || uniqueBranch(pluginRoot, `devflow/upstream-${slug}-${stamp()}`);
+  const branchPrefix = profile === 'team' ? 'team' : 'upstream';
+  const branch = resume || uniqueBranch(pluginRoot, `devflow/${branchPrefix}-${slug}-${stamp()}`, remoteName);
 
   const baseline = dirty(pluginRoot);
-  const conflicts = baseline.filter((f) => isWhitelisted(f.path));
+  const conflicts = baseline.filter((f) => isWhitelisted(f.path, profile));
 
   if (resume) {
     const exists = git(pluginRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${resume}`]).status === 0;
@@ -331,14 +357,17 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
-  const oldVersion = versionAtRef(pluginRoot, resume ? branch : baseRef);
-  if (!oldVersion) {
-    throw new Error(`基分支 ${resume ? branch : baseRef} 缺少可解析的 .claude-plugin/plugin.json 版本，无法回灌。`);
+  let oldVersion = null;
+  let newVersion = null;
+  if (versioned) {
+    oldVersion = versionAtRef(pluginRoot, resume ? branch : baseRef);
+    if (!oldVersion) {
+      throw new Error(`基分支 ${resume ? branch : baseRef} 缺少可解析的 .claude-plugin/plugin.json 版本，无法回灌。`);
+    }
+    newVersion = kind ? bumpVersion(oldVersion, kind) : oldVersion;
   }
-  const newVersion = kind ? bumpVersion(oldVersion, kind) : oldVersion;
 
   const units = resume ? [] : resolveUnits(root, { stages, shared, all });
-  const { config } = loadHub(root);
   const plans = resume ? [] : planUnits(root, pluginRoot, units, config);
   const pending = plans.flatMap((p) => p.pending);
 
@@ -357,7 +386,11 @@ export async function main(argv = process.argv.slice(2)) {
       console.log('\n[dry-run] 不会创建分支或提交。');
       console.log(`将创建分支：${branch}（基于 ${base}）`);
       console.log(`将提交 ${pending.length} 个有变化的可回灌文件${kind ? ' + 版本与 CHANGELOG' : '（不 bump 版本）'}`);
-      console.log(`插件版本：${oldVersion}${kind ? ` → ${newVersion}（${kind}）` : '（保持不变）'}`);
+      if (versioned) {
+        console.log(`插件版本：${oldVersion}${kind ? ` → ${newVersion}（${kind}）` : '（保持不变）'}`);
+      } else {
+        console.log('模板库版本：团队库没有版本文件，本次不升版本');
+      }
       console.log(`推送远端：${remoteName}${remoteRepo ? `（${remoteRepo.owner}/${remoteRepo.repo}）` : ''}`);
       if (needsForkOwner) console.log(`PR head：${headOwner}:${branch} → ${prRepo.owner}/${prRepo.repo}:${base}`);
     }
@@ -411,7 +444,7 @@ export async function main(argv = process.argv.slice(2)) {
       appendLog(worktreeDir, {
         id: `ship-${stamp()}`,
         at: new Date().toISOString(),
-        mode: 'remote',
+        mode: profile === 'team' ? 'team-pr' : 'remote',
         units: unitNames(units),
         project: basename(root),
         files: result.written,
@@ -422,12 +455,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     const after = dirty(worktreeDir);
-    const outOfScope = after.filter((f) => !isWhitelisted(f.path));
+    const outOfScope = after.filter((f) => !isWhitelisted(f.path, profile));
     if (outOfScope.length) {
       throw new Error(`回灌改动了白名单外的文件，已停止提交：${outOfScope.map((f) => f.path).join('、')}`);
     }
 
-    const toAdd = after.filter((f) => isWhitelisted(f.path)).map((f) => f.path);
+    const toAdd = after.filter((f) => isWhitelisted(f.path, profile)).map((f) => f.path);
     if (!toAdd.length) {
       if (resume) {
         log('..', `分支 ${branch} 没有新的白名单改动，直接推送。`);
@@ -454,8 +487,8 @@ export async function main(argv = process.argv.slice(2)) {
         '',
         `来源：${projectName}`,
         `文件：${toAdd.join('、')}`,
-        kind ? `版本：${oldVersion} → ${newVersion}` : `版本：保持 ${oldVersion}`,
-      ].join('\n');
+        kind ? `版本：${oldVersion} → ${newVersion}` : versioned ? `版本：保持 ${oldVersion}` : null,
+      ].filter((line) => line !== null).join('\n');
       gitOut(worktreeDir, ['commit', '-m', message]);
       log('ok', `已提交到分支 ${branch}`);
     }

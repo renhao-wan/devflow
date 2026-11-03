@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, copyFileSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep, basename } from 'node:path';
+import { existsSync, copyFileSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
-  walk, relPosix, isGeneratedArtifact, isPathInside, isRealPathInside,
+  isPathInside, isRealPathInside, parseYaml,
 } from './lib/common.mjs';
+import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE, createDefaultConfig, loadEcosystem, writeDetectedState,
   ecosystemPath, statePath,
@@ -21,7 +22,7 @@ function pluginRootFromScript() {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..');
 }
 
-function renderHubYaml(subprojects, version, rootTest) {
+function renderHubYaml(subprojects, version, rootTest, { templates = null, blocklist = [] } = {}) {
   const lines = [
     '# devflow 项目真源配置。可以自由修改，改完运行 node scripts/devflow-gen.mjs。',
     'version: 1',
@@ -45,9 +46,32 @@ function renderHubYaml(subprojects, version, rootTest) {
   lines.push(`  testCommand: ${JSON.stringify(rootTest || 'npm test')}`);
   lines.push('  reviewRequired: true');
   lines.push('');
+  lines.push('# 模板来源：按 order 先到先得（团队 > 个人 > 上游），同名文件高优先库覆盖低优先库。');
+  lines.push('# 上游始终作为兜底来源，不需要配置路径。');
+  const order = Array.isArray(templates?.order) && templates.order.length
+    ? templates.order
+    : ['personal', 'upstream'];
+  const team = templates?.team && typeof templates.team === 'object' ? templates.team : null;
+  lines.push('templates:');
+  lines.push(`  order: [${order.join(', ')}]`);
+  lines.push('  personal:');
+  lines.push(`    enabled: ${templates?.personal?.enabled !== false}`);
+  if (team && (team.enabled !== undefined || team.repo || team.base || team.path)) {
+    lines.push('  team:');
+    if (team.enabled !== undefined) lines.push(`    enabled: ${team.enabled === true}`);
+    if (team.repo) lines.push(`    repo: ${JSON.stringify(team.repo)}`);
+    if (team.base) lines.push(`    base: ${JSON.stringify(team.base)}`);
+    if (team.path) lines.push(`    path: ${JSON.stringify(team.path)}`);
+  } else {
+    lines.push('  # team:');
+    lines.push('  #   enabled: true');
+    lines.push('  #   repo: https://github.com/org/devflow-templates.git');
+    lines.push('  #   path: ../devflow-templates');
+  }
+  lines.push('');
   lines.push('# 回灌时用于识别项目专属内容的关键词，命中则不回灌到插件模板。');
   lines.push('upstream:');
-  lines.push('  blocklist: []');
+  lines.push(`  blocklist: ${JSON.stringify(Array.isArray(blocklist) ? blocklist : [])}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -93,37 +117,15 @@ await mod.main(process.argv.slice(2));
 `;
 }
 
-function copyTree(src, dst, overwrite) {
+/** 按合并视图复制模板；已有文件默认不覆盖，未命中的来源不影响落盘。 */
+function copyTemplates(files, root, force) {
   let copied = 0;
-  for (const entry of readdirSync(src, { withFileTypes: true })) {
-    if (isGeneratedArtifact(entry.name)) continue;
-    const from = join(src, entry.name);
-    const to = join(dst, entry.name);
-    if (entry.isDirectory()) {
-      ensureDir(to);
-      copied += copyTree(from, to, overwrite);
-    } else if (entry.isFile()) {
-      if (existsSync(to) && !overwrite) continue;
-      copyFileSync(from, to);
-      copied += 1;
-    }
-  }
-  return copied;
-}
-
-const TEMPLATE_ROOTS = [
-  { src: 'templates/stages', dest: 'stages' },
-  { src: 'templates/shared', dest: '_shared' },
-];
-
-function copyStageTemplates(pluginRoot, root, force) {
-  let copied = 0;
-  for (const def of TEMPLATE_ROOTS) {
-    const srcDir = join(pluginRoot, ...def.src.split('/'));
-    const dstDir = join(root, '.claude', 'hub', def.dest);
-    if (!existsSync(srcDir)) continue;
-    ensureDir(dstDir);
-    copied += copyTree(srcDir, dstDir, force);
+  for (const file of files) {
+    const dst = join(root, ...file.destRel.split('/'));
+    if (existsSync(dst) && !force) continue;
+    ensureDir(dirname(dst));
+    copyFileSync(file.src, dst);
+    copied += 1;
   }
   return copied;
 }
@@ -132,33 +134,24 @@ function copyStageTemplates(pluginRoot, root, force) {
  * 同时写入哈希账本和 `.claude/.hub-bases/` 快照：账本判断“本地是否手改”，
  * 快照作为 git merge-file 的 base，能自动合并双方都改过的文件。
  */
-function writeSourceManifest(root, version, pluginRoot) {
-  const hubRoot = join(root, '.claude', 'hub');
-  const files = {};
-  for (const def of TEMPLATE_ROOTS) {
-    const hubDir = join(hubRoot, def.dest);
-    const tplDir = join(pluginRoot, ...def.src.split('/'));
-    if (!existsSync(hubDir)) continue;
-    for (const abs of walk(hubDir)) {
-      const rel = relPosix(hubDir, abs);
-      if (isGeneratedArtifact(rel)) continue;
-      const tpl = join(tplDir, ...rel.split('/'));
-      if (!existsSync(tpl)) continue;
-      const text = readText(abs);
-      const hash = contentHash(text);
-      if (hash !== contentHash(readText(tpl))) continue;
-      const destRel = `.claude/hub/${def.dest}/${rel}`;
-      files[destRel] = { base: hash, local: hash };
-      const baseFile = join(root, '.claude', '.hub-bases', def.dest, ...rel.split('/'));
-      ensureDir(dirname(baseFile));
-      writeAtomic(baseFile, readText(tpl));
-    }
+function writeSourceManifest(root, version, files) {
+  const entries = {};
+  for (const file of files) {
+    const abs = join(root, ...file.destRel.split('/'));
+    if (!existsSync(abs)) continue;
+    const text = readText(abs);
+    const hash = contentHash(text);
+    if (hash !== contentHash(readText(file.src))) continue;
+    entries[file.destRel] = { base: hash, local: hash, source: file.source };
+    const baseFile = join(root, '.claude', '.hub-bases', ...file.hubRel.split('/'));
+    ensureDir(dirname(baseFile));
+    writeAtomic(baseFile, readText(file.src));
   }
   writeAtomic(join(root, '.claude', '.hub-sources.json'), `${JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     pluginVersion: version,
-    files,
+    files: entries,
   }, null, 2)}\n`);
 }
 
@@ -210,6 +203,8 @@ export async function main(argv = process.argv.slice(2)) {
   assertWritable(root, statePath(root), STATE_FILE);
 
   const previousMeta = readMeta(root) || {};
+  const personalLibrary = argValue(argv, '--personal-library', null);
+  const teamLibrary = argValue(argv, '--team-library', null);
   const sourceArg = argValue(argv, '--source-root', null);
   const sourceRoot = sourceArg ? resolve(sourceArg) : (previousMeta.pluginSourceRoot || null);
   if (sourceRoot && !isValidPluginRoot(sourceRoot)) {
@@ -230,11 +225,25 @@ export async function main(argv = process.argv.slice(2)) {
     ensureDir(join(root, '.claude', 'hub', 'stages'));
     ensureDir(join(root, '.claude', 'hub', '_shared'));
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
-    const copied = copyStageTemplates(pluginRoot, root, force);
+    const existing = existsSync(hubFile) ? parseYaml(readText(hubFile)) : {};
+    const config = {
+      ...existing,
+      templates: existing.templates || { order: ['personal', 'upstream'], personal: { enabled: true } },
+    };
+    const libraries = resolveLibraries(root, config, {
+      pluginRoot,
+      personalLibrary,
+      teamLibrary,
+    });
+    const templateFiles = collectTemplateFiles(libraries);
+    const copied = copyTemplates(templateFiles, root, force);
     const { list: subs, expanded } = discoverSubprojects(root);
     const rootTest = detectTestCommand(root);
-    writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest));
-    writeSourceManifest(root, info.version, pluginRoot);
+    writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest, {
+      templates: config.templates,
+      blocklist: existing.upstream?.blocklist,
+    }));
+    writeSourceManifest(root, info.version, templateFiles);
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     try {
       generateOverview(root, { full: false });
@@ -270,9 +279,12 @@ export async function main(argv = process.argv.slice(2)) {
   const metaFile = join(root, '.devflow.json');
   assertWritable(root, metaFile, '.devflow.json');
   writeAtomic(metaFile, `${JSON.stringify({
+    ...previousMeta,
     pluginRoot,
     pluginVersion: info.version,
     ...(sourceRoot ? { pluginSourceRoot: sourceRoot } : {}),
+    ...(personalLibrary ? { personalLibraryPath: resolve(personalLibrary) } : {}),
+    ...(teamLibrary ? { teamLibraryPath: resolve(teamLibrary) } : {}),
     initializedAt: new Date().toISOString(),
   }, null, 2)}\n`);
   log('ok', '记录插件位置 .devflow.json');

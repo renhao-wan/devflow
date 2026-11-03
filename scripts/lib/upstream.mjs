@@ -289,7 +289,11 @@ export function appendLog(pluginRoot, entry) {
     `- 模式：${entry.mode}`,
     `- 项目：${entry.project}`,
     `- 文件：${entry.files.length ? entry.files.join('、') : '（无）'}`,
-    entry.oldVersion ? `- 插件版本：${entry.oldVersion} → ${entry.newVersion}` : '- 插件版本：未变更',
+    entry.oldVersion
+      ? `- 插件版本：${entry.oldVersion} → ${entry.newVersion}`
+      : (entry.mode === 'upstream'
+        ? '- 插件版本：未变更'
+        : '- 模板库版本：不适用（个人库与团队库没有版本文件）'),
     `- 记录 ID：\`${entry.id}\``,
     '',
   ].join('\n');
@@ -304,12 +308,12 @@ export function readLog(pluginRoot) {
   }).filter(Boolean);
 }
 
-export function revertFromLog(pluginRoot, id) {
-  const entry = readLog(pluginRoot).find((e) => e.id === id);
+export function revertFromLog(root, id, { restoreVersionFiles = true } = {}) {
+  const entry = readLog(root).find((e) => e.id === id);
   if (!entry) throw new Error(`找不到回灌记录：${id}`);
   const restore = (rel) => {
-    const bak = join(pluginRoot, ...BACKUP_ROOT.split('/'), id, ...rel.split('/'));
-    const target = join(pluginRoot, ...rel.split('/'));
+    const bak = join(root, ...BACKUP_ROOT.split('/'), id, ...rel.split('/'));
+    const target = join(root, ...rel.split('/'));
     if (existsSync(bak)) {
       ensureDir(dirname(target));
       copyFileSync(bak, target);
@@ -322,8 +326,10 @@ export function revertFromLog(pluginRoot, id) {
     return false;
   };
   for (const rel of entry.files || []) restore(rel);
-  for (const rel of ['.claude-plugin/plugin.json', 'package.json', '.claude-plugin/marketplace.json', 'CHANGELOG.md']) {
-    restore(rel);
+  if (restoreVersionFiles) {
+    for (const rel of ['.claude-plugin/plugin.json', 'package.json', '.claude-plugin/marketplace.json', 'CHANGELOG.md']) {
+      restore(rel);
+    }
   }
   return entry;
 }

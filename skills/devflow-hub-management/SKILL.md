@@ -50,9 +50,9 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 回灌
 
-`/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写插件模板、bump patch 版本。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
+`/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写入目标库，且默认不 bump 版本；只有显式 `--bump patch|minor|major` 才升级（仅上游库支持）。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
 
-回灌目标是插件源码仓库，由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根决定。从 marketplace 安装时运行时根在缓存里，写入会被拒绝；用 `--plugin-root` 或先运行 `/devflow:init --source-root <插件源码仓库>` 记录一次。
+回灌目标由 `--to` 选择：`personal` 个人库（默认 `~/.claude/devflow`）、`team` 团队库（`hub.yaml` 配置的本机 clone，默认只写工作区，`--pr` 才提交推送）、`upstream` 插件源码仓库（默认目标）。上游库路径由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根决定。从 marketplace 安装时运行时根在缓存里，写入会被拒绝；用 `--plugin-root` 或先运行 `/devflow:init --source-root <插件源码仓库>` 记录一次。
 
 ## 版本升级
 

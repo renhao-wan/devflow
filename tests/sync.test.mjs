@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import './support.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,6 +87,13 @@ test('sync 更新未改文件、保留手改、加入新资源', () => {
     const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
     assert.ok(sources.files['.claude/hub/stages/review/references/new.md']);
     assert.ok(sources.files['.claude/hub/stages/req/SKILL.md']);
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md']?.source, 'upstream');
+
+    // 冲突时已把当前模板记为基线：模板未再变化时重跑不应重复报冲突，本地手改仍保留。
+    const again = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(again.status, 0, again.stderr + again.stdout);
+    assert.doesNotMatch(again.stdout, /冲突 .*review\/SKILL\.md/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), 'utf8'), /本地手改/);
 
     const projections = readFileSync(join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md'), 'utf8');
     assert.match(projections, /devflow \/ req/);
@@ -306,9 +314,10 @@ test('sync 对双方都修改的文件做三方合并', () => {
     assert.match(merged, /模板新增/);
 
     const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
-    assert.equal(sources.schemaVersion, 2);
+    assert.equal(sources.schemaVersion, 3);
     assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].base);
     assert.ok(sources.files['.claude/hub/stages/review/SKILL.md'].local);
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'upstream');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -333,6 +342,125 @@ test('sync 同步共享模板并从模板初始复制', () => {
     const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
     assert.ok(sources.files['.claude/hub/_shared/common.md']);
     assert.ok(existsSync(join(root, '.claude', '.hub-bases', '_shared', 'common.md')));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+function writeLibraryFile(root, rel, content) {
+  const file = join(root, 'templates', ...rel.split('/'));
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, content);
+}
+
+test('sync 优先使用个人库，个人模板移除后回落到上游', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-personal-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\n上游 review\n',
+    });
+    const root = makeProject(base, repo);
+    const personal = join(base, 'personal');
+    writeLibraryFile(personal, 'stages/review/SKILL.md', '---\nname: review\ndescription: 评审\n---\n\n个人 review\n');
+
+    const args = ['--root', root, '--plugin-root', repo, '--personal-library', personal];
+    const first = run('hub-sync.mjs', args, root);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+    assert.match(first.stdout, /\[personal\]/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), 'utf8'), /个人 review/);
+
+    let sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'personal');
+
+    // 高优先库删除后，低优先上游仍提供同名文件：应回落而不是误报“模板已移除”。
+    rmSync(join(personal, 'templates', 'stages', 'review', 'SKILL.md'));
+    const second = run('hub-sync.mjs', args, root);
+    assert.equal(second.status, 0, second.stderr + second.stdout);
+    assert.doesNotMatch(second.stdout, /模板已移除/);
+    assert.match(second.stdout, /\[upstream\]/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), 'utf8'), /上游 review/);
+
+    sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'upstream');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 团队库覆盖个人库同名模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-team-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\n上游 review\n',
+    });
+    const root = makeProject(base, repo);
+    const personal = join(base, 'personal');
+    const team = join(base, 'team');
+    writeLibraryFile(personal, 'stages/review/SKILL.md', '---\nname: review\ndescription: 评审\n---\n\n个人 review\n');
+    writeLibraryFile(team, 'stages/review/SKILL.md', '---\nname: review\ndescription: 评审\n---\n\n团队 review\n');
+
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const patched = readFileSync(hubFile, 'utf8')
+      .replace('order: [personal, upstream]', 'order: [team, personal, upstream]')
+      .replace('  # team:\n', `  team:\n    enabled: true\n    path: ${JSON.stringify(team.replace(/\\/g, '/'))}\n`);
+    writeFileSync(hubFile, patched);
+
+    const sync = run('hub-sync.mjs', [
+      '--root', root, '--plugin-root', repo, '--personal-library', personal, '--team-library', team,
+    ], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /\[team\]/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), 'utf8'), /团队 review/);
+
+    const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'team');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 来源切换到内容相同的个人模板时保留本地改动并更新来源', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-switch-'));
+  try {
+    const upstreamText = '---\nname: review\ndescription: 评审\n---\n\nreview v1\n';
+    const repo = makePlugin(base, { 'templates/stages/review/SKILL.md': upstreamText });
+    const root = makeProject(base, repo);
+    const personal = join(base, 'personal');
+    writeLibraryFile(personal, 'stages/review/SKILL.md', upstreamText);
+
+    const target = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+    writeFileSync(target, `${upstreamText}\n本地追加\n`);
+
+    const sync = run('hub-sync.mjs', [
+      '--root', root, '--plugin-root', repo, '--personal-library', personal,
+    ], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /保留手改/);
+    assert.match(readFileSync(target, 'utf8'), /本地追加/);
+
+    const sources = JSON.parse(readFileSync(join(root, '.claude', '.hub-sources.json'), 'utf8'));
+    assert.equal(sources.files['.claude/hub/stages/review/SKILL.md'].source, 'personal');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 兼容 v2 账本并在下次同步升级为 v3', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-v2-'));
+  try {
+    const repo = makePlugin(base, {});
+    const root = makeProject(base, repo);
+    const sourcesFile = join(root, '.claude', '.hub-sources.json');
+    const sources = JSON.parse(readFileSync(sourcesFile, 'utf8'));
+    sources.schemaVersion = 2;
+    for (const value of Object.values(sources.files)) delete value.source;
+    writeFileSync(sourcesFile, JSON.stringify(sources, null, 2));
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    const next = JSON.parse(readFileSync(sourcesFile, 'utf8'));
+    assert.equal(next.schemaVersion, 3);
+    assert.equal(next.files['.claude/hub/stages/req/SKILL.md'].source, 'upstream');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

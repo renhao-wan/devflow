@@ -83,13 +83,13 @@
 
 ## 回灌与升级
 
-回灌把项目里验证过的规则送回插件，分**范围**与**出口**两个维度：范围是 `--stage <name>` / `--shared` / `--all`，出口是 `--to local`（直接写插件源码）与 `--to remote`（临时 worktree 建分支、提交、推送、开 PR）。两种出口共用同一套 `plan → apply` 流水线，避免本地与远程出现两套分类规则。回灌目标由显式 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。
+回灌把项目里验证过的规则送回模板库，分**范围**与**目标库**两个维度：范围是 `--stage <name>` / `--shared` / `--all`，目标是 `personal`（个人库）、`team`（团队库）与 `upstream`（插件源码；加 `--pr` 走分支与 PR）。三种目标共用同一套 `plan → apply` 流水线，避免分类规则分叉。个人库默认 `~/.claude/devflow`；团队库配置在 `hub.yaml`，必须指向本机已 clone 的 git 顶层，默认只写工作区，加 `--pr` 才提交推送；上游库由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。个人库与团队库没有版本文件，显式 `--bump` 会报错。
 
 分类采用**显式标记优先、行级剔敏兜底**：`devflow:local` 块整块剔除，`devflow:reusable` 块强制保留但仍做敏感扫描；未标记内容逐行匹配绝对路径、内网地址、常见密钥、blocklist 与子项目名，命中行单独剔除，其余行照常回灌；剔除后无正文才判为项目专属。这样一段通用规则不会因为相邻一行带内网地址而整文件丢失。
 
-默认**不 bump 版本**：回灌只改模板并写日志，发版时显式 `--bump`。每次写入先备份到 `.devflow/backups/<id>/` 并记 journal，中断可续做；日志写 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`，`--revert <id>` 可回滚。远程提交前重新扫描写出的文件并校验 `SKILL.md` frontmatter，`push` 失败保留本地分支，`--resume` 可续推；同 head 已有 PR 时更新而非重复创建。
+默认**不 bump 版本**：回灌只改模板并写日志，发版时显式 `--bump`。每次写入先备份到目标库的 `.devflow/backups/<id>/` 并记 journal，中断可续做；日志写 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`，`--revert <id>` 可回滚（未指定 `--to` 时依次查个人、团队、上游）。远程提交前重新扫描写出的文件并校验 `SKILL.md` frontmatter，`push` 失败保留本地分支，`--resume` 可续推；同 head 已有 PR 时更新而非重复创建。团队 profile 复用同一流程，但白名单只含模板与回灌日志，跳过版本与 CHANGELOG，分支前缀 `devflow/team-`。
 
-插件升级后，`hub-sync` 同步 `templates/stages` 与 `templates/shared`。账本 `.claude/.hub-sources.json` 升级为 schema v2，为每个文件记录 `{ base, local }`，`.claude/.hub-bases/` 保存上次模板原文作为共同祖先。判定顺序：目标不存在 → 新增；本地一致 → 跳过；本地未改 → 跟随模板；模板未变 → 保留手改；`--force` → 直接覆盖并备份；否则用 `git merge-file` 三方合并，成功则写入合并结果，冲突则保留本地。同步只动 `stages/` 与 `_shared/`，不碰 `hub.yaml` 与 `overrides/`。
+消费端按 `templates.order` 合并三个库，同名文件先到先得、整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底；没有 `templates` 块的旧项目只读上游。`hub-sync` 的账本升级为 schema v3，为每个文件记录 `{ base, local, source }`：本地未改 → 跟随模板；模板未变 → 保留手改并刷新 `source`；双方都改 → 用 `git merge-file` 三方合并。高优先库删除同名文件后自动回落到下一来源，所有库都不再提供时才从账本移除并保留本地文件。同步只动 `stages/` 与 `_shared/`，不碰 `hub.yaml` 与 `overrides/`。
 
 插件版本以 `.claude-plugin/plugin.json` 为权威来源，`package.json` 与 `.claude-plugin/marketplace.json` 的 `plugins[].version` 是镜像，必须一致；`metadata.version` 属于市场自身元数据，不决定插件安装版本。回灌/`ship` 的 `--apply --bump <patch|minor|major>` 会同时更新，清单测试负责校验漂移。
 

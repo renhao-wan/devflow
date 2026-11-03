@@ -75,6 +75,17 @@ defaults:
 
 upstream:
   blocklist: []
+
+templates:
+  order: [personal, upstream]        # 先出现者优先：team > personal > upstream
+  personal:
+    enabled: true
+  # 团队库默认不启用；clone 后把 path 指到仓库根
+  # team:
+  #   enabled: true
+  #   repo: https://github.com/org/devflow-templates.git
+  #   base: main
+  #   path: ../devflow-templates
 ```
 
 | 字段 | 说明 |
@@ -88,6 +99,12 @@ upstream:
 | `defaults.testCommand` | 没有子项目级命令时使用。根目录无构建文件时 init 会回退为 `npm test`，需要手动修改 |
 | `defaults.reviewRequired` | 流程约定字段，当前不参与脚本校验 |
 | `upstream.blocklist` | 回灌时用于识别项目专属内容的额外关键词 |
+| `templates.order` | 模板来源优先级，只支持 `team` / `personal` / `upstream`；缺 `upstream` 时自动补到最后作为兜底 |
+| `templates.personal.enabled` | 个人库是否参与同步，默认 `true`；不影响 `--to personal` 回灌 |
+| `templates.team.enabled` / `path` | 启用团队库并指定本机已 clone 的路径（相对项目根或绝对）；不自动 clone |
+| `templates.team.repo` / `base` | `repo` 仅用于提示与 doctor；`base` 是团队库 PR 的基础分支，缺省 `main` |
+
+没有 `templates` 块的旧项目只使用上游库，行为与升级前一致。个人库与团队库的本机路径可写进 `.devflow.json`（不入库）：`personalLibraryPath`、`teamLibraryPath`；`init` / `sync` 时用 `--personal-library` / `--team-library` 传入的路径会自动记录到这两个字段，下次无需重复传。命令行参数仍然优先。
 
 ## 阶段资源：references/ 与 templates/
 
@@ -109,14 +126,25 @@ upstream:
 ## 单一真源与投影
 
 ```
-插件出厂模板 templates/
-        │ init 复制
-        ▼
-项目 .claude/hub/（唯一可编辑的规则）
-        │ gen 生成
-        ▼
-项目 .claude/skills/devflow-*（薄壳，勿手改）
+团队库 templates/ ─┐
+个人库 templates/ ─┼─ init/sync 按 order 合并 ─→ 项目 .claude/hub/（唯一可编辑的规则）
+上游插件 templates/ ┘                                      │ gen 生成
+                                                          ▼
+                                              .claude/skills/devflow-*（薄壳，勿手改）
 ```
+
+来源按 `templates.order` 先到先得：同名文件由高优先库整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底。项目里已有的手改由 `sync` 的基线快照三方合并保留；`.claude/.hub-sources.json` 的 v3 账本记录每个文件的 `source`。删除高优先库的同名文件后，`sync` 会自动回落到下一来源。
+
+### AI 何时读取这些规则
+
+AI **不直接读取个人库、团队库或上游库**；三个库只在 `init` / `sync` 时作为来源被读取。落到项目后，读取时机如下：
+
+1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文。
+2. **用户进入阶段**：调用 `/devflow:req|plan|implement|test|review|debug` 时，Claude Code 加载对应的 `.claude/skills/devflow-<stage>/SKILL.md` 投影。
+3. **执行前**：投影正文要求 AI 完整读取 `.claude/hub/stages/<stage>/SKILL.md`；`references/`、`templates/` 等资源按需读取，相对路径以该源文件所在目录为基准。
+4. **共享规则**：`.claude/hub/_shared/` 的内容在生成投影时嵌入每个阶段，因此对所有阶段生效，不依赖会话启动注入。
+
+所以回灌只更新库；其他项目要使用这些内容，需要在 `hub.yaml` 配好 `templates.order` 后运行 `/devflow:sync`，把模板落到项目的 `.claude/hub/` 并重新生成投影。
 
 改规则的流程：
 
