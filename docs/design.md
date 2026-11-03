@@ -55,6 +55,8 @@
 
 小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 测试后由 triage 按实际 diff 判定，安全、数据、认证/权限/并发等风险触发 review，`review: required` 作为显式要求保留。命中依赖、公共接口、迁移、权限/认证/支付/并发/安全边界、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
 
+test 阶段除运行测试外，还用 `devflow test --gaps` 按 diff 列出“改了源码但没有测试改动痕迹”的文件。它只按文件名与常见测试目录做存在性判断，不解析测试内容，因此只帮助发现遗漏、不构成覆盖率结论，也不阻断交付。
+
 ## 审查触发与画像
 
 审查不再对所有改动一律平铺检查，而是先做一次确定性 triage（`scripts/review-triage.mjs`），再按结果分配注意力：
@@ -65,9 +67,9 @@
 - **方向选择**：默认排除可维护性与测试质量（基线检查覆盖），验收对照仅在 high / special 派代理；用户 `--focus` 指定后只审这些方向，其余让位。所有未入选方向进入 `excluded` 并带理由；`selected` 保留全部应审方向，上限只限制实际派单，未派单方向进入 `deferred` 由主上下文补查，不静默漏审。
 - **空方向兜底**：标记、用户或风险信号触发审查但未命中具体方向时，补一个基线方向（优先已命中的最高分方向，否则正确性），避免“必审但无方向”。
 - **代理分组**：A 正确性 + 并发、B 安全 + 依赖、C 验收与回归 + 测试质量、D 数据与迁移、E 可维护性；相关方向合并，异质方向分开。
-- **产物**：`review-triage.json` 保存判定，`hub-status` 读取 `trigger` 判断轻量修复是否还需 review；显式 `review: required` 始终优先于 triage 的跳过结论，快照早于 `debug.md` 时提示可能过期；文件缺失或损坏时回退标记，保持向后兼容。
+- **产物**：`review-triage.json` 保存判定，`hub-status` 读取 `trigger` 判断轻量修复是否还需 review；`review.md` 写完后由 `review-triage.mjs --check` 校验结论、未关闭阻断项与画像一致性，未通过时任务留在 review，而不是只凭文件存在就判完成。显式 `review: required` 始终优先于 triage 的跳过结论，快照早于 `debug.md` 时提示可能过期；文件缺失或损坏时回退标记，保持向后兼容。
 
-triage 是纯函数加 git 读取，不调用模型；模型只负责在给定方向内审查，减少“想到哪查到哪”和重复劳动。
+triage 是纯函数加 git 读取，不调用模型；模型只负责在给定方向内审查，减少“想到哪查到哪”和重复劳动。轻量流程的升级入口复用同一套画像：`review-triage.mjs --escalate` 读取当前 diff，命中安全、数据、并发、依赖、公共契约或规模/子项目阈值时返回退出码 1，req/debug 据此停止轻量并写 `## 升级判断`；非 git 环境标记判断不完整，避免把空 diff 当成安全结论。
 
 ## hooks
 
@@ -89,8 +91,7 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 
 阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。审查 triage 的 `review-triage.json` 也落在同一目录，属于判定快照而非进度状态，可随时重新生成。
 
-- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
-- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
+- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
 - 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
 - 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。
@@ -104,6 +105,8 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 回灌只改模板并写日志，不改版本文件；版本号由维护者在发版时统一调整。每次写入先备份到目标库的 `.devflow/backups/<id>/` 并记 journal，中断可续做；日志写 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`，`--revert <id>` 可回滚（未指定 `--to` 时依次查个人、团队、上游）。远程提交前重新扫描写出的文件并校验 `SKILL.md` frontmatter，`push` 失败保留本地分支，`--resume` 可续推；同 head 已有 PR 时更新而非重复创建。团队 profile 复用同一流程，但白名单只含模板与回灌日志，跳过版本与 CHANGELOG，分支前缀 `devflow/team-`。
 
 消费端按 `templates.order` 合并三个库，同名文件先到先得、整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底；没有 `templates` 块的旧项目只读上游。`hub-sync` 的账本升级为 schema v3，为每个文件记录 `{ base, local, source }`：本地未改 → 跟随模板；模板未变 → 保留手改并刷新 `source`；双方都改 → 用 `git merge-file` 三方合并。高优先库删除同名文件后自动回落到下一来源，所有库都不再提供时才从账本移除并保留本地文件。同步只动 `stages/` 与 `_shared/`，不碰 `hub.yaml` 与 `overrides/`。
+
+多来源也带来版本错配：模板可能引用新插件才有的 loader，或依赖更新版本的行为。同步前先做兼容性校验——正文引用的 `scripts/devflow-*.mjs` 必须存在于当前插件的 `LOADERS`，模板 frontmatter 的 `minPluginVersion` 必须被当前插件版本满足；不通过的文件归为“不兼容，已跳过”，既不写入也不更新基线，等升级插件后重跑。`doctor` 用同一规则扫描项目内模板，提前暴露降级或换机后的断链。
 
 插件版本以 `.claude-plugin/plugin.json` 为权威来源，`package.json` 与 `.claude-plugin/marketplace.json` 的 `plugins[].version` 是镜像，必须一致；`metadata.version` 属于市场自身元数据，不决定插件安装版本。回灌与 `ship` 不修改这些文件，发版时按 [development.md 的发版流程](development.md#发版流程) 统一修改，清单测试负责校验漂移。
 

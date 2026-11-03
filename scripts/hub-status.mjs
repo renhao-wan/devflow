@@ -4,6 +4,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/common.mjs';
+import { checkReviewReport } from './lib/review-gate.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
@@ -156,7 +157,13 @@ export function buildStatus(root, { wanted = null } = {}) {
       ? (markerRequired || (triage ? triage.trigger !== 'skipped' : false))
       : false;
     const triageStale = triage ? triageIsStale(root, item.slug) : false;
-    const stage = stageOf(item.files, pending, reviewRequired);
+    let stage = stageOf(item.files, pending, reviewRequired);
+    // review.md 存在时校验内容；有未关闭阻断项或画像缺失时不能判完成。
+    const reviewGate = item.files.includes('review.md') && (stage === 'done' || stage === 'review')
+      ? checkReviewReport(root, item.slug, { triage: triageOf(root, item.slug) })
+      : null;
+    if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
+    const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
     return {
       slug: item.slug,
       stage,
@@ -165,8 +172,11 @@ export function buildStatus(root, { wanted = null } = {}) {
       reviewTriage: triage
         ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
         : null,
+      reviewGate: reviewGate
+        ? { ok: reviewGate.ok, errors: reviewGate.errors, warnings: reviewGate.warnings }
+        : null,
       artifacts: item.files,
-      gap: GAP[stage],
+      gap,
       next: NEXT[stage](item.slug),
     };
   });
@@ -180,6 +190,11 @@ export function buildStatus(root, { wanted = null } = {}) {
   }
   if (testsPending) {
     suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>"`);
+  }
+  for (const row of rows) {
+    if (row.reviewGate && !row.reviewGate.ok) {
+      suggestions.push(`${row.slug}：审查报告未通过门禁（${row.reviewGate.errors[0]}）；运行 /devflow:review ${row.slug} 补全后重跑 devflow status`);
+    }
   }
   // 投影时间戳晚于最近一次阶段源改动时视为已生成，不再反复提示。
   const lastHubChange = Date.parse(state.lastHubChangeAt || '');
@@ -249,9 +264,10 @@ export async function main(argv = process.argv.slice(2)) {
       const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
       const triage = row.reviewTriage?.trigger === 'skipped' ? '，审查已跳过（triage）' : '';
       const stale = row.reviewTriage?.stale ? '，triage 可能过期，建议重跑' : '';
+      const gate = row.reviewGate && !row.reviewGate.ok ? '，审查报告未通过门禁' : '';
       const gap = row.gap ? `（缺少 ${row.gap}）` : '';
       console.log(`  ${row.slug}`);
-      console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}`);
+      console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
       console.log(`    下一步：${row.next}`);
     }

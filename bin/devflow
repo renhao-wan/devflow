@@ -14,7 +14,7 @@ const COMMANDS = {
   sync: ['hub-sync.mjs', '按团队/个人/上游优先级同步阶段与共享模板到项目（三方合并，--dry-run 预览）'],
   upstream: ['hub-upstream.mjs', '预览或回灌阶段/共享规则到个人库、团队库或上游插件（默认预览）'],
   ship: ['hub-ship.mjs', '回灌、提交并创建或更新 PR'],
-  test: ['mark-test.mjs', '记录一次测试通过'],
+  test: ['mark-test.mjs', '记录一次测试通过（--gaps 查看测试缺口提示）'],
   triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限'],
 };
 
@@ -41,6 +41,9 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow ship --stage review --dry-run
   devflow triage --slug add-login --write
   devflow triage --slug fix-auth --focus security --agents 2
+  devflow triage --slug add-login --check
+  devflow triage --escalate
+  devflow test --gaps
 
 所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
 

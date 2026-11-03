@@ -24,6 +24,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
 4. 严格遵守 SKILL 中的门禁，逐条自查；不满足就继续澄清，不进入方案。
 5. 产出写入 `docs/devflow/<slug>/req.md`。slug 使用 kebab-case，从需求内容提炼；目录不存在时创建。
    - 参数含 `--light` 时走轻量功能：产出 `brief.md`（合并 req 与 plan），不写 `req.md`/`plan.md`；硬触发（依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界、不可逆操作、>200 行、>10 文件、>2 子项目）必须升级完整流程。
+   - 轻量模式在进入 implement 前后运行升级自检 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --escalate`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --escalate`）。退出码 1 表示命中可由 diff 推导的硬触发，停止轻量并写 `## 升级判断`；退出码 0 也不能替代人工判断不可逆操作与跨模块影响。
    - 写 `brief.md` 前检查目标目录：已有 `req.md` 或 `plan.md` 时，说明该 slug 已是完整流程，改用完整 req 或换 slug，不新增 brief.md，避免产物被完整流程覆盖而静默失效。
    - 轻量流程出现 80–200 行或 5–10 个文件的软提示时，用 `AskUserQuestion` 询问是否继续轻量；无法提问时回退为文本询问。
 6. 最后用一段话报告：实际 slug、任务目录 `docs/devflow/<实际 slug>/`、目标、验收标准数量、本次不做的项、技术约束、影响面、遗留待确认项。

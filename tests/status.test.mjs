@@ -8,6 +8,22 @@ import { spawnSync } from 'node:child_process';
 const ROOT = resolve(import.meta.dirname, '..');
 const SCRIPT = join(ROOT, 'scripts', 'hub-status.mjs');
 
+const REVIEW_OK = [
+  '# 审查记录',
+  '',
+  '## 阻断项',
+  '',
+  '| 文件:行 | 问题 | 触发条件 | 建议 |',
+  '| --- | --- | --- | --- |',
+  '|  |  |  |  |',
+  '',
+  '## 结论',
+  '',
+  '- [x] 可以交付',
+  '- [ ] 修复阻断项后再审',
+  '',
+].join('\n');
+
 function run(args) {
   const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
   return { ...r, json: r.status === 0 && r.stdout.trim().startsWith('{') ? JSON.parse(r.stdout) : null };
@@ -62,13 +78,89 @@ test('status 在审查产物齐全后标记完成', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-done-'));
   try {
     const dir = makeTask(root, 'fix-typo');
-    for (const name of ['req.md', 'plan.md', 'test.md', 'review.md']) {
+    for (const name of ['req.md', 'plan.md', 'test.md']) {
       writeFileSync(join(dir, name), '# x\n');
     }
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK);
     const r = run(['--root', root, '--json']);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.json.slugs[0].stage, 'done');
     assert.match(r.json.slugs[0].next, /upstream/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 在审查结论未勾选或仍有阻断项时回到 review', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-gate-'));
+  try {
+    const dir = makeTask(root, 'gate-task');
+    for (const name of ['req.md', 'plan.md', 'test.md']) {
+      writeFileSync(join(dir, name), '# x\n');
+    }
+
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK.replace('- [x] 可以交付', '- [ ] 可以交付'));
+    const unchecked = run(['--root', root, '--json']);
+    assert.equal(unchecked.json.slugs[0].stage, 'review');
+    assert.equal(unchecked.json.slugs[0].gap, null);
+    assert.equal(unchecked.json.slugs[0].reviewGate.ok, false);
+    assert.match(unchecked.json.slugs[0].next, /\/devflow:review gate-task/);
+    assert.ok(unchecked.json.suggestions.some((s) => s.includes('未通过门禁')));
+    assert.match(run(['--root', root]).stdout, /审查报告未通过门禁/);
+
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK.replace(
+      '|  |  |  |  |',
+      '| src/auth.js:10 | 未校验 token | 过期 token | 增加校验 |',
+    ));
+    const blocking = run(['--root', root, '--json']);
+    assert.equal(blocking.json.slugs[0].stage, 'review');
+    assert.ok(blocking.json.slugs[0].reviewGate.errors.some((e) => e.includes('未关闭')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 校验审查画像与 triage 快照一致', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-gate-triage-'));
+  try {
+    const dir = makeTask(root, 'profile-task');
+    for (const name of ['req.md', 'plan.md', 'test.md']) {
+      writeFileSync(join(dir, name), '# x\n');
+    }
+    writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({
+      trigger: 'auto',
+      level: 'high',
+      selected: [{ direction: 'security' }],
+      assignments: [{ agent: 'B', directions: ['security'] }],
+      deferred: [],
+      excluded: [],
+    }));
+    writeFileSync(join(dir, 'review.md'), [
+      '## 审查触发与画像',
+      '',
+      '- 触发：user',
+      '- 风险等级：high',
+      '- 选中方向（应审全集）：安全',
+      '- 实际派单：B:安全',
+      '- 主上下文补查（deferred）：无',
+      '- 排除方向与理由：无',
+      '',
+      '## 阻断项',
+      '',
+      '| 文件:行 | 问题 | 触发条件 | 建议 |',
+      '| --- | --- | --- | --- |',
+      '|  |  |  |  |',
+      '',
+      '## 结论',
+      '',
+      '- [x] 可以交付',
+      '- [ ] 修复阻断项后再审',
+      '',
+    ].join('\n'));
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.json.slugs[0].stage, 'review');
+    assert.ok(r.json.slugs[0].reviewGate.errors.some((e) => e.includes('不一致')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -377,7 +469,7 @@ test('status 文本输出标注轻量模式与需补审查', () => {
     assert.equal(reviewText.status, 0, reviewText.stderr);
     assert.match(reviewText.stdout, /模式：轻量修复，需补审查/);
 
-    writeFileSync(join(bug, 'review.md'), '# review\n');
+    writeFileSync(join(bug, 'review.md'), REVIEW_OK);
     const doneText = run(['--root', root, '--slug', 'risky-bug']);
     assert.match(doneText.stdout, /阶段：done/);
     assert.doesNotMatch(doneText.stdout, /需补审查/);

@@ -19,6 +19,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
    - 独立小 bug（正确行为已由现有代码、测试或需求定义）直接在本阶段修复，写 `docs/devflow/<slug>/debug.md`，不要求 `req.md`/`plan.md`，之后进入 `/devflow:test <slug>`。slug 从问题描述提炼（小写字母、数字、连字符），已有任务复用其 slug；无法确定时先询问。轻量修复不切换 workflow 类工具；需要完整工作流时先升级完整流程。
    - 涉及安全、数据、认证/权限/并发等高风险、但不触发升级的修复，在 `debug.md` 顶部前 10 行写 `review: required`，测试通过后再补 `/devflow:review <slug>`；不确定是否涉及风险时按需要 review 处理。测试后 review 阶段仍会运行 triage，按实际 diff 复核风险，标记是显式要求而不是唯一依据。
    - 硬触发（根因跨 >2 文件或 >2 模块、连续 2 轮假设未收敛、改公共接口/公共契约、涉及数据结构/迁移/依赖/不可逆、非测试/文档 diff >200 行或 >10 文件或 >2 子项目）先写 `## 升级判断` 并升级完整流程；公共接口/迁移/依赖不在轻量路径继续。80–200 行或 5–10 文件时先用 `AskUserQuestion` 询问一次，记录后继续；无法提问时回退为文本询问。
+   - 有代码改动后运行升级自检 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --escalate`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --escalate`）。退出码 1 表示命中可由 diff 推导的硬触发，停止轻量流程；退出码 0 仍需人工核对根因范围、假设收敛与不可逆操作。
 3. 先复现：拿到最小、稳定、可重复的命令或步骤。不能复现时说明缺什么，不要盲改；停在 debug 记录证据与盲区，不因此升级完整流程（完整流程同样依赖复现）。
 4. 收集证据：完整错误、日志、相关输入、最近改动。
 5. 需要时检索已知问题：用完整错误、错误码、依赖版本查官方 issue、变更日志与社区讨论；外部结论只作线索，必须本地复现验证。搜索失败时记录未验证项与盲区，不得把“没搜到”写成“没有已知问题”。

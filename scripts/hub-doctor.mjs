@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync } from 'node:fs';
-import { join, dirname, resolve, delimiter } from 'node:path';
+import { join, dirname, resolve, delimiter, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
-  posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath,
+  posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath, walk,
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
+import { templateIssues } from './lib/template-compat.mjs';
 import {
   OVERVIEW_FILE, AUTO_START, AUTO_END, scanFacts, readHubFacts, factsFingerprint, readFactsFingerprint,
 } from './lib/overview.mjs';
@@ -258,6 +259,30 @@ export async function main(argv = process.argv.slice(2)) {
         kind !== 'team' || (libs.team.enabled && !libs.team.error));
       add('ok', `模板来源优先级：${enabled.join(' > ')}`);
     }
+  }
+
+  if (info) {
+    const loaderFiles = new Set(Object.keys(LOADERS));
+    const templateDirs = [
+      join(root, '.claude', 'hub', 'stages'),
+      join(root, '.claude', 'hub', '_shared'),
+    ];
+    const issues = [];
+    let scanned = 0;
+    for (const dir of templateDirs) {
+      if (!existsSync(dir)) continue;
+      for (const abs of walk(dir, '.md')) {
+        scanned += 1;
+        for (const issue of templateIssues(readText(abs), { loaderFiles, pluginVersion: info.version })) {
+          issues.push({ severity: issue.severity, message: `${posix(relative(root, abs))}：${issue.message}` });
+        }
+      }
+    }
+    for (const issue of issues) {
+      add(issue.severity, `模板与插件不兼容：${issue.message}`,
+        issue.severity === 'error' ? '/devflow:init 重建 loader，或升级插件后重跑 /devflow:sync' : '升级 devflow 插件后重跑 /devflow:sync');
+    }
+    if (!issues.length && scanned) add('ok', `模板与当前插件兼容（扫描 ${scanned} 个文件）`);
   }
 
   if (config) {

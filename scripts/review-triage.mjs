@@ -5,14 +5,17 @@ import { existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  argValue, hasFlag, isMain, isPathInside, isRealPathInside, projectRoot, writeAtomic,
+  argValue, hasFlag, isMain, isPathInside, isRealPathInside, loadHub, projectRoot, readText, writeAtomic,
 } from './lib/common.mjs';
+import { checkReviewReport } from './lib/review-gate.mjs';
 import {
   DIRECTIONS,
   DIRECTION_LABELS,
   buildReviewPlan,
   collectChanges,
   detectFlow,
+  evaluateEscalation,
+  profileChanges,
   readReviewMarker,
   renderPlan,
 } from './lib/review.mjs';
@@ -132,18 +135,66 @@ export async function main(argv = process.argv.slice(2)) {
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const write = hasFlag(argv, '--write');
+  const check = hasFlag(argv, '--check');
+  const escalate = hasFlag(argv, '--escalate');
   const noSubagents = hasFlag(argv, '--no-subagents');
   const focusOnly = hasFlag(argv, '--focus-only');
   const base = argValue(argv, '--base', null);
   const focus = collectFocus(argv);
   if (focusOnly && focus.length) throw new Error('--focus-only 不能与 --focus 同时使用');
   const agents = parseAgents(argValue(argv, '--agents', null));
+  if (check && (write || focus.length || agents !== null || noSubagents || focusOnly || base)) {
+    throw new Error('--check 只校验 review.md，不能与 --write/--focus/--agents/--no-subagents/--focus-only/--base 同时使用');
+  }
+  if (escalate && (write || check || focus.length || agents !== null || noSubagents || focusOnly)) {
+    throw new Error('--escalate 只读取 git 改动判断是否升级，不能与 --write/--check/--focus/--agents/--no-subagents/--focus-only 同时使用');
+  }
+
+  if (escalate) {
+    const { changes, warnings, statsAvailable } = collectGit(root, base);
+    const profile = profileChanges({ files: changes.files, diffText: changes.diffText });
+    let subprojects = {};
+    try { subprojects = loadHub(root).config.subprojects || {}; } catch { subprojects = {}; }
+    const verdict = evaluateEscalation(profile, { statsAvailable, files: changes.files, subprojects });
+    const result = { ...verdict, warnings: [...warnings, ...verdict.warnings] };
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(result.escalate ? '[ESCALATE] 命中硬触发，停止轻量流程' : '[OK] 未命中可由 diff 推导的硬触发');
+      for (const reason of result.reasons) console.log(`  - ${reason}`);
+      for (const warning of result.warnings) console.log(`  注意：${warning}`);
+      if (!result.escalate && result.confident) {
+        console.log('  仍需人工核对：根因范围、假设是否收敛、不可逆操作与跨模块影响。');
+      }
+    }
+    if (result.escalate) process.exitCode = 1;
+    return result;
+  }
 
   const slug = resolveSlug(root, argValue(argv, '--slug', null));
   if (slug === MISSING) {
     console.error(`[ERR] 未找到任务：${argValue(argv, '--slug', null)}（查找 docs/devflow/${argValue(argv, '--slug', null)}/）`);
     process.exitCode = 1;
     return null;
+  }
+
+  if (check) {
+    const triageFile = join(root, 'docs', 'devflow', slug, 'review-triage.json');
+    let triage = null;
+    if (existsSync(triageFile)) {
+      try { triage = JSON.parse(readText(triageFile)); } catch { triage = null; }
+    }
+    const result = { slug, ...checkReviewReport(root, slug, { triage }) };
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`审查门禁（slug：${slug}）`);
+      for (const error of result.errors) console.log(`[ERR] ${error}`);
+      for (const warning of result.warnings) console.log(`[WARN] ${warning}`);
+      if (result.ok) console.log('[OK] 审查报告已满足 triage 要求');
+    }
+    if (!result.ok) process.exitCode = 1;
+    return result;
   }
 
   const plan = buildPlanFor(root, slug, { base, focus, agents, noSubagents, focusOnly });

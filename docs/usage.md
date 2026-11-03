@@ -21,6 +21,13 @@
 - 小 bug 走 `debug`：正确行为已由代码、测试或需求定义时，直接修复并写 `debug.md`；测试通过后由审查 triage 按实际 diff 判定，安全、数据、认证/权限/并发等风险会触发 review，必要时也可在 `debug.md` 顶部写 `review: required` 显式要求。
 - 升级条件：新增依赖、公共接口/数据结构/迁移、安全边界、不可逆操作，或非测试改动 >200 行 / >10 文件 / >2 子项目。80–200 行或 5–10 个文件先询问一次。
 - 升级时保留 `brief.md` / `debug.md` 作为审计材料，在文件内写 `## 升级判断`，再补 `req.md` / `plan.md`。
+- 轻量流程有代码改动后运行 `devflow triage --escalate`（或 `node scripts/devflow-triage.mjs --escalate`）：复用审查阶段的同一套风险规则，按实际 diff 判断是否命中安全、数据、并发、依赖、公共契约与规模/子项目阈值。退出码 1 表示命中硬触发，应停止轻量；退出码 0 仍需人工核对根因范围、假设收敛与不可逆操作。非 git 环境标记为“判断不完整”，不要把空 diff 当作安全结论。
+
+### 测试阶段辅助
+
+- `devflow test --gaps`（或 `node scripts/devflow-test.mjs --gaps`）读取本次 diff，列出没有同名测试文件、也没有测试改动痕迹的源码文件。它只按文件名与常见测试目录（同目录、`__tests__`、`test/`、`tests/`）做存在性判断，不解析测试内容，因此**只提示、不阻断**。
+- 每条提示都要在 `test.md` 里落一个结论：已有测试覆盖（写明测试文件）、新增测试、或明确不测（写明原因）。非 git 目录会标记“提示不完整”，不要把空结果当成已覆盖。
+- 记录测试通过仍用 `devflow test --command "<命令>"`；`--gaps` 不会写入状态。
 
 ### 审查触发与画像
 
@@ -37,6 +44,8 @@ review 阶段先运行 `scripts/review-triage.mjs`，用任务产物与真实 di
 - 用户优先：`--focus security`（可重复或逗号分隔）只审指定方向；`--agents 0-4` 覆盖上限；`--no-subagents` 只审不派；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
 - 统计口径：规模只计源码行数与源码文件数，文档、测试与生成物不计入；内容规则跳过测试与规则定义文件，避免自我放大；未跟踪文件会读取有限内容补足风险信号。
 - `--base <ref>` 对比分支基线，默认比较工作区与暂存改动；`--write` 把计划写入 `docs/devflow/<slug>/review-triage.json`，写入前校验真实路径不越出项目，`devflow status` 会读取其中的触发结果。
+- 写完 `review.md` 后用 `--check` 自检：结论必须勾选、不能有未关闭阻断项、画像字段要与 `review-triage.json` 一致。`devflow status` 使用同一门禁，未通过时任务留在 review 并提示补全。
+- `--escalate` 复用同一套画像但不依赖任务产物，只读当前 git 改动，输出是否命中轻量流程的硬触发；由 req/debug 阶段调用，避免“文档里写着升级条件、实际执行时忘了判断”。
 
 代理分组：A 正确性 + 并发，B 安全 + 依赖，C 验收与回归 + 测试质量，D 数据与迁移，E 可维护性。子代理结论必须由本地代码与测试证据核实。
 
@@ -125,6 +134,12 @@ templates:
 | `templates.team.repo` / `base` | `repo` 仅用于提示与 doctor；`base` 是团队库 PR 的基础分支，缺省 `main` |
 
 没有 `templates` 块的旧项目只使用上游库，行为与升级前一致。个人库与团队库的本机路径可写进 `.devflow.json`（不入库）：`personalLibraryPath`、`teamLibraryPath`；`init` / `sync` 时用 `--personal-library` / `--team-library` 传入的路径会自动记录到这两个字段，下次无需重复传。命令行参数仍然优先。
+
+模板同步前会做**兼容性校验**，不通过的文件不会写入项目：
+
+- 正文引用的 `scripts/devflow-*.mjs` 必须在当前插件的 loader 列表中；缺失说明该模板来自更新版本，写进项目会断链。
+- 模板 frontmatter 可声明 `minPluginVersion`（如 `minPluginVersion: ">=1.7.0"`，无操作符按 `>=` 处理），当前插件版本不满足时跳过。
+- `sync` 把这类文件归为“不兼容，已跳过”，保留项目现有内容与账本；`doctor` 会扫描 `.claude/hub/stages/` 与 `_shared/` 报告同类问题。升级插件后重跑 `sync` 即可自动恢复。
 
 ## 阶段资源：references/ 与 templates/
 

@@ -348,8 +348,63 @@ export function profileChanges({
   };
 }
 
-function capReason(cap, capSource) {
-  if (cap === 0) {
+/** 轻量流程升级的硬触发方向：命中任一即需升级完整流程。 */
+export const ESCALATION_DIRECTIONS = {
+  security: '权限/认证/支付/安全边界',
+  data: '数据结构或迁移',
+  concurrency: '并发与状态',
+  deps: '依赖变更',
+  acceptance: '公共接口或契约',
+};
+
+const SOFT_LINE_LIMIT = 200;
+const SOFT_FILE_LIMIT = 10;
+const SOFT_SUBPROJECT_LIMIT = 2;
+
+/**
+ * 把风险画像复用到轻量流程的升级入口（debug / req --light）。
+ * 只覆盖 diff 可推导的硬触发；根因范围、假设收敛等人工判断仍需模型补充。
+ */
+export function evaluateEscalation(profile, {
+  statsAvailable = true, files = [], subprojects = {},
+} = {}) {
+  const reasons = [];
+  const signals = [];
+  for (const r of profile.ranked) {
+    const label = ESCALATION_DIRECTIONS[r.direction];
+    if (!label || r.score < 2) continue;
+    signals.push(r);
+    reasons.push(`${label}（${r.reasons.join('、')}）`);
+  }
+  if (profile.stats.codeChangedLines > SOFT_LINE_LIMIT) {
+    reasons.push(`非测试/文档改动 ${profile.stats.codeChangedLines} 行，超过 ${SOFT_LINE_LIMIT}`);
+  }
+  if (profile.stats.codeFiles > SOFT_FILE_LIMIT) {
+    reasons.push(`非测试/文档文件 ${profile.stats.codeFiles} 个，超过 ${SOFT_FILE_LIMIT}`);
+  }
+  const touched = new Set();
+  for (const file of files) {
+    const path = String(file.path || '').replace(/\\/g, '/');
+    for (const [name, sub] of Object.entries(subprojects || {})) {
+      const base = String(sub?.path || '').replace(/\\/g, '/').replace(/\/+$/, '');
+      if (base && (path === base || path.startsWith(`${base}/`))) touched.add(name);
+    }
+  }
+  if (touched.size > SOFT_SUBPROJECT_LIMIT) {
+    reasons.push(`改动涉及 ${touched.size} 个子项目（${[...touched].join('、')}），超过 ${SOFT_SUBPROJECT_LIMIT}`);
+  }
+  return {
+    escalate: reasons.length > 0,
+    confident: statsAvailable,
+    reasons,
+    signals: signals.map((r) => ({ direction: r.direction, score: r.score, reasons: r.reasons })),
+    stats: profile.stats,
+    subprojects: [...touched],
+    warnings: statsAvailable ? [] : ['无法统计 git 改动，升级判断不完整；不要据此跳过人工核对。'],
+  };
+}
+
+function capReason(cap, capSource) {  if (cap === 0) {
     if (capSource === 'none') return '用户要求不派子代理，主上下文按此方向自查';
     if (capSource === 'user') return '用户指定 0 个代理，主上下文按此方向自查';
     return '未分配子代理，主上下文基线检查覆盖';

@@ -8,6 +8,8 @@ import {
 } from './lib/common.mjs';
 import { mergeTexts } from './lib/upstream.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
+import { templateIssues } from './lib/template-compat.mjs';
+import { LOADERS } from './hub-init.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
 const HUB_PREFIX = '.claude/hub/';
@@ -24,6 +26,7 @@ function label(type) {
     overwrite: '覆盖（已备份）',
     conflict: '冲突',
     keep: '保留手改',
+    blocked: '不兼容，已跳过',
   })[type] || type;
 }
 
@@ -87,14 +90,22 @@ export async function main(argv = process.argv.slice(2)) {
   if (!files.length) throw new Error(`没有可用的阶段或共享模板：${posix(join(pluginRoot, 'templates'))}`);
 
   const actions = [];
+  const loaderFiles = new Set(Object.keys(LOADERS));
   for (const file of files) {
     const templateText = readText(file.src);
     const templateHash = contentHash(templateText);
     const dest = join(root, ...file.destRel.split('/'));
     const record = recordOf(sources, file.destRel);
+    const compat = templateIssues(templateText, { loaderFiles, pluginVersion: info.version });
+    const blocked = compat.length
+      ? {
+        ...file, dest, type: 'blocked', templateText, templateHash,
+        reason: compat.map((issue) => issue.message).join('；'),
+      }
+      : null;
 
     if (!existsSync(dest)) {
-      actions.push({ ...file, dest, type: 'add', templateText, templateHash });
+      actions.push(blocked || { ...file, dest, type: 'add', templateText, templateHash });
       continue;
     }
 
@@ -102,6 +113,11 @@ export async function main(argv = process.argv.slice(2)) {
     const currentHash = contentHash(destText);
     if (currentHash === templateHash) {
       actions.push({ ...file, dest, type: 'same', templateText, templateHash });
+      continue;
+    }
+
+    if (blocked) {
+      actions.push(blocked);
       continue;
     }
 
@@ -148,11 +164,11 @@ export async function main(argv = process.argv.slice(2)) {
     .map((rel) => rel.slice(HUB_PREFIX.length))
     .filter((hubRel) => !known.has(hubRel) && !isGeneratedArtifact(hubRel));
 
-  const counts = { add: 0, update: 0, merged: 0, overwrite: 0, conflict: 0, keep: 0, same: 0 };
+  const counts = { add: 0, update: 0, merged: 0, overwrite: 0, conflict: 0, keep: 0, same: 0, blocked: 0 };
   for (const a of actions) counts[a.type] += 1;
 
   for (const a of actions) {
-    if (!a.dest || a.type === 'same' || a.type === 'keep') continue;
+    if (!a.dest || a.type === 'same' || a.type === 'keep' || a.type === 'blocked') continue;
     if (!isRealPathInside(root, a.dest)) {
       throw new Error(`同步目标越界（可能被 junction/符号链接引到项目外）：${posix(a.dest)}`);
     }
@@ -162,12 +178,13 @@ export async function main(argv = process.argv.slice(2)) {
     for (const a of actions) {
       if (a.type === 'same') continue;
       const detail = a.reason ? `（${a.reason}）` : '';
-      log(a.type === 'conflict' ? 'warn' : '..', `${label(a.type)} [${a.source}] ${a.destRel}${detail}`);
+      log(a.type === 'conflict' || a.type === 'blocked' ? 'warn' : '..', `${label(a.type)} [${a.source}] ${a.destRel}${detail}`);
     }
     for (const hubRel of removed) log('..', `模板已移除，本地保留 ${HUB_PREFIX}${hubRel}`);
     console.log(`\n[dry-run] 新增 ${counts.add}，更新 ${counts.update}，自动合并 ${counts.merged}，`
-      + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
+      + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
     if (counts.conflict) console.log('冲突文件不会被改动；确认覆盖时加 --force，会先生成 .bak 备份。');
+    if (counts.blocked) console.log('不兼容文件不会写入；升级插件或改用兼容的模板来源后重试。');
     return { ...counts, dryRun: true };
   }
 
@@ -213,6 +230,16 @@ export async function main(argv = process.argv.slice(2)) {
       const baseHash = contentHash(readText(baseFile));
       manifest.files[a.destRel] = { base: baseHash, local: baseHash, source: a.source };
       persist();
+      continue;
+    }
+    if (a.type === 'blocked') {
+      // 不写入、不更新基线，保留原记录；升级插件或换来源后重跑即可重新判定。
+      const previous = sources?.files?.[a.destRel];
+      if (previous) {
+        manifest.files[a.destRel] = previous;
+        persist();
+      }
+      log('warn', `跳过不兼容模板 ${a.destRel}${a.reason ? `（${a.reason}）` : ''}`);
       continue;
     }
     if (a.type === 'conflict') {
@@ -264,6 +291,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (counts.merged) {
     console.log(`${counts.merged} 个文件已自动三方合并；请检查合并结果后提交。`);
   }
+  if (counts.blocked) {
+    console.log(`${counts.blocked} 个模板与当前插件不兼容，已跳过；升级插件或改用兼容来源后重试。`);
+  }
 
   for (const hubRel of removed) log('..', `模板已移除，本地保留 ${HUB_PREFIX}${hubRel}`);
 
@@ -286,7 +316,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   console.log(`\n完成：新增 ${counts.add}，更新 ${counts.update}，自动合并 ${counts.merged}，`
-    + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
+    + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
   if (counts.conflict) console.log('冲突文件保留本地版本；确认覆盖时加 --force。');
   return { ...counts, applied: true };
 }

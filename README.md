@@ -12,7 +12,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
 - **安全门禁**：系统级破坏命令直接拒绝，有丢数据风险的操作要求确认，未测试改动只提醒不阻止。
-- **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到**个人库**（跨项目复用）、**团队库**（团队共享，可开 PR）或**上游插件**；插件升级后用 `/devflow:sync` 非破坏性同步，多来源按团队 > 个人 > 上游合并，手改文件自动三方合并、冲突时保留并可备份。
+- **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到**个人库**（跨项目复用）、**团队库**（团队共享，可开 PR）或**上游插件**；插件升级后用 `/devflow:sync` 非破坏性同步，多来源按团队 > 个人 > 上游合并，手改文件自动三方合并、冲突时保留并可备份；模板引用当前插件没有的 loader 或要求更高版本时会被识别为不兼容并跳过，不会把项目写坏。
 
 ## 前置要求
 
@@ -130,6 +130,9 @@ devflow upstream --stage review --to upstream --pr --dry-run
 devflow ship --stage review --dry-run
 devflow triage --slug add-login --write
 devflow triage --slug fix-auth --focus security --agents 2
+devflow triage --slug add-login --check
+devflow triage --escalate
+devflow test --gaps
 devflow upstream --revert <id>
 ```
 
