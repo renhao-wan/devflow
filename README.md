@@ -51,7 +51,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`）。
 2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令。
-3. 在 `scripts/` 放六个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
+3. 在 `scripts/` 放八个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage` / `devflow-check` / `devflow-trace`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
 4. 生成 `.claude/skills/devflow-*` 投影。
 5. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
@@ -135,6 +135,9 @@ devflow triage --slug add-login --since v1.2.0
 devflow triage --escalate
 devflow check --stage req --slug add-login
 devflow check --stage debug --json
+devflow trace --slug add-login
+devflow trace --slug add-login --check
+devflow trace --slug add-login --json
 devflow test --gaps
 devflow test --changed
 devflow test --command "npm test" --exit-code 0 --duration-ms 1200
@@ -143,15 +146,17 @@ devflow upstream --revert <id>
 
 等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
 
+验收标准用验收 ID（`AC-1`、`AC-2`…）串联需求、计划、测试与审查：`plan.md` / `brief.md` 的任务拆分表填写「验收项」列，`test.md` 的「验收覆盖」表按 ID 记录证据，`review.md` 的「验收对照」按 ID 给结论。`devflow trace --slug <slug>` 默认只读输出矩阵与缺口；加 `--check` 时存在未覆盖、未映射或阻断的验收项才退出 1。旧产物没有 AC ID 时按出现顺序推导并给出 warning，不打断已有项目。
+
 ## 六个阶段
 
 | 阶段 | 职责 | 关键门禁 |
 | --- | --- | --- |
-| req | 把模糊诉求变成可验证需求 | 验收标准可观察；写明本次不做；影响面具体 |
-| plan | 调研已有实现，给出方案、任务拆分、测试策略与回滚 | 引用真实文件；任务可独立验证；复用结论有来源；有回滚 |
-| implement | 按计划或 `brief.md` 小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步 |
-| test | 真实运行测试并记录证据 | 全量已跑；改动有直接覆盖；未运行不得写通过 |
-| review | triage 判定触发与方向，再按风险审查差异 | 无未处理阻断项；敏感信息扫描通过 |
+| req | 把模糊诉求变成可验证需求 | 验收标准带唯一 AC ID 且可观察；写明本次不做；影响面具体 |
+| plan | 调研已有实现，给出方案、任务拆分、测试策略与回滚 | 引用真实文件；任务可独立验证；验收项列覆盖全部 AC；复用结论有来源；有回滚 |
+| implement | 按计划或 `brief.md` 小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步；交付前核对验收缺口 |
+| test | 真实运行测试并记录证据 | 全量已跑；改动有直接覆盖；验收覆盖按 AC 填证据；未运行不得写通过 |
+| review | triage 判定触发与方向，再按风险审查差异 | 无未处理阻断项；验收对照逐条按 AC；敏感信息扫描通过 |
 | debug | 复现、定位根因、补回归测试 | 有复现；根因有证据；回归测试修复前失败 |
 
 每个阶段的完整规则在 `.claude/hub/stages/<stage>/SKILL.md`，执行前必须完整读取。阶段细节、轻量流程与方案调研要求见 [usage.md](docs/usage.md)。

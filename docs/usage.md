@@ -35,6 +35,15 @@
 - `devflow status` 会把 `plan.md` 的「任务拆分」或 `brief.md` 的「改动范围与测试计划」里声明的文件与实际 git 改动对照，提示“计划外改动”和“计划未改动”。它只提示、不改变阶段判定；无法读取 git 或计划未列文件时明确标注跳过，不误报。
 - `devflow check --stage req` 校验 `req.md`（完整流程）或 `brief.md`（轻量功能）的结构：目标、≥2 条验收、本次不做、技术约束/影响面，以及轻量模式必填的测试计划、回滚与升级判断。`devflow check --stage debug` 校验 `debug.md` 的结论单选、根因、复现步骤、回归证据与升级判断。退出码 1 表示结构未写全；它不判断需求质量或根因是否正确。
 
+### 验收追踪（AC ID）
+
+- 验收来源：完整任务 `req.md`、轻量功能 `brief.md`、小 bug `debug.md` 的「正确行为依据」。每条验收项带唯一 ID（`AC-1`、`AC-2`…），允许 `AC-1 内容` 或 `AC-1：内容`。
+- 下游引用：`plan.md` 的「任务拆分」与 `brief.md` 的「改动范围与测试计划」填写「验收项」列；`test.md` 的「验收覆盖」按 ID 写测试/证据与结论；`review.md` 的「验收对照」按 ID 给状态。
+- `devflow trace --slug <slug>` 默认只读，输出每项的 plan / test / review 证据、状态（covered / accepted / planned / uncovered / blocked）与汇总缺口；`--json` 输出完整模型。
+- `devflow trace --slug <slug> --check`：存在缺口（未覆盖、未映射或阻断）时退出 1。review 明确写「未覆盖（已接受）」计为 `accepted`，不算缺口。
+- 向后兼容：旧产物没有 AC ID 时按出现顺序推导 `AC-1..n`；旧表头缺「验收项」列时按行序回退。两种情况都只给 warning，不阻断已有项目。
+- `devflow status` 会在有缺口时显示验收跟踪行并建议运行 `--check`；review 门禁只把缺口作为 warning，硬失败交给显式 `--check`。
+
 ### 审查触发与画像
 
 review 阶段先运行 `scripts/review-triage.mjs`，用任务产物与真实 diff 做确定性判定，再决定派几个子代理、审哪些方向：
