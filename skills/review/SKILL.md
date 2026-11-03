@@ -1,7 +1,7 @@
 ---
 name: review
 description: 审查阶段：以缺陷为导向检查 diff，输出阻断项与建议项
-argument-hint: [slug] [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only] [--base <ref>] [--force-devflow]
+argument-hint: [slug] [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only] [--base <ref>] [--since <ref>] [--force-devflow]
 allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(node:*), Bash(devflow:*)
 ---
 
@@ -21,6 +21,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
    - 用户指定方向：`--focus security`（可重复或逗号分隔）；指定后只审这些方向，其余方向会让位并留痕。
    - 用户指定数量：`--agents 0-4`；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
    - 分支对比：`--base <ref>`；默认只对比工作区与暂存改动。
+   - 增量复审：`--since <ref>` 只看该提交之后的改动（含工作区），结果标记 `scope.mode=incremental`；锚点必须是 HEAD 的祖先，rebase 后不可达时报错，改用 `--base` 或全量。增量模式必须在 `review.md` 补「增量复审」小节，逐项交代旧阻断项去向。
    - 非 git、无 HEAD 或 diff 读取失败时不判跳过，而是按 `auto` 触发并给出基线方向。
    - 结果写入 `docs/devflow/<slug>/review-triage.json`；`trigger=skipped` 时仍要做基线检查并写明跳过依据。
 4. 查看全量 diff（`git status`、`git diff`、必要时 `git diff --staged`），确认改动范围。

@@ -1,69 +1,13 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
+import {
+  bulletValue, isOptionPlaceholder, meaningful, section, tableDataRows,
+} from './markdown.mjs';
 import { DIRECTION_LABELS } from './review.mjs';
 
 const TRIGGER_OPTIONS = ['mandatory', 'required', 'auto', 'user', 'skipped'];
 const LEVEL_OPTIONS = ['low', 'medium', 'high', 'special'];
-
-function section(text, title) {
-  const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
-    return m && m[1] === title;
-  });
-  if (start < 0) return null;
-  const body = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^##\s+/.test(lines[i])) break;
-    body.push(lines[i]);
-  }
-  return body.join('\n');
-}
-
-/** 读取 `- 字段：值` 形式的行；值可换成下一行起的缩进子条目。 */
-function bulletValue(body, label) {
-  const lines = body.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const stripped = lines[i].replace(/^\s*[-*]\s+/, '').trim();
-    if (!stripped.startsWith(label)) continue;
-    // 标签后可能跟括号说明或补充文字，统一取到第一个冒号为止。
-    const rest = stripped.slice(label.length);
-    const colon = rest.search(/[：:]/);
-    if (colon < 0) continue;
-    let value = rest.slice(colon + 1).trim();
-    const parts = [];
-    if (!value) {
-      for (let j = i + 1; j < lines.length; j += 1) {
-        if (!lines[j].trim()) break;
-        if (!/^\s+/.test(lines[j])) break;
-        parts.push(lines[j].replace(/^\s*[-*]\s+/, '').trim());
-      }
-      value = parts.filter(Boolean).join('；');
-    }
-    return { found: true, value };
-  }
-  return { found: false, value: '' };
-}
-
-/** 模板原样保留的选项行（例如 `low / medium / high / special`）视为未填写。 */
-function isOptionPlaceholder(value, options) {
-  const hits = options.filter((option) => new RegExp(`\\b${option}\\b`, 'i').test(value)).length;
-  return hits >= Math.min(3, options.length);
-}
-
-function tableDataRows(body) {
-  const rows = body.split(/\r?\n/).filter((line) => /^\s*\|/.test(line));
-  if (rows.length <= 1) return 0;
-  let count = 0;
-  // 第一行是表头；其余行只要存在非空单元格就算数据行。
-  for (const row of rows.slice(1)) {
-    const cells = row.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((cell) => cell.trim());
-    if (cells.every((cell) => !cell || /^:?-{2,}:?$/.test(cell))) continue;
-    count += 1;
-  }
-  return count;
-}
 
 function directionOf(item) {
   return typeof item === 'string' ? item : item?.direction;
@@ -189,6 +133,25 @@ export function checkReviewReport(root, slug, { triage = null } = {}) {
       if ((triage.excluded || []).length) {
         const excluded = bulletValue(body, '排除方向');
         if (!excluded.value) errors.push('画像缺少「排除方向与理由」');
+      }
+    }
+  }
+
+  if (triage?.scope?.mode === 'incremental') {
+    // 增量复审只缩小 diff 范围，不降低验收与阻断义务；旧问题必须逐项交代去向。
+    const body = section(text, '增量复审');
+    const disposition = body === null ? { found: false, value: '' } : bulletValue(body, '旧阻断项处置');
+    // isOptionPlaceholder 依赖 \b，对中文选项无效，这里直接数命中的选项。
+    const optionHits = ['沿用', '已修复', '失效']
+      .filter((option) => disposition.value.includes(option)).length;
+    if (body === null || !meaningful(body)) {
+      errors.push('增量复审缺少「## 增量复审」小节，需写明本次改动范围与旧阻断项处置');
+    } else if (!disposition.found || !meaningful(disposition.value) || optionHits >= 3) {
+      errors.push('「增量复审」缺少「旧阻断项处置」（逐项写明沿用 / 已修复 / 失效）');
+    } else {
+      checks.incremental = { since: triage.scope.since ?? null };
+      if (!/沿用|已修复|失效|关闭/.test(disposition.value)) {
+        warnings.push('「旧阻断项处置」未使用 沿用 / 已修复 / 失效 表述');
       }
     }
   }
