@@ -241,3 +241,52 @@ test('triage --check 用退出码表示门禁结果', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('验收缺口与缺列只给 warning，不阻断门禁', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-gate-trace-'));
+  try {
+    const dir = makeTask(root, 'trace-task');
+    writeFileSync(join(dir, 'req.md'), [
+      '# 登录',
+      '',
+      '## 验收标准',
+      '',
+      '- [ ] AC-1 登录成功进入首页',
+      '- [ ] AC-2 密码错误时提示',
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'review.md'), report());
+    const result = checkReviewReport(root, 'trace-task', { triage: triage() });
+    assert.equal(result.ok, true, result.errors.join('；'));
+    assert.ok(result.warnings.some((w) => w.includes('缺少「验收项」或「状态」列')));
+    assert.ok(result.warnings.some((w) => w.includes('验收跟踪存在 1 项缺口（AC-2）')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('验收对照状态不可识别时提示', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-gate-trace-status-'));
+  try {
+    const dir = makeTask(root, 'trace-status');
+    writeFileSync(join(dir, 'req.md'), [
+      '# 登录',
+      '',
+      '## 验收标准',
+      '',
+      '- [ ] AC-1 登录成功进入首页',
+      '- [ ] AC-2 密码错误时提示',
+      '',
+    ].join('\n'));
+    const text = report().replace(
+      '| 验收标准 | 实现/测试 | 状态 |\n| --- | --- | --- |\n| 登录可用 | 测试覆盖 | 已覆盖 |',
+      '| 验收项 | 验收标准 | 实现/测试 | 状态 |\n| --- | --- | --- | --- |\n| AC-1 | 登录可用 | 测试覆盖 | 待定 |\n| AC-2 | 错误提示 | 测试覆盖 | 已覆盖 |',
+    );
+    writeFileSync(join(dir, 'review.md'), text);
+    const result = checkReviewReport(root, 'trace-status', { triage: triage() });
+    assert.equal(result.ok, true, result.errors.join('；'));
+    assert.ok(result.warnings.some((w) => w.includes('无法识别的验收状态')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

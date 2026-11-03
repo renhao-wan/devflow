@@ -639,3 +639,54 @@ test('status 提示 triage 快照早于 debug.md 时可能过期', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('status 展示验收缺口并追加 trace 建议', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-trace-'));
+  try {
+    const dir = makeTask(root, 'add-login');
+    writeFileSync(join(dir, 'req.md'), [
+      '# 登录',
+      '',
+      '## 验收标准',
+      '',
+      '- [ ] AC-1 登录成功进入首页',
+      '- [ ] AC-2 密码错误时提示',
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'plan.md'), '# plan\n');
+    writeFileSync(join(dir, 'test.md'), [
+      '# 测试报告',
+      '',
+      '## 验收覆盖',
+      '',
+      '| 验收项 | 测试/证据 | 结论 |',
+      '| --- | --- | --- |',
+      '| AC-1 | login.test.mjs | 通过 |',
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK);
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.json.slugs[0].trace, {
+      source: 'req', total: 2, covered: 1, gaps: 1, gapIds: ['AC-2'], accepted: 0, blocked: 0, skipped: false,
+    });
+    assert.ok(r.json.suggestions.some((s) => s.includes('验收跟踪') && s.includes('--check')));
+    assert.match(run(['--root', root]).stdout, /验收跟踪：1\/2 已覆盖，缺口 AC-2/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 在验收来源不可解析时不输出 trace 字段', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-trace-skip-'));
+  try {
+    const dir = makeTask(root, 'empty-req');
+    writeFileSync(join(dir, 'req.md'), '# 需求\n');
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.slugs[0].trace, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

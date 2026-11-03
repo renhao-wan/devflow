@@ -7,6 +7,7 @@ import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/c
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
+import { summarizeTrace, traceFor } from './lib/trace.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
@@ -173,11 +174,13 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
     const planDrift = changes ? planDriftFor(root, item.slug, { changes }) : null;
+    const trace = summarizeTrace(traceFor(root, item.slug));
     return {
       slug: item.slug,
       stage,
       flow,
       reviewRequired,
+      trace: trace.skipped ? null : trace,
       reviewTriage: triage
         ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
         : null,
@@ -211,6 +214,12 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     }
     if (row.planDrift.plannedButUnchanged.length) {
       suggestions.push(`${row.slug}：计划中的 ${row.planDrift.plannedButUnchanged.length} 个文件尚未改动；若已放弃请更新计划`);
+    }
+  }
+  for (const row of rows) {
+    if (row.trace && row.trace.gaps > 0) {
+      const ids = row.trace.gapIds.slice(0, 3).join('、');
+      suggestions.push(`${row.slug}：验收跟踪 ${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${row.trace.gapIds.length > 3 ? ' 等' : ''}；补齐证据或运行 devflow trace --slug ${row.slug} --check`);
     }
   }
   for (const row of rows) {
@@ -301,6 +310,9 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  ${row.slug}`);
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
+      if (row.trace && row.trace.gaps > 0) {
+        console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${row.trace.gapIds.join('、')}`);
+      }
       console.log(`    下一步：${row.next}`);
       if (row.planDrift && !row.planDrift.skipped) {
         const unplanned = row.planDrift.unplannedChanged;
