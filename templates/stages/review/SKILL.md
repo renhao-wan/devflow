@@ -19,6 +19,7 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
    - 用户指定方向时优先：`--focus security`（可重复或用逗号分隔）。只审这些方向，其余明确记为让位。
    - 用户指定数量：`--agents 0-4` 覆盖自动上限；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
    - `--base <ref>` 对比分支基线；默认只对比工作区与暂存改动。
+   - `--since <ref>` 增量复审：只看该提交之后的改动（含工作区），结果写入 `review-triage.json` 的 `scope.mode=incremental`。锚点必须是 HEAD 的祖先；rebase 或 force-push 后引用不可达时报错，应改用 `--base` 或全量审查。增量复审不降低验收与阻断义务，`review.md` 必须补「增量复审」小节交代旧阻断项去向。
    - 非 git、无 HEAD 或 diff 读取失败时不据空改动判跳过，而是按 `auto` 触发并给出基线方向。
    - `trigger=skipped` 时仍要写明基线检查结论与跳过理由，不能只写“无需审查”。
 3. **按风险排序**：先查 triage 选中的方向，再查正确性与数据安全，最后查边界与错误处理、风格。
@@ -67,6 +68,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 
 - [ ] 已运行 triage，`trigger`、风险等级与跳过理由已写入 `review.md` 的「审查触发与画像」。
 - [ ] 已运行 `review-triage.mjs --check`，审查报告通过门禁（结论已勾选、无未关闭阻断项、画像与 triage 一致）。
+- [ ] `review-triage.json` 为 `scope.mode=incremental` 时，`review.md` 已写「增量复审」小节，逐项说明旧阻断项是沿用、已修复还是失效。
 - [ ] diff 中没有与本任务无关的改动。
 - [ ] 验收来源（`req.md` + `plan.md`、`brief.md` 或 `debug.md`）的每条标准都有实现或测试支撑，未覆盖项已明确接受。
 - [ ] 完整任务的复用判断有可核对来源；轻量功能涉及依赖、公共接口/契约、数据结构/迁移、权限/认证/支付/并发/安全边界或不可逆操作时已升级完整流程；轻量修复涉及公共接口/契约、数据结构/迁移、依赖或不可逆操作时已升级，安全/数据/认证/并发风险已通过 `review: required` 补审。
@@ -87,6 +89,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 # 审查记录
 
 ## 范围与模式
+## 增量复审
 ## 审查触发与画像
 ## 验收对照
 ## 复用与依赖检查
@@ -100,7 +103,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 
 轻量功能与轻量修复可以写短：范围、触发与画像、验收对照、阻断项、结论即可；其余小节写“不适用”。`trigger=skipped` 时也要写清基线检查结论与跳过依据。未启用子代理时，该小节写“未启用（maxAgents=0 或用户要求）”。
 
-写完后运行门禁自检：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --check`）。退出码非 0 表示结论未勾选、仍有未关闭阻断项，或画像字段与 `review-triage.json` 不一致；按输出补全后重跑。`devflow status` 也用同一门禁判断任务能否离开 review。
+写完后运行门禁自检：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --check`）。退出码非 0 表示结论未勾选、仍有未关闭阻断项，或画像字段与 `review-triage.json` 不一致（增量复审还需补齐「增量复审」小节）；按输出补全后重跑。`devflow status` 也用同一门禁判断任务能否离开 review。
 
 ## 边界
 

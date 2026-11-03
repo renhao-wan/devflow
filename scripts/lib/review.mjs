@@ -449,9 +449,14 @@ export function detectFlow(root, slug) {
   return 'unknown';
 }
 
-/** 从 git 收集工作区或分支差异；base 为空时比较 HEAD（工作区 + 暂存）。 */
-export function collectChanges(root, { base = null } = {}) {
-  const range = base ? `${base}...HEAD` : 'HEAD';
+/**
+ * 从 git 收集工作区或分支差异。
+ * base 用三点比较（合并基线后的分支改动）；since 用两点（该提交之后的所有改动，含工作区）；
+ * 都不传时比较 HEAD（工作区 + 暂存）。
+ */
+export function collectChanges(root, { base = null, since = null } = {}) {
+  if (base && since) throw new Error('base 与 since 不能同时使用');
+  const range = since || (base ? `${base}...HEAD` : 'HEAD');
   const numstat = spawnSync(
     'git',
     ['diff', '--numstat', '--find-renames', '--no-ext-diff', '--no-textconv', range],
@@ -633,6 +638,9 @@ export function renderPlan(plan) {
   }[plan.trigger] || plan.trigger;
   lines.push(`流程：${flowLabel}`);
   lines.push(`触发：${triggerLabel}`);
+  if (plan.scope?.mode === 'incremental') {
+    lines.push(`范围：增量复审（自 ${plan.scope.since} 起）`);
+  }
   const capLabel = {
     default: '按风险等级',
     none: '用户禁用',

@@ -52,6 +52,42 @@ function testCandidates(file) {
   return out;
 }
 
+/** 对每个源码改动文件列出可能受影响的已存在测试；只提示，不执行测试。 */
+export function findChangedTests(root, { base = null } = {}) {
+  const changes = collectChanges(root, { base });
+  const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
+  const changedTestFiles = paths.filter((path) => TEST_FILE.test(path));
+  const changedStems = new Set(changedTestFiles.map(subjectStem));
+  const tests = new Set(changedTestFiles);
+  const sources = paths.filter(isSourceFile);
+
+  const unmapped = [];
+  for (const file of sources) {
+    const found = new Set();
+    if (changedStems.has(subjectStem(file))) {
+      for (const test of changedTestFiles) {
+        if (subjectStem(test) === subjectStem(file)) found.add(test);
+      }
+    }
+    for (const candidate of testCandidates(file)) {
+      if (existsSync(join(root, candidate))) found.add(candidate.replace(/\\/g, '/'));
+    }
+    for (const test of found) tests.add(test);
+    if (!found.size) unmapped.push(file);
+  }
+  return {
+    tests: [...tests].sort(),
+    unmapped,
+    stats: {
+      changedFiles: paths.length,
+      sourceFiles: sources.length,
+      changedTestFiles: changedTestFiles.length,
+    },
+    warnings: changes.warnings,
+    statsAvailable: changes.statsAvailable,
+  };
+}
+
 export function findTestGaps(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
   const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
@@ -85,12 +121,21 @@ export function findTestGaps(root, { base = null } = {}) {
   };
 }
 
+function parseCount(raw, name) {
+  if (raw === null) return null;
+  if (!/^\d+$/.test(String(raw))) throw new Error(`${name} 需要非负整数，收到：${raw}`);
+  return Number(raw);
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const root = argValue(argv, '--root', projectRoot());
   const base = argValue(argv, '--base', null);
+  const gaps = hasFlag(argv, '--gaps');
+  const changed = hasFlag(argv, '--changed');
+  const json = hasFlag(argv, '--json');
+  if (gaps && changed) throw new Error('--gaps 与 --changed 不能同时使用');
 
-  if (hasFlag(argv, '--gaps')) {
-    const json = hasFlag(argv, '--json');
+  if (gaps) {
     const report = findTestGaps(root, { base });
     if (json) {
       console.log(JSON.stringify(report, null, 2));
@@ -112,16 +157,73 @@ export async function main(argv = process.argv.slice(2)) {
     return report;
   }
 
+  if (changed) {
+    const report = findChangedTests(root, { base });
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+      return report;
+    }
+    if (!report.statsAvailable) {
+      console.log('[WARN] 无法统计 git 改动，受影响测试提示不完整；请人工核对。');
+    }
+    if (!report.stats.changedFiles) {
+      console.log('[OK]   没有可统计的改动。');
+    }
+    if (report.tests.length) {
+      console.log(`[CHANGED] ${report.tests.length} 个测试文件可能受影响（只提示，不阻断）：`);
+      for (const test of report.tests) console.log(`  - ${test}`);
+    }
+    if (report.unmapped.length) {
+      console.log(`[UNMAPPED] ${report.unmapped.length} 个源码文件未映射到已存在测试，建议跑全量或补充测试：`);
+      for (const file of report.unmapped) console.log(`  - ${file}`);
+    }
+    if (!report.statsAvailable || (!report.tests.length && !report.unmapped.length)) {
+      console.log('  无法确定受影响范围时，优先运行全量测试。');
+    }
+    for (const warning of report.warnings) console.log(`  注意：${warning}`);
+    return report;
+  }
+
   const command = argValue(argv, '--command', null);
+  const exitCode = parseCount(argValue(argv, '--exit-code', null), '--exit-code') ?? 0;
+  const durationMs = parseCount(argValue(argv, '--duration-ms', null), '--duration-ms');
+  const passed = exitCode === 0;
+  const at = new Date().toISOString();
   const file = join(root, '.claude', '.devflow-state.json');
   const state = updateJson(file, (current) => {
     const next = current && typeof current === 'object' ? current : {};
-    next.lastTestPassedAt = new Date().toISOString();
-    next.testsPending = false;
+    next.lastTestAt = at;
+    next.lastTestExitCode = exitCode;
+    next.lastTestStatus = passed ? 'passed' : 'failed';
+    if (durationMs !== null) next.lastTestDurationMs = durationMs;
     if (command) next.lastTestCommand = command;
+    if (passed) {
+      next.lastTestPassedAt = at;
+      next.testsPending = false;
+    } else {
+      // 失败运行不能清除“待验证”，否则 hooks 会误以为改动已验证。
+      next.testsPending = true;
+    }
     return next;
   });
-  console.log(`[OK]   已记录测试通过：${state.lastTestPassedAt}${command ? `（${command}）` : ''}`);
+
+  if (json) {
+    console.log(JSON.stringify({
+      recorded: true,
+      status: state.lastTestStatus,
+      exitCode: state.lastTestExitCode,
+      durationMs: state.lastTestDurationMs ?? null,
+      command: state.lastTestCommand ?? null,
+      at: state.lastTestAt,
+    }, null, 2));
+    return state;
+  }
+  if (passed) {
+    console.log(`[OK]   已记录测试通过：${state.lastTestPassedAt}${command ? `（${command}）` : ''}`);
+  } else {
+    console.log(`[FAIL] 已记录测试失败（exit ${exitCode}）；testsPending 保持为 true${command ? `（${command}）` : ''}`);
+  }
+  return state;
 }
 
 if (isMain(import.meta.url)) {

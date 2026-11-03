@@ -14,8 +14,9 @@ const COMMANDS = {
   sync: ['hub-sync.mjs', '按团队/个人/上游优先级同步阶段与共享模板到项目（三方合并，--dry-run 预览）'],
   upstream: ['hub-upstream.mjs', '预览或回灌阶段/共享规则到个人库、团队库或上游插件（默认预览）'],
   ship: ['hub-ship.mjs', '回灌、提交并创建或更新 PR'],
-  test: ['mark-test.mjs', '记录一次测试通过（--gaps 查看测试缺口提示）'],
-  triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限'],
+  test: ['mark-test.mjs', '记录一次测试结果（--gaps 查看测试缺口，--changed 查看受影响测试）'],
+  triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限（--since 增量复审）'],
+  check: ['stage-check.mjs', '校验 req / debug 产物结构是否完整'],
 };
 
 const HELP = `devflow CLI
@@ -42,8 +43,13 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow triage --slug add-login --write
   devflow triage --slug fix-auth --focus security --agents 2
   devflow triage --slug add-login --check
+  devflow triage --slug add-login --since v1.2.0
   devflow triage --escalate
+  devflow check --stage req --slug add-login
+  devflow check --stage debug --json
   devflow test --gaps
+  devflow test --changed
+  devflow test --command "npm test" --exit-code 0 --duration-ms 1200
 
 所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
 

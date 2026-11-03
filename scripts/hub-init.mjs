@@ -82,6 +82,7 @@ export const LOADERS = {
   'devflow-upstream.mjs': 'hub-upstream',
   'devflow-test.mjs': 'mark-test',
   'devflow-triage.mjs': 'review-triage',
+  'devflow-check.mjs': 'stage-check',
 };
 
 export function loaderSource(name) {
@@ -163,6 +164,7 @@ scripts/devflow-route.mjs
 scripts/devflow-upstream.mjs
 scripts/devflow-test.mjs
 scripts/devflow-triage.mjs
+scripts/devflow-check.mjs
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
 .claude/.hub-sources.json

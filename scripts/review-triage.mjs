@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // 审查触发与风险画像：读取任务产物与 git 改动，判定是否必须审查、
 // 优先审哪些方向、最多派几个子代理；只读，--write 时把计划落盘。
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   argValue, hasFlag, isMain, isPathInside, isRealPathInside, loadHub, projectRoot, readText, writeAtomic,
 } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
+import { MISSING, resolveSlug } from './lib/slug.mjs';
 import {
   DIRECTIONS,
   DIRECTION_LABELS,
@@ -19,8 +21,6 @@ import {
   readReviewMarker,
   renderPlan,
 } from './lib/review.mjs';
-
-const MISSING = Symbol('missing');
 
 function collectFocus(argv) {
   const out = [];
@@ -50,36 +50,6 @@ function parseAgents(raw) {
   return value;
 }
 
-function validSlug(slug) {
-  return Boolean(slug) && !slug.includes('..') && !/[\\/]/.test(slug);
-}
-
-function listCandidates(root) {
-  const docs = join(root, 'docs', 'devflow');
-  if (!existsSync(docs)) return [];
-  return readdirSync(docs, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-    .map((entry) => entry.name)
-    .filter((name) => ['req.md', 'plan.md', 'brief.md', 'debug.md']
-      .some((file) => existsSync(join(docs, name, file))));
-}
-
-function resolveSlug(root, wanted) {
-  if (wanted) {
-    if (!validSlug(wanted)) throw new Error(`非法的 slug：${wanted}`);
-    if (!existsSync(join(root, 'docs', 'devflow', wanted))) {
-      return MISSING;
-    }
-    return wanted;
-  }
-  const candidates = listCandidates(root);
-  if (candidates.length === 1) return candidates[0];
-  if (!candidates.length) {
-    throw new Error('未发现任务；先运行 /devflow:req、/devflow:debug 或指定 --slug');
-  }
-  throw new Error(`存在多个任务，请指定 --slug：${candidates.join('、')}`);
-}
-
 function checkBase(root, base) {
   const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], {
     cwd: root,
@@ -88,27 +58,66 @@ function checkBase(root, base) {
   if (r.status !== 0) throw new Error(`无法解析 --base：${base}`);
 }
 
-function collectGit(root, base) {
+/**
+ * 增量复审锚点必须是 HEAD 的祖先；rebase / force-push 后旧引用可能落空，
+ * 这时 diff 会包含已审查内容或直接失败，宁可直接报错也不静默降级。
+ */
+function checkSince(root, since) {
+  const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${since}^{commit}`], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (r.status !== 0) throw new Error(`无法解析 --since：${since}`);
+  const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', since, 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (ancestor.status !== 0) {
+    throw new Error(`--since ${since} 不是 HEAD 的祖先（可能已 rebase 或 force-push）；请改用 --base 或全量审查`);
+  }
+  return r.stdout.trim();
+}
+
+function gitHead(root) {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+function diffHashOf(changes) {
+  const paths = changes.files.map((file) => file.path).sort().join('\n');
+  return createHash('sha256').update(`${paths}\n${changes.diffText}`).digest('hex').slice(0, 12);
+}
+
+function collectGit(root, base, since = null) {
   const probes = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: root,
     encoding: 'utf8',
   });
   if (probes.status !== 0 || probes.stdout.trim() !== 'true') {
+    if (since) throw new Error('--since 需要 git 仓库；当前目录不是 git 仓库，请改用全量审查');
     return {
       changes: {
         files: [], diffText: '', warnings: [], statsAvailable: false,
       },
       warnings: ['当前目录不是 git 仓库，无法统计实际改动；不会据空 diff 自动跳过审查。'],
       statsAvailable: false,
+      head: null,
     };
   }
   if (base) checkBase(root, base);
-  const changes = collectChanges(root, { base });
-  return { changes, warnings: changes.warnings, statsAvailable: changes.statsAvailable };
+  if (since) checkSince(root, since);
+  const changes = collectChanges(root, { base, since });
+  return {
+    changes,
+    warnings: changes.warnings,
+    statsAvailable: changes.statsAvailable,
+    head: gitHead(root),
+  };
 }
 
 export function buildPlanFor(root, slug, {
   base = null,
+  since = null,
   focus = [],
   agents = null,
   noSubagents = false,
@@ -116,7 +125,9 @@ export function buildPlanFor(root, slug, {
 } = {}) {
   const flow = detectFlow(root, slug);
   const reviewRequired = flow === 'light-bug' && readReviewMarker(root, slug) === 'required';
-  const { changes, warnings, statsAvailable } = collectGit(root, base);
+  const {
+    changes, warnings, statsAvailable, head,
+  } = collectGit(root, base, since);
   const plan = buildReviewPlan({
     flow,
     reviewRequired,
@@ -128,7 +139,14 @@ export function buildPlanFor(root, slug, {
     focusOnly,
     statsAvailable,
   });
-  return { ...plan, warnings };
+  const scope = {
+    mode: since ? 'incremental' : 'full',
+    since: since || null,
+    base: base || null,
+    head,
+    diffHash: diffHashOf(changes),
+  };
+  return { ...plan, scope, warnings };
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -140,14 +158,16 @@ export async function main(argv = process.argv.slice(2)) {
   const noSubagents = hasFlag(argv, '--no-subagents');
   const focusOnly = hasFlag(argv, '--focus-only');
   const base = argValue(argv, '--base', null);
+  const since = argValue(argv, '--since', null);
+  if (base && since) throw new Error('--base 与 --since 不能同时使用');
   const focus = collectFocus(argv);
   if (focusOnly && focus.length) throw new Error('--focus-only 不能与 --focus 同时使用');
   const agents = parseAgents(argValue(argv, '--agents', null));
-  if (check && (write || focus.length || agents !== null || noSubagents || focusOnly || base)) {
-    throw new Error('--check 只校验 review.md，不能与 --write/--focus/--agents/--no-subagents/--focus-only/--base 同时使用');
+  if (check && (write || focus.length || agents !== null || noSubagents || focusOnly || base || since)) {
+    throw new Error('--check 只校验 review.md，不能与 --write/--focus/--agents/--no-subagents/--focus-only/--base/--since 同时使用');
   }
-  if (escalate && (write || check || focus.length || agents !== null || noSubagents || focusOnly)) {
-    throw new Error('--escalate 只读取 git 改动判断是否升级，不能与 --write/--check/--focus/--agents/--no-subagents/--focus-only 同时使用');
+  if (escalate && (write || check || focus.length || agents !== null || noSubagents || focusOnly || since)) {
+    throw new Error('--escalate 只读取 git 改动判断是否升级，不能与 --write/--check/--focus/--agents/--no-subagents/--focus-only/--since 同时使用');
   }
 
   if (escalate) {
@@ -197,7 +217,7 @@ export async function main(argv = process.argv.slice(2)) {
     return result;
   }
 
-  const plan = buildPlanFor(root, slug, { base, focus, agents, noSubagents, focusOnly });
+  const plan = buildPlanFor(root, slug, { base, since, focus, agents, noSubagents, focusOnly });
   plan.slug = slug;
 
   if (write) {

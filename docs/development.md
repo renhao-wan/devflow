@@ -12,15 +12,16 @@
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
 | `scripts/hub-doctor.mjs` | 体检配置、版本、投影、资源、hooks、测试命令依赖与工具检测 | `--root` `--json` |
 | `scripts/hub-status.mjs` | 只读扫描任务产物，推导阶段并给出下一步命令与路由状态 | `--root` `--slug` `--json` |
-| `scripts/review-triage.mjs` | 判定审查触发、风险方向与子代理上限；`--check` 校验 review.md 是否完成审查；`--escalate` 判断轻量流程是否需升级 | `--root` `--slug` `--base` `--focus` `--agents` `--no-subagents` `--focus-only` `--json` `--write` `--check` `--escalate` |
+| `scripts/review-triage.mjs` | 判定审查触发、风险方向与子代理上限；`--check` 校验 review.md 是否完成审查；`--escalate` 判断轻量流程是否需升级；`--since` 做增量复审 | `--root` `--slug` `--base` `--since` `--focus` `--agents` `--no-subagents` `--focus-only` `--json` `--write` `--check` `--escalate` |
 | `scripts/statusline.mjs` | 输出单行进度，供 Claude Code `statusLine` 使用 | `--root` `--json` |
 | `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
 | `scripts/hub-upstream.mjs` | 回灌阶段模板到个人库、团队库或上游 | `--stage` `--shared` `--all` `--to` `--pr` `--apply` `--revert` `--force` `--root` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR（上游或团队 profile） | `--stage` `--plugin-root` `--profile` `--base` `--dry-run` `--resume` `--no-pr` |
 | `scripts/hub-sync.mjs` | 按来源优先级同步阶段与共享模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
-| `scripts/mark-test.mjs` | 记录测试通过时间与命令；`--gaps` 按 diff 提示测试缺口 | `--root` `--command` `--gaps` `--base` `--json` |
+| `scripts/mark-test.mjs` | 记录最近一次测试结果（退出码、耗时、命令）；`--gaps` 提示测试缺口；`--changed` 列出受影响的已存在测试 | `--root` `--command` `--exit-code` `--duration-ms` `--gaps` `--changed` `--base` `--json` |
+| `scripts/stage-check.mjs` | 校验 req / debug 产物的结构完整性，未通过时退出码 1 | `--root` `--stage` `--slug` `--json` |
 
-项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`、`devflow-check.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
 
 ## 目录结构
 
@@ -85,7 +86,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 366 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口提示、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 395 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、增量复审、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。
