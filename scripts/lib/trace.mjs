@@ -4,12 +4,13 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
 import {
-  checkboxes, meaningful, section, tableHeader, tableRows,
+  checkboxes, isOptionPlaceholder, meaningful, section, tableHeader, tableRows,
 } from './markdown.mjs';
 import { detectFlow } from './review.mjs';
 
 const ID_AT_START = /^\s*AC[-_ ]?(\d+)\b\s*[：:.\-]?\s*([\s\S]*)$/i;
-const ID_ANYWHERE = /AC[-_ ]?\d+/gi;
+const ID_ANYWHERE = /\bAC[-_ ]?\d+\b/gi;
+const ID_COLUMN = /验收项|验收 ID|^AC/i;
 const DEBUG_NOISE = /^现有测试\s*\/\s*代码契约\s*\/\s*需求文档\s*[：:]?$/;
 
 function dedupe(list) {
@@ -84,10 +85,14 @@ function assignIds(entries) {
   const warnings = [];
   const hasExplicit = entries.some((entry) => entry.explicit);
   const used = new Set();
+  // 先保留全部显式 ID，避免无 ID 项抢占后面才出现的编号。
+  const reserved = new Set(
+    entries.filter((entry) => entry.explicit).map((entry) => entry.id),
+  );
   let next = 1;
 
   const nextFree = () => {
-    while (used.has(`AC-${next}`)) next += 1;
+    while (used.has(`AC-${next}`) || reserved.has(`AC-${next}`)) next += 1;
     const id = `AC-${next}`;
     next += 1;
     return id;
@@ -129,7 +134,7 @@ export function parsePlanCoverage(text, { title = '任务拆分' } = {}) {
   if (!header || rows.length === 0) {
     return { available: false, byId: {}, warnings: [`「${title}」表格没有数据行`] };
   }
-  const idColumn = columnIndex(header, /验收/);
+  const idColumn = columnIndex(header, ID_COLUMN);
   if (idColumn < 0) {
     return { available: false, byId: {}, warnings: [`「${title}」缺少「验收项」列`] };
   }
@@ -151,11 +156,18 @@ export function parsePlanCoverage(text, { title = '任务拆分' } = {}) {
   return { available: true, byId, warnings: [] };
 }
 
+const TEST_RESULT_OPTIONS = ['通过', '未覆盖'];
+const REVIEW_STATUS_OPTIONS = ['阻断', '已覆盖', '未覆盖', '接受'];
+
 function classifyTest(raw) {
   const value = String(raw || '').trim();
   if (!meaningful(value)) return null;
-  if (/未覆盖|未通过|失败|fail|不适用/i.test(value)) return 'uncovered';
-  if (/通过|pass|covered|已覆盖|成功/i.test(value)) return 'covered';
+  // 「通过 / 未覆盖（原因）」这类模板选项行不是结论。
+  if (isOptionPlaceholder(value, TEST_RESULT_OPTIONS)) return null;
+  if (/^(未覆盖|未通过|失败|不适用)/i.test(value) || /^fail/i.test(value)) return 'uncovered';
+  if (/^(通过|已覆盖|成功)/.test(value) || /^(pass|covered)/i.test(value)) return 'covered';
+  if (/未覆盖|未通过|失败|不适用|\bfail(?:ed|ure)?\b/i.test(value)) return 'uncovered';
+  if (/通过|已覆盖|成功|\bpass(?:ed)?\b|\bcovered\b/i.test(value)) return 'covered';
   return 'unknown';
 }
 
@@ -169,7 +181,7 @@ export function parseTestCoverage(text) {
   if (!header || rows.length === 0) {
     return { available: false, byId: {}, warnings: ['「验收覆盖」表格没有数据行'] };
   }
-  const idColumn = columnIndex(header, /验收/);
+  const idColumn = columnIndex(header, ID_COLUMN);
   if (idColumn < 0) return { available: false, byId: {}, warnings: ['「验收覆盖」缺少「验收项」列'] };
   const evidenceColumn = columnIndex(header, /证据/, /测试/, /实现/);
   const resultColumn = columnIndex(header, /结论/, /结果/, /状态/);
@@ -185,6 +197,7 @@ export function parseTestCoverage(text) {
       byId[id] = {
         evidence: cell(row, evidenceColumn),
         result: cell(row, resultColumn),
+        status: result,
         covered: result === 'covered',
       };
     }
@@ -195,10 +208,14 @@ export function parseTestCoverage(text) {
 function classifyReview(raw) {
   const value = String(raw || '').trim();
   if (!meaningful(value)) return null;
+  if (isOptionPlaceholder(value, REVIEW_STATUS_OPTIONS)) return null;
+  if (/^(阻断|blocked)/i.test(value)) return 'blocked';
+  if (/^未覆盖/.test(value)) return /接受|accepted/i.test(value) ? 'accepted' : 'uncovered';
+  if (/^(已覆盖|通过)/.test(value) || /^(pass|covered)/i.test(value)) return 'covered';
+  if (/^(接受|accepted)/i.test(value)) return 'accepted';
+  // 结论词不在开头时按出现顺序兜底。
   if (/阻断|blocked/i.test(value)) return 'blocked';
-  if (/未覆盖/.test(value) && /接受|accepted/i.test(value)) return 'accepted';
-  if (/接受|accepted/i.test(value)) return 'accepted';
-  if (/未覆盖/.test(value)) return 'uncovered';
+  if (/未覆盖/.test(value)) return /接受|accepted/i.test(value) ? 'accepted' : 'uncovered';
   if (/已覆盖|通过|pass|covered/i.test(value)) return 'covered';
   return 'unknown';
 }
@@ -300,7 +317,12 @@ export function buildTrace({ flow, source, texts = {} }) {
     const planRows = plan.byId[item.id] || [];
     const testRow = test.byId[item.id] || null;
     const reviewRow = review.byId[item.id] || null;
-    if (testRow?.covered && reviewRow && ['blocked', 'accepted', 'uncovered'].includes(reviewRow.status)) {
+    const testStatus = testRow?.status;
+    const reviewStatus = reviewRow?.status;
+    const conflict = (testStatus === 'covered'
+      && ['blocked', 'accepted', 'uncovered'].includes(reviewStatus))
+      || (testStatus === 'uncovered' && reviewStatus === 'covered');
+    if (conflict) {
       warnings.push(`${item.id} 的测试结论与 review 不一致，以 review 为准`);
     }
     let status;

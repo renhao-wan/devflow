@@ -253,3 +253,78 @@ test('traceFor 读取流程产物并标注缺失文件', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('ID 分配预留显式编号，避免抢占与连锁重编号', () => {
+  const implicitFirst = trace({
+    acceptance: '## 验收标准\n\n- [ ] 旧条目没有 ID\n- [ ] AC-1 用户显式编号的条目\n',
+  });
+  assert.deepEqual(implicitFirst.items.map((item) => item.id), ['AC-2', 'AC-1']);
+  assert.equal(implicitFirst.items[1].text, '用户显式编号的条目');
+  assert.equal(implicitFirst.warnings.some((w) => w.includes('重复的验收 ID')), false);
+
+  const cascade = trace({
+    acceptance: '## 验收标准\n\n- [ ] AC-1 甲\n- [ ] AC-1 乙\n- [ ] AC-2 丙\n',
+  });
+  assert.deepEqual(cascade.items.map((item) => `${item.id}:${item.text}`), ['AC-1:甲', 'AC-3:乙', 'AC-2:丙']);
+  assert.ok(cascade.warnings.some((w) => w.includes('重复的验收 ID AC-1')));
+});
+
+test('MAC-3 这类相邻标识符不会被当作验收 ID', () => {
+  const test = '## 验收覆盖\n\n| 验收项 | 测试/证据 | 结论 |\n| --- | --- | --- |\n| MAC-3 | 套件 | 通过 |\n';
+  const result = trace({ acceptance: REQ, test });
+  assert.equal(result.warnings.some((w) => w.includes('未定义的验收 ID')), false);
+});
+
+test('状态结论按开头判定，模板选项行视为未填写', () => {
+  const testWithNote = TEST.replace('| 通过 |', '| 通过（失败重试后） |');
+  const covered = trace({ acceptance: REQ, test: testWithNote });
+  assert.equal(covered.items[0].test.status, 'covered');
+  assert.equal(covered.items[0].status, 'covered');
+
+  const reviewNote = REVIEW.replace('| 已覆盖 |', '| 通过（阻断项已修复） |');
+  assert.equal(trace({ acceptance: REQ, review: reviewNote }).items[0].review.status, 'covered');
+
+  const reviewDependency = REVIEW.replace('| 未覆盖 |', '| 未覆盖（阻断依赖未就绪） |');
+  assert.equal(trace({ acceptance: REQ, review: reviewDependency }).items[1].review.status, 'uncovered');
+
+  const placeholderReview = `## 验收对照\n\n| 验收标准 | 实现/测试 | 状态 |\n| --- | --- | --- |\n|  |  | 已覆盖 / 未覆盖（已接受 / 阻断） |\n`;
+  const placeholder = trace({ acceptance: REQ, review: placeholderReview });
+  assert.equal(placeholder.items[0].status, 'uncovered');
+  assert.equal(placeholder.totals.blocked, 0);
+
+  const placeholderTest = '## 验收覆盖\n\n| 验收项 | 测试/证据 | 结论 |\n| --- | --- | --- |\n| AC-1 |  | 通过 / 未覆盖（原因） |\n';
+  const pending = trace({ acceptance: REQ, test: placeholderTest });
+  assert.equal(pending.items[0].test.status, null);
+  assert.equal(pending.items[0].test.covered, false);
+});
+
+test('test 未覆盖与 review 已覆盖冲突时给出 warning', () => {
+  const test = TEST.replace('| AC-1 | tests/export.test.js | 通过 |', '| AC-1 | 无 | 未覆盖 |');
+  const result = trace({ acceptance: REQ, test, review: REVIEW });
+  assert.equal(result.items[0].status, 'covered');
+  assert.ok(result.warnings.some((w) => w.includes('AC-1') && w.includes('以 review 为准')));
+});
+
+test('CLI 无任务时输出 [ERR] 而不是堆栈', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-trace-empty-'));
+  try {
+    const r = spawnSync(process.execPath, [SCRIPT, '--root', root], { encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^\[ERR\] 未发现任务/);
+    assert.doesNotMatch(r.stderr, /throw new Error|\n\s+\^/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI --check 对无法识别流程的显式 slug 退出 1', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-trace-unknown-'));
+  try {
+    mkdirSync(join(root, 'docs', 'devflow', 'empty'), { recursive: true });
+    const r = run(['--slug', 'empty', '--check'], root);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /\[ERR\]/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

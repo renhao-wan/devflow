@@ -82,7 +82,12 @@ export function checkboxes(body) {
 
 /** 模板原样保留的选项行（例如 `low / medium / high / special`）视为未填写。 */
 export function isOptionPlaceholder(value, options) {
-  const hits = options.filter((option) => new RegExp(`\\b${option}\\b`, 'i').test(value)).length;
+  const hits = options.filter((option) => {
+    const escaped = String(option).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // \b 只对 ASCII 单词字符有效，中文选项按子串匹配。
+    const pattern = /^[A-Za-z0-9_-]+$/.test(option) ? `\\b${escaped}\\b` : escaped;
+    return new RegExp(pattern, 'i').test(value);
+  }).length;
   return hits >= Math.min(3, options.length);
 }
 
