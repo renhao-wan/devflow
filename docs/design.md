@@ -50,10 +50,23 @@
 | plan | plan.md | 调研结论有来源；每个改动点有验证方式 |
 | implement | 代码 | 小步，可编译，优先 TDD |
 | test | 测试证据 | 通过要有命令与输出 |
-| review | 评审结论 | 高危未修不得通过 |
+| review | 评审结论 | 触发与方向已判定；高危未修不得通过 |
 | debug | 根因与回归 | 无复现不下结论 |
 
-小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中依赖、公共接口、迁移、权限/认证/支付/并发/安全边界、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
+小功能用 `req --light` 产出 `brief.md`（合并 req 与 plan），小 bug 由 `debug.md` 直接进入 test；两者都只压缩文档，不跳过测试证据。小功能始终 review；小 bug 测试后由 triage 按实际 diff 判定，安全、数据、认证/权限/并发等风险触发 review，`review: required` 作为显式要求保留。命中依赖、公共接口、迁移、权限/认证/支付/并发/安全边界、不可逆或规模阈值时升级完整流程，并在产物中写 `## 升级判断`。阶段推断仍只看产物：`hub-status` 按 `req/plan` → `brief` → `debug` 的顺序判定流程类型。
+
+## 审查触发与画像
+
+审查不再对所有改动一律平铺检查，而是先做一次确定性 triage（`scripts/review-triage.mjs`），再按结果分配注意力：
+
+- **触发优先级**：用户指定方向/数量 > `review: required` > diff 风险信号 > 跳过。完整任务、轻量功能与未识别流程始终必审；只有轻量修复可能跳过。
+- **画像来源**：路径规则（认证、支付、密钥、迁移、并发、依赖清单、公共契约、测试）与 diff 新增/删除行内容规则（动态执行、凭据标识、结构性数据变更、并发原语、兼容性、遗留标记）。同一方向同一规则只计一次，多文件命中仅小幅加分，避免“文件多即高危”。
+- **等级与上限**：按最高分与高分方向数得到 low / medium / high / special，对应子代理上限 0 / 1 / 2 / 4；用户 `--agents` 覆盖上限但硬上限为 4。
+- **方向选择**：默认排除可维护性与测试质量（基线检查覆盖），验收对照仅在 high / special 派代理；用户 `--focus` 指定后只审这些方向，其余让位。所有未入选方向进入 `excluded` 并带理由，被上限截掉的用户方向同样留痕，不静默漏审。
+- **代理分组**：A 正确性 + 并发、B 安全 + 依赖、C 验收与回归 + 测试质量、D 数据与迁移、E 可维护性；相关方向合并，异质方向分开。
+- **产物**：`review-triage.json` 保存判定，`hub-status` 读取 `trigger` 判断轻量修复是否还需 review；文件缺失或损坏时回退 `debug.md` 的 `review: required` 标记，保持向后兼容。
+
+triage 是纯函数加 git 读取，不调用模型；模型只负责在给定方向内审查，减少“想到哪查到哪”和重复劳动。
 
 ## hooks
 
@@ -73,7 +86,7 @@
 
 ## 进度与命令衔接
 
-阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。
+阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。审查 triage 的 `review-triage.json` 也落在同一目录，属于判定快照而非进度状态，可随时重新生成。
 
 - `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
 - 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。

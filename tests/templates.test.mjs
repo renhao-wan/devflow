@@ -265,7 +265,8 @@ test('轻量任务能被实现、测试与审查阶段消费', () => {
   assert.match(test, /debug\.md/);
   assert.match(test, /回归测试/);
   assert.match(test, /修复前失败/);
-  assert.match(test, /前 10 行/);
+  assert.match(test, /review-triage\.mjs/);
+  assert.match(test, /trigger/);
   assert.match(test, /测试通过即完成/);
 
   const review = read('templates/stages/review/SKILL.md');

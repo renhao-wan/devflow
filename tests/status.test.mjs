@@ -476,3 +476,42 @@ test('status 完整流程不因 debug.md 的风险标记改变推断', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('status 优先使用 review-triage.json 的触发结果', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-triage-'));
+  try {
+    const dir = makeTask(root, 'fix-small');
+    writeFileSync(join(dir, 'debug.md'), '# debug\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n');
+
+    writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'auto', level: 'high' }));
+    const auto = run(['--root', root, '--json']);
+    assert.equal(auto.json.slugs[0].reviewRequired, true);
+    assert.equal(auto.json.slugs[0].stage, 'review');
+    assert.equal(auto.json.slugs[0].reviewTriage.trigger, 'auto');
+
+    writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'skipped', level: 'low' }));
+    const skipped = run(['--root', root, '--json']);
+    assert.equal(skipped.json.slugs[0].reviewRequired, false);
+    assert.equal(skipped.json.slugs[0].stage, 'done');
+    assert.match(run(['--root', root]).stdout, /审查已跳过（triage）/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 在 triage 文件损坏时回退 review: required 标记', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-triage-bad-'));
+  try {
+    const dir = makeTask(root, 'fix-broken');
+    writeFileSync(join(dir, 'debug.md'), '---\nreview: required\n---\n# debug\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'review-triage.json'), '{not-json');
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.json.slugs[0].reviewRequired, true);
+    assert.equal(r.json.slugs[0].stage, 'review');
+    assert.equal(r.json.slugs[0].reviewTriage, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

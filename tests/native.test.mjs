@@ -114,15 +114,17 @@ test('debug 与 review 支持并行子代理且要求合并冲突', () => {
   assert.match(read('skills/debug/SKILL.md'), /同一条消息并行启动多个/);
 
   const review = read('templates/stages/review/SKILL.md');
-  assert.match(review, /高风险改动/);
-  assert.match(review, /两个子代理/);
-  assert.match(review, /正确性与安全/);
-  assert.match(review, /验收与回归/);
-  assert.match(read('skills/review/SKILL.md'), /两个子代理/);
+  assert.match(review, /maxAgents/);
+  assert.match(review, /正确性 \+ 并发/);
+  assert.match(review, /安全 \+ 依赖/);
+  assert.match(review, /验收与回归 \+ 测试质量/);
+  assert.match(read('skills/review/SKILL.md'), /maxAgents/);
+  assert.match(read('skills/review/SKILL.md'), /review-triage\.mjs/);
 
   const template = read('templates/stages/review/templates/review.template.md');
-  assert.match(template, /## 子代理交叉审查（可选）/);
-  assert.match(template, /视角 A/);
+  assert.match(template, /## 审查触发与画像/);
+  assert.match(template, /## 子代理交叉审查/);
+  assert.match(template, /分组/);
   assert.match(template, /冲突项与裁决依据/);
 });
 

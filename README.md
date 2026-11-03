@@ -87,9 +87,9 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | --- | --- | --- | --- |
 | 完整任务 | `/devflow:req <需求>` | `req.md → plan.md → test.md → review.md` | review 无阻断项 |
 | 小功能 | `/devflow:req --light <需求>` | `brief.md → test.md → review.md` | review 无阻断项 |
-| 小 bug | `/devflow:debug <问题>` | `debug.md → test.md` | 普通测试通过即结束；`review: required` 时补 review |
+| 小 bug | `/devflow:debug <问题>` | `debug.md → test.md` | triage 判定为 `skipped` 时测试通过即结束；其他触发补 review |
 
-轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 普通修复在测试通过后结束，涉及安全、数据、认证/权限/并发风险且不触发升级时，用 `debug.md` 顶部的 `review: required` 补审。升级条件与完整规则见 [usage.md](docs/usage.md#轻量流程)。
+轻量只压缩文档，不减测试：小功能始终保留 review；小 bug 测试后由 triage 按实际 diff 判定——`review: required`、用户指定方向/数量、或安全、数据、并发等风险信号会进入 review，其余记录基线检查后结束。升级条件与完整规则见 [usage.md](docs/usage.md#轻量流程)。
 
 ## 命令
 
@@ -100,7 +100,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
 | `/devflow:implement <slug>` | 按计划或 `brief.md` 小步实现，测试先行 |
 | `/devflow:test <slug>` | 运行与补充测试，记录真实结果 |
-| `/devflow:review <slug>` | 差异导向审查，输出阻断项与建议项 |
+| `/devflow:review <slug> [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only]` | 先判定触发与风险画像，再按选中方向审查，输出阻断项与建议项 |
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
@@ -125,6 +125,8 @@ devflow route --detect
 devflow sync --dry-run
 devflow upstream --shared --apply
 devflow ship --stage review --dry-run
+devflow triage --slug add-login --write
+devflow triage --slug fix-auth --focus security --agents 2
 devflow upstream --revert <id>
 ```
 
@@ -138,7 +140,7 @@ devflow upstream --revert <id>
 | plan | 调研已有实现，给出方案、任务拆分、测试策略与回滚 | 引用真实文件；任务可独立验证；复用结论有来源；有回滚 |
 | implement | 按计划或 `brief.md` 小步实现，优先 TDD | 每步可运行；无无关改动；计划与实际同步 |
 | test | 真实运行测试并记录证据 | 全量已跑；改动有直接覆盖；未运行不得写通过 |
-| review | 按风险审查差异 | 无未处理阻断项；敏感信息扫描通过 |
+| review | triage 判定触发与方向，再按风险审查差异 | 无未处理阻断项；敏感信息扫描通过 |
 | debug | 复现、定位根因、补回归测试 | 有复现；根因有证据；回归测试修复前失败 |
 
 每个阶段的完整规则在 `.claude/hub/stages/<stage>/SKILL.md`，执行前必须完整读取。阶段细节、轻量流程与方案调研要求见 [usage.md](docs/usage.md)。
