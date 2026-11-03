@@ -486,7 +486,14 @@ export function renderPlan(plan) {
   }[plan.trigger] || plan.trigger;
   lines.push(`流程：${flowLabel}`);
   lines.push(`触发：${triggerLabel}`);
-  lines.push(`风险等级：${plan.level}（代理上限 ${plan.maxAgents}，来源 ${plan.capSource}）`);
+  const capLabel = {
+    default: '按风险等级',
+    none: '用户禁用',
+    user: '用户指定',
+    'user-focus': '用户方向数',
+    skipped: '未触发审查',
+  }[plan.capSource] || plan.capSource;
+  lines.push(`风险等级：${plan.level}（代理上限 ${plan.maxAgents}，${capLabel}）`);
   lines.push(`改动：${plan.stats.files} 个文件 / ${plan.stats.changedLines} 行；测试 ${plan.stats.testFiles} 个，未跟踪 ${plan.stats.untracked} 个`);
   if (plan.selected.length) {
     lines.push(`选中方向：${plan.selected.map((r) => `${DIRECTION_LABELS[r.direction]}(${r.score})`).join('、')}`);
