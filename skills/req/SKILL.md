@@ -27,5 +27,6 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
    - 轻量模式在进入 implement 前后运行升级自检 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --escalate`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --escalate`）。退出码 1 表示命中可由 diff 推导的硬触发，停止轻量并写 `## 升级判断`；退出码 0 也不能替代人工判断不可逆操作与跨模块影响。
    - 写 `brief.md` 前检查目标目录：已有 `req.md` 或 `plan.md` 时，说明该 slug 已是完整流程，改用完整 req 或换 slug，不新增 brief.md，避免产物被完整流程覆盖而静默失效。
    - 轻量流程出现 80–200 行或 5–10 个文件的软提示时，用 `AskUserQuestion` 询问是否继续轻量；无法提问时回退为文本询问。
+   - 写完产物后运行 `node scripts/devflow-check.mjs --root . --stage req --slug <slug>`（插件根可用时用 `devflow check --stage req`）；退出码非 0 表示目标、验收、本次不做、约束或影响面等结构缺失，按输出补齐后重跑。
 6. 最后用一段话报告：实际 slug、任务目录 `docs/devflow/<实际 slug>/`、目标、验收标准数量、本次不做的项、技术约束、影响面、遗留待确认项。
 7. 完成后进入下一阶段：轻量功能 `/devflow:implement <实际 slug>`；完整流程 `/devflow:plan <实际 slug>`（把 `<实际 slug>` 替换为本次生成的 slug）。
