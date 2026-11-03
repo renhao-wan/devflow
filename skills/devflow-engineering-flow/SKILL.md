@@ -18,7 +18,7 @@ description: Use when the user asks to build, change, or fix something in a proj
 ```
 完整：  req → plan → implement → test → review
 轻量功能：req --light → implement → test → review        （brief.md）
-轻量修复：debug → test [→ review]                        （debug.md）
+轻量修复：debug → test [→ review（triage 判定）]          （debug.md）
                          └── debug ←┘（完整流程中 test/implement 失败时）
 ```
 
@@ -27,8 +27,8 @@ description: Use when the user asks to build, change, or fix something in a proj
 - **plan**：现状、方案、任务拆分、测试策略、回滚。产出 `plan.md`。
 - **implement**：按计划（或 `brief.md`）小步实现，测试先行。
 - **test**：真实运行测试，记录结果。
-- **review**：缺陷导向审查 diff，并逐条对照验收标准收敛。
-- **debug**：test 或 implement 失败时进入；修复并补回归测试后回到 test。独立小 bug 直接由 debug 产出 `debug.md`，不要求 req/plan；普通小 bug 测试通过即结束，标记 `review: required` 的才补 review。
+- **review**：先运行 triage 判定触发、风险等级与方向，再按选中方向审查 diff，并逐条对照验收标准收敛。
+- **debug**：test 或 implement 失败时进入；修复并补回归测试后回到 test。独立小 bug 直接由 debug 产出 `debug.md`，不要求 req/plan；测试后由 triage 按实际 diff 判定是否进入 review。
 
 ## 怎么选阶段
 
@@ -46,13 +46,13 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 ## 轻量流程的升级条件
 
-轻量只压缩文档，不减测试：小功能始终 review；小 bug 普通修复测试通过即结束，安全、数据、认证/权限/并发风险用 `review: required` 补审。命中以下任一硬触发时，停止轻量、在 `brief.md` / `debug.md` 写 `## 升级判断`，补 `req.md` / `plan.md` 后继续完整流程：
+轻量只压缩文档，不减测试：小功能始终 review；小 bug 测试后由 triage 按实际 diff 判定（`review: required`、用户指定方向/数量或风险信号进入 review）。命中以下任一硬触发时，停止轻量、在 `brief.md` / `debug.md` 写 `## 升级判断`，补 `req.md` / `plan.md` 后继续完整流程：
 
 - 新增/升级依赖，公共 API、数据结构或迁移，权限/认证/支付/并发/安全边界，不可逆操作。
 - 非测试/文档 diff 超过 200 行、10 个文件或 2 个子项目。
 - 小 bug 根因跨 >2 文件/模块、连续 2 轮假设未收敛、修复要改公共契约。
 
-小 bug 的安全、数据、认证/权限/并发风险若不触发上述升级，用 `debug.md` 顶部的 `review: required` 补审，而不是只靠对话记录；小功能命中这些风险时必须升级完整流程，不能只补 review。无法稳定复现不是升级条件：停在 debug 记录证据与盲区。
+小 bug 的安全、数据、认证/权限/并发风险若不触发上述升级，测试后由 triage 按实际 diff 识别并补审；需要显式要求时，也在 `debug.md` 顶部写 `review: required`，而不是只靠对话记录。小功能命中这些风险时必须升级完整流程，不能只补 review。无法稳定复现不是升级条件：停在 debug 记录证据与盲区。
 
 80–200 行或 5–10 个文件属于软提示：先用 `AskUserQuestion` 询问一次（不可用时文本询问），记录后继续。计数口径：`git diff --numstat`（staged + unstaged），排除 `docs/devflow/**`、测试文件、lockfile 与生成物。
 
@@ -60,7 +60,7 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 - 完整任务：`req.md`、`plan.md`、`test.md`、`review.md`。
 - 轻量功能：`brief.md`、`test.md`、`review.md`。
-- 轻量修复：`debug.md`、`test.md`，`review.md` 视 `debug.md` 顶部的 `review: required` 而定。
+- 轻量修复：`debug.md`、`test.md`，`review.md` 视 triage 触发而定；判定保存在 `review-triage.json`。
 - 阶段由产物推断，不存状态机；`/devflow:status` 会显示任务是完整、轻量功能还是轻量修复。
 
 ## 门禁原则
@@ -75,7 +75,7 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 - **`/goal`**：implement、test、debug 跨多回合时提示用户运行 `/goal` 设置完成条件；插件不会自动设置，也不替代门禁，需求/计划未确认或问题未复现时不用。
 - **plan mode**：plan 阶段需要逐条确认时，征得同意后 `EnterPlanMode`；plan mode 内不改代码、不写文件，写 `plan.md` 前先 `ExitPlanMode`。
-- **子代理**：大范围定位优先用 `devflow:devflow-plan-research` 技能（只读、`context: fork`），不可用时用 `Explore`（very thorough）；复杂架构方案用 `Plan`；排障有 ≥2 个独立假设时并行 `devflow:devflow-debug-investigator`；高风险 review 并行两个 `devflow:devflow-code-reviewer`（正确性/安全、验收/回归）。子代理结论必须由本地代码与测试证据核实。
+- **子代理**：大范围定位优先用 `devflow:devflow-plan-research` 技能（只读、`context: fork`），不可用时用 `Explore`（very thorough）；复杂架构方案用 `Plan`；排障有 ≥2 个独立假设时并行 `devflow:devflow-debug-investigator`；review 按 triage 画像分组，最多 4 个 `devflow:devflow-code-reviewer`。子代理结论必须由本地代码与测试证据核实。
 - **结构化提问**：slug 不唯一、轻量软阈值等关键决策用 `AskUserQuestion`；不可用时回退文本询问。
 
 ## 单一真源
