@@ -276,6 +276,9 @@ gh auth login --web
 | 生成器报阶段名非法 | `.claude/hub/stages/` 下的目录名必须以小写字母开头，只允许 `[a-z0-9_-]` |
 | 生成器/doctor 报技术栈目录不存在 | 检查 `hub.yaml` 的 `stack` 声明；运行 `/devflow:sync`，或在 `.claude/hub/stacks/<name>/` 建目录并添加 `_shared.md` / `<stage>.md` |
 | 生成器/doctor 报技术栈名非法 | 栈名必须以 `[a-z0-9]` 开头，只允许 `[a-z0-9_-]`，不能包含路径分隔符或 `..` |
+| 生成器/doctor 报 `stack` 必须是字符串 | 把 `hub.yaml` 的 `stack` 或 `subprojects.<name>.stack` 改成字符串；投影会把该行标为「配置无效」，修正前不要按它读取栈规范 |
+| 生成器/doctor 报 `stages` 必须是列表 | 把 `hub.yaml` 的 `stages` 改成 YAML 列表；省略或留空会扫描 `stages/` 目录，写 `[]` 表示不启用任何阶段 |
+| `--all` 提示跳过技术栈目录 | 目录名不符合 `[a-z0-9][a-z0-9_-]*`，无法被 `hub.yaml` 引用；改成合法栈名后再回灌 |
 | 技术栈目录为空 | 该栈已声明但没有任何 `.md`；添加 `_shared.md` 或 `<stage>.md`，否则只给提醒、不参与读取 |
 | 技术栈文件真实路径越出项目 | 目录或文件被 junction/符号链接指向项目外；改回项目内或移除链接 |
 | hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
