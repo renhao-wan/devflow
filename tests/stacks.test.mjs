@@ -122,6 +122,7 @@ test('非法栈名与非字符串声明是错误，同一栈只报告一次', ()
   try {
     const invalidName = planStacks(root, { stack: 'java/spring' }, STAGES);
     assert.ok(invalidName.issues.some((issue) => /技术栈名非法/.test(issue.message)));
+    assert.equal(invalidName.rows[0].invalidName, true);
 
     const invalidType = planStacks(root, { subprojects: { api: { stack: 3 }, web: { stack: 3 } } }, STAGES);
     const typeIssues = invalidType.issues.filter((issue) => /必须是字符串/.test(issue.message));

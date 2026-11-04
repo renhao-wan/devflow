@@ -34,7 +34,7 @@ function inspectStack(root, name, stages) {
   const issues = [];
   if (!dir) {
     issues.push({ severity: 'error', message: `技术栈名非法：${name}。只允许 [a-z0-9][a-z0-9_-]*。` });
-    return { summary, issues, dirExists: false, stageFiles: {}, sharedFile: null };
+    return { summary, issues, dirExists: false, stageFiles: {}, sharedFile: null, invalidName: true };
   }
   summary.dir = `.claude/hub/stacks/${name}`;
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
@@ -108,6 +108,7 @@ export function planStacks(root, config = {}, stages = []) {
       stack: declared.name,
       dir: inspected.summary.dir || `.claude/hub/stacks/${declared.name}`,
       dirExists: inspected.dirExists,
+      invalidName: inspected.invalidName === true,
       stageFile: inspected.stageFiles,
       sharedFile: inspected.sharedFile,
     });

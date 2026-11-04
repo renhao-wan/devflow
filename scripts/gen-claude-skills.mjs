@@ -7,16 +7,9 @@ import {
   ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
 import { planStacks } from './lib/stacks.mjs';
+import { stageList } from './lib/stages.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
-
-function stageList(config, root) {
-  const declared = config.stages;
-  if (Array.isArray(declared) && declared.length) return declared.map(String);
-  const dir = join(root, '.claude', 'hub', 'stages');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-}
 
 function stageDescription(root, stage) {
   const file = join(root, '.claude', 'hub', 'stages', stage, 'SKILL.md');
@@ -34,7 +27,7 @@ function subprojectRows(config, stackPlan) {
     const stages = Array.isArray(value?.stages) ? value.stages.join(', ') : '全部';
     const stackRow = stackBySub.get(name);
     const stack = stackRow
-      ? `${stackRow.stack}${stackRow.dirExists ? '' : '（缺失）'}`
+      ? `${stackRow.stack}${stackRow.invalidName ? '（名称非法）' : stackRow.dirExists ? '' : '（缺失）'}`
       : '—';
     return `| ${name} | \`${path}\` | ${stages} | ${stack} |`;
   });
@@ -50,7 +43,9 @@ function stackSection(stackPlan, stage) {
   const table = rows.map((row) => {
     const stageFile = row.stageFile?.[stage];
     const sharedFile = row.sharedFile;
-    const stack = `${row.stack}${row.dirExists ? '' : '（缺失，运行 /devflow:sync）'}`;
+    const stack = row.invalidName
+      ? `${row.stack}（名称非法，检查 hub.yaml）`
+      : `${row.stack}${row.dirExists ? '' : '（缺失，运行 /devflow:sync）'}`;
     return `| ${row.subproject} | \`${row.path}\` | ${stack} | `
       + `${stageFile ? `\`${stageFile}\`` : '—'} | ${sharedFile ? `\`${sharedFile}\`` : '—'} |`;
   });

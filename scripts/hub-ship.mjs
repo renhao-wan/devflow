@@ -153,11 +153,14 @@ function unitRelPath(unit, rel) {
 
 /** 复用仓库 PR 模板，没有模板时退回内置结构。 */
 export function buildPrBody(pluginRoot, {
-  stage, stages, stacks, shared, projectName, files,
+  stage, stages, stacks, shared, all, projectName, files,
 }) {
   const names = [];
-  for (const name of [...(stages || []), ...(stage ? [stage] : [])]) names.push(`${name} 阶段`);
-  for (const name of stacks || []) names.push(`${name} 技术栈`);
+  if (all) names.push('所有阶段与技术栈');
+  else {
+    for (const name of [...(stages || []), ...(stage ? [stage] : [])]) names.push(`${name} 阶段`);
+    for (const name of stacks || []) names.push(`${name} 技术栈`);
+  }
   if (shared) names.push('共享规则');
   const unitText = names.join('、') || '阶段规则';
   const tplFile = join(pluginRoot, '.github', 'pull_request_template.md');
@@ -494,6 +497,7 @@ export async function main(argv = process.argv.slice(2)) {
       stages,
       stacks,
       shared: units.some((u) => u.kind === 'shared'),
+      all,
       projectName,
       files: toAdd.length ? toAdd : ['（续做，无新增文件）'],
     });

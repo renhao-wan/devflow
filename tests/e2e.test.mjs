@@ -156,6 +156,29 @@ test('技术栈映射进入投影、账本与体检', () => {
   }
 });
 
+test('未声明 stages 时 doctor 按目录扫描校验技术栈阶段文件', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const yaml = readFileSync(hubFile, 'utf8')
+      .replace(/^stages:\n(?:  - .*\n)+/m, '')
+      .replace(/^subprojects:/m, 'stack: java-spring\nsubprojects:');
+    writeFileSync(hubFile, yaml);
+
+    // plan.md 是目录而不是文件：只有按目录扫描出的阶段列表才会去检查它。
+    mkdirSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), { recursive: true });
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 1, doctor.stdout);
+    assert.match(doctor.stdout, /不是文件/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('doctor 发现项目概览标记块残缺', () => {
   const root = makeSandbox();
   try {

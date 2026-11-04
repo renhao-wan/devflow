@@ -302,6 +302,21 @@ test('PR 正文复用仓库模板', () => {
   }
 });
 
+test('PR 正文在 --all 时写所有阶段与技术栈', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-all-'));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(repo, { recursive: true });
+    const body = buildPrBody(repo, {
+      all: true, projectName: 'demo', files: ['templates/stages/review/SKILL.md'],
+    });
+    assert.match(body, /回灌.*所有阶段与技术栈.*来源项目：demo/);
+    assert.match(body, /范围：所有阶段与技术栈/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('PR 正文在缺少模板时退回内置结构', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-ship-notpl-'));
   try {

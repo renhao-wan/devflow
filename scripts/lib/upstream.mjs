@@ -9,6 +9,7 @@ import {
   normalizeEol, isPathInside, isRealPathInside, posix,
   parseFrontmatter,
 } from './common.mjs';
+import { isValidStackName } from './stacks.mjs';
 
 export const LOG_JSONL = '.devflow/upstream-log.jsonl';
 export const LOG_MD = 'docs/upstream-log.md';
@@ -163,7 +164,10 @@ export function resolveUnits(root, {
     const stacksDir = join(root, '.claude', 'hub', 'stacks');
     if (existsSync(stacksDir)) {
       for (const entry of readdirSync(stacksDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) addStack(entry.name);
+        // 只回灌 hub.yaml 能引用的合法栈名，避免把无法声明的目录写进模板库。
+        if (entry.isDirectory() && !entry.name.startsWith('.') && isValidStackName(entry.name)) {
+          addStack(entry.name);
+        }
       }
     }
   }
