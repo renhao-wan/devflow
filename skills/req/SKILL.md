@@ -9,7 +9,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
 
 > 以下为入口摘要；与 `.claude/hub/stages/req/SKILL.md` 冲突时，以 SKILL 为准。
 
-1. 读取 `.claude/hub/stages/req/SKILL.md`；文件不存在时提示先运行 `/devflow:init`，然后停止。
+1. 先读项目投影 `.claude/skills/devflow-req/SKILL.md`（含共享规则、子项目覆盖与技术栈映射），再按其中「单一真源」读取 `.claude/hub/stages/req/SKILL.md`。
+   - 投影缺失：直接读 hub 源，并提示运行 `node scripts/devflow-gen.mjs`；两者都缺失时提示先运行 `/devflow:init`，然后停止。
+   - 任务涉及子项目时，只按投影的「技术栈规范」读取对应栈文件；`overrides` 优先于栈规范，任何规则都不得放宽门禁与安全底线。
    - 工具路由（可跳过）：运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-route.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --stage req <用户参数>`；未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/devflow-route.mjs --stage req <用户参数>`。用户参数中的 `--force-devflow` 原样透传。
    - 参数含 `--light` 时，轻量流程不切换工具：给路由命令附加 `--force-devflow`，避免 BMAD、Spec Kit、OpenSpec 等 workflow 工具接管 req 阶段。若同时显式传 `--tool <id>`，说明轻量模式下该参数不生效；需要改用其他工具或完整规格流程时，去掉 `--light` 后重新执行。
    - `use-devflow`：直接继续本阶段。

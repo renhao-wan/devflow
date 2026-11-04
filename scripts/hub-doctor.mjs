@@ -17,6 +17,7 @@ import {
   summarizeState, validateConfig,
 } from './lib/ecosystem.mjs';
 import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
+import { planStacks } from './lib/stacks.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -121,6 +122,19 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const blocked = config.upstream?.blocklist;
     if (blocked != null && !Array.isArray(blocked)) add('warn', 'hub.yaml upstream.blocklist 应为列表', '把 .claude/hub/hub.yaml 的 upstream.blocklist 改为 YAML 列表');
+
+    const stages = Array.isArray(config.stages) ? config.stages.map(String) : [];
+    const stackPlan = planStacks(root, config, stages);
+    for (const issue of stackPlan.issues) {
+      const hint = issue.severity === 'error'
+        ? '运行 /devflow:sync 补齐技术栈模板，或修正 .claude/hub/hub.yaml 的 stack 声明'
+        : '在 .claude/hub/stacks/<stack>/ 添加 _shared.md 或 <stage>.md';
+      add(issue.severity, issue.message, hint);
+    }
+    if (stackPlan.rows.length && !stackPlan.issues.some((i) => i.severity === 'error')) {
+      const names = [...new Set(stackPlan.rows.map((row) => row.stack))];
+      add('ok', `技术栈映射有效：${stackPlan.rows.length} 个子项目 → ${names.join('、')}`);
+    }
   }
 
   const eco = loadEcosystem(root);
@@ -266,6 +280,7 @@ export async function main(argv = process.argv.slice(2)) {
     const templateDirs = [
       join(root, '.claude', 'hub', 'stages'),
       join(root, '.claude', 'hub', '_shared'),
+      join(root, '.claude', 'hub', 'stacks'),
     ];
     const issues = [];
     let scanned = 0;

@@ -44,6 +44,11 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 - 更新 `docs/devflow/<slug>/plan.md` 的完成状态；轻量功能更新 `brief.md` 的「实施记录」；进度记录可使用 `templates/task-progress.template.md`。
 - 新增/修改的测试文件。
 
+## 技术栈规范
+
+如果 `.claude/skills/devflow-<stage>/SKILL.md` 中存在「技术栈规范」映射，处理某个子项目时读取其对应文件；只读任务涉及的子项目，不预读全部。
+技术栈规范与 `overrides` 冲突时以 `overrides` 为准，且不得放宽阶段门禁与安全底线。
+
 ## 边界
 
 - 不擅自扩大范围；发现必须扩大时，停下来更新需求与计划；命中轻量硬触发时升级完整流程，不带着风险继续。

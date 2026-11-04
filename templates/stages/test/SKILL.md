@@ -54,6 +54,11 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - `.claude/.devflow-state.json` 中的最近一次测试记录（状态、退出码、耗时与命令）。
 - 轻量修复未标记 `review: required` 时，`test.md` 就是该任务的最终产物。
 
+## 技术栈规范
+
+如果 `.claude/skills/devflow-<stage>/SKILL.md` 中存在「技术栈规范」映射，处理某个子项目时读取其对应文件；只读任务涉及的子项目，不预读全部。
+技术栈规范与 `overrides` 冲突时以 `overrides` 为准，且不得放宽阶段门禁与安全底线。
+
 ## 边界
 
 - 不删除、跳过失败的测试来“通过”。

@@ -583,6 +583,38 @@ test('load-hub 注入阶段与子项目摘要', () => {
   }
 });
 
+test('load-hub 注入技术栈摘要，未声明时不出现', () => {
+  const root = makeRoot();
+  try {
+    const before = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(before, /技术栈：/);
+
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'stack: java-spring',
+      'stages:',
+      '  - req',
+      '  - test',
+      'subprojects:',
+      '  api:',
+      '    path: services/api',
+      '    stack: vue3',
+      '  web:',
+      '    path: apps/web',
+      'defaults:',
+      '  testCommand: "npm test"',
+      '',
+    ].join('\n'));
+
+    const ctx = JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+      .hookSpecificOutput.additionalContext;
+    assert.match(ctx, /技术栈：api=vue3、web=java-spring/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('load-hub 有概览时注入项目概览摘要', () => {
   const root = makeRoot();
   try {

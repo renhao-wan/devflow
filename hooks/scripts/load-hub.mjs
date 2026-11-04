@@ -48,6 +48,21 @@ try {
     `- 阶段：${stages.join(', ') || '（未声明）'}`,
     `- 子项目：${subs.join(', ') || '单项目'}`,
   ];
+  const rootStack = typeof config.stack === 'string' ? config.stack.trim() : '';
+  const stackRows = [];
+  const subEntries = rawSubs && typeof rawSubs === 'object' && !Array.isArray(rawSubs)
+    ? Object.entries(rawSubs)
+    : [];
+  if (subEntries.length) {
+    for (const [name, value] of subEntries) {
+      const own = typeof value?.stack === 'string' ? value.stack.trim() : '';
+      const stack = own || rootStack;
+      if (stack) stackRows.push(`${name}=${stack}`);
+    }
+  } else if (rootStack) {
+    stackRows.push(rootStack);
+  }
+  if (stackRows.length) lines.push(`- 技术栈：${stackRows.join('、')}`);
   const overviewFile = join(root, '.claude', 'hub', 'project-overview.md');
   if (existsSync(overviewFile)) {
     const facts = scanFacts(root, { subprojectPaths });
@@ -59,7 +74,7 @@ try {
   }
   if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
   lines.push('- 流程：req → plan → implement → test → review；test 或 implement 失败时进入 debug，修复后回到 test。');
-  lines.push('- 单一真源：.claude/hub/stages/<stage>/SKILL.md，改动后重新生成技能。');
+  lines.push('- 单一真源：先读 .claude/skills/devflow-<stage>/SKILL.md（项目投影），再按其中的指令读 .claude/hub/stages/<stage>/SKILL.md；改动后重新生成技能。');
 
   // 只在项目显式配置生态索引时注入，避免给未启用的项目增加噪音。
   const ecoFile = join(root, '.claude', 'hub', 'ecosystem.yaml');

@@ -10,13 +10,16 @@
 | --- | --- | --- |
 | 范围 | `--stage <name>` | 单个阶段，`.claude/hub/stages/<name>/` → `templates/stages/<name>/` |
 | 范围 | `--shared` | 共享规则，`.claude/hub/_shared/` → `templates/shared/` |
-| 范围 | `--all` | 所有阶段；`_shared` 存在时一并回灌 |
+| 范围 | `--stack <name>` | 单个技术栈，`.claude/hub/stacks/<name>/` → `templates/stacks/<name>/` |
+| 范围 | `--all` | 所有阶段与所有技术栈；`_shared` 存在时一并回灌 |
 | 目标 | `--to personal` | 个人库（默认 `~/.claude/devflow`）：A 项目回灌，B 项目复用 |
 | 目标 | `--to team` | 团队库（`hub.yaml` 配置）：团队共用模板，默认只写工作区 |
 | 目标 | `--to upstream`（默认） | 上游插件源码仓库，不提交 |
 | 修饰 | `--pr` | 团队库或上游库走分支 + 提交 + 推送 + PR |
 
-三个库共用 `<root>/templates/stages/**` 与 `<root>/templates/shared/**` 布局。项目里的 `.claude/hub/` 是同步落盘目标，不作为回灌来源。
+三个库共用 `<root>/templates/stages/**`、`<root>/templates/shared/**` 与 `<root>/templates/stacks/**` 布局。项目里的 `.claude/hub/` 是同步落盘目标，不作为回灌来源。
+
+`overrides/`、`hub.yaml`、`project-overview.md`、`ecosystem.yaml` 与账本不在回灌范围内。完整范围与同步方向见 [layers.md](layers.md)。
 
 ```bash
 # 预览：显示分类与差异，不写文件
@@ -34,8 +37,9 @@
 # 上游 PR
 /devflow:upstream --stage plan --to upstream --pr --apply
 
-# 个人库 / 团队库也支持共享规则与全量
+# 个人库 / 团队库也支持共享规则、技术栈与全量
 /devflow:upstream --shared --to personal --apply
+/devflow:upstream --stack java-spring --to personal --apply
 /devflow:upstream --all --to team --apply
 ```
 
@@ -133,7 +137,7 @@ templates:
 
 回灌会修改目标库，建议单独提交后在项目里运行 `/devflow:doctor`。
 
-其他项目要复用这些内容，需在各自 `hub.yaml` 的 `templates.order` 中启用对应库（个人库默认启用），然后运行 `/devflow:sync`；AI 读取规则的完整时机见 [usage.md 的“AI 何时读取这些规则”](usage.md#ai-何时读取这些规则)。
+其他项目要复用这些内容，需在各自 `hub.yaml` 的 `templates.order` 中启用对应库（个人库默认启用），然后运行 `/devflow:sync`；目录职责与完整读取时机见 [layers.md](layers.md)，阶段细节见 [usage.md](usage.md)。
 
 ## 升级插件
 
@@ -147,7 +151,7 @@ templates:
 /devflow:sync
 ```
 
-判定依据是 `.claude/.hub-sources.json`（schema v3）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local, source }`，`source` 标明内容来自 `team`、`personal` 还是 `upstream`。同步按 `hub.yaml` 的 `templates.order` 读取所有启用库，同名文件先到先得、整文件覆盖；项目里的手改仍由基线快照做三方合并保留。旧项目没有 `templates` 块时只读上游，行为不变；v2 账本会在下次 `sync` 自动升级到 v3。同步不会从 `pluginSourceRoot` 拉未发布模板。`stages/` 与 `_shared/` 都会同步。
+判定依据是 `.claude/.hub-sources.json`（schema v3）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local, source }`，`source` 标明内容来自 `team`、`personal` 还是 `upstream`。同步按 `hub.yaml` 的 `templates.order` 读取所有启用库，同名文件先到先得、整文件覆盖；项目里的手改仍由基线快照做三方合并保留。旧项目没有 `templates` 块时只读上游，行为不变；v2 账本会在下次 `sync` 自动升级到 v3。同步不会从 `pluginSourceRoot` 拉未发布模板。`stages/`、`_shared/` 与 `stacks/` 都会同步。
 
 | 情况 | 行为 |
 | --- | --- |
@@ -242,8 +246,8 @@ gh auth login --web
 
 安全约束：
 
-- 上游白名单：`templates/stages/`、`templates/shared/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。
-- 团队库白名单收窄为 `templates/stages/`、`templates/shared/`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`；不会改动任何版本文件或 CHANGELOG。
+- 上游白名单：`templates/stages/`、`templates/shared/`、`templates/stacks/`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`package.json`、`CHANGELOG.md`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`。
+- 团队库白名单收窄为 `templates/stages/`、`templates/shared/`、`templates/stacks/`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`；不会改动任何版本文件或 CHANGELOG。
 - 这些文件在回灌前必须干净，否则脚本拒绝执行，避免把无关改动混进 PR。
 - 工作区其他未提交改动不会进入提交，脚本会列出来。
 - 提交前重新扫描写出的文件：仍含疑似密钥则停止；`SKILL.md` 的 frontmatter `name` 必须与目录名一致且 `description` 非空。
@@ -270,6 +274,10 @@ gh auth login --web
 | doctor 报 `cd` 目录或本地脚本不存在 | `testCommand` 里的路径与实际目录不符；修正 `hub.yaml` 的 `testCommand` |
 | `scripts/devflow-*.mjs` 不见了或内容过期 | loader 是生成物且被 `.gitignore` 忽略；重跑 `/devflow:init` 会重建并刷新旧 loader（`devflow-gen` 不负责生成 loader） |
 | 生成器报阶段名非法 | `.claude/hub/stages/` 下的目录名必须以小写字母开头，只允许 `[a-z0-9_-]` |
+| 生成器/doctor 报技术栈目录不存在 | 检查 `hub.yaml` 的 `stack` 声明；运行 `/devflow:sync`，或在 `.claude/hub/stacks/<name>/` 建目录并添加 `_shared.md` / `<stage>.md` |
+| 生成器/doctor 报技术栈名非法 | 栈名必须以 `[a-z0-9]` 开头，只允许 `[a-z0-9_-]`，不能包含路径分隔符或 `..` |
+| 技术栈目录为空 | 该栈已声明但没有任何 `.md`；添加 `_shared.md` 或 `<stage>.md`，否则只给提醒、不参与读取 |
+| 技术栈文件真实路径越出项目 | 目录或文件被 junction/符号链接指向项目外；改回项目内或移除链接 |
 | hooks 不生效 | 确认项目含 `.claude/hub/hub.yaml`；重启会话；确认 `node` 在 `PATH` |
 | 插件已安装但命令报 `Unknown command` | `~/.claude/settings.json` 的 `enabledPlugins` 缺少 `"devflow@devflow-marketplace": true`；补上后重启会话。若使用 cc-switch，切换供应商会整体覆盖 `settings.json`，需把该启用项同步进各供应商快照 |
 | 测试命令为空或错误 | 手动修改 `hub.yaml` 的 `testCommand`；root 无构建文件时默认写 `npm test`，必须替换 |

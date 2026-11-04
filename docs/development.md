@@ -42,6 +42,7 @@ evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/README.md         # 文档索引与阅读顺序
+docs/layers.md         # 三层结构、目录职责、读取时机、冲突优先级、同步与回灌
 docs/usage.md          # 阶段细节、hub.yaml、资源、投影、多根工作区、statusline
 docs/hooks.md          # hooks 作用域、生成物写保护、deny/ask 清单
 docs/maintenance.md    # 回灌、升级、启用状态、ship/PR、故障排查
@@ -60,7 +61,7 @@ package.json           # 发布元数据与 npm test 脚本
 
 ```
 .claude/hub/           # 项目真源
-├─ hub.yaml            # 子项目、阶段、测试命令
+├─ hub.yaml            # 默认技术栈、子项目、阶段、测试命令
 ├─ ecosystem.yaml      # 同类工具索引与路由模式
 ├─ project-overview.md # 项目概览：自动段 + 人工补充（onboard 生成）
 ├─ stages/<stage>/     # 六个阶段的正文与资源
@@ -68,6 +69,7 @@ package.json           # 发布元数据与 npm test 脚本
 │  ├─ references/      # 按需读取的细则（可选）
 │  └─ templates/       # 产出骨架（可选）
 ├─ overrides/          # 子项目级覆盖（可选）
+├─ stacks/             # 技术栈规范：<stack>/_shared.md 与 <stage>.md（可选）
 └─ _shared/            # 跨阶段共用规则，生成时注入每条投影
 
 .claude/skills/        # 生成物，勿手改
@@ -87,7 +89,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 421 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 441 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、技术栈映射、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

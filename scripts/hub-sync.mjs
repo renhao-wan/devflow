@@ -87,7 +87,7 @@ export async function main(argv = process.argv.slice(2)) {
     personalLibrary,
     teamLibrary,
   }));
-  if (!files.length) throw new Error(`没有可用的阶段或共享模板：${posix(join(pluginRoot, 'templates'))}`);
+  if (!files.length) throw new Error(`没有可用的阶段、共享或技术栈模板：${posix(join(pluginRoot, 'templates'))}`);
 
   const actions = [];
   const loaderFiles = new Set(Object.keys(LOADERS));

@@ -7,6 +7,7 @@ import {
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
   samePath, isValidStageName, loadHub,
 } from './lib/common.mjs';
+import { isValidStackName } from './lib/stacks.mjs';
 import {
   resolveUnits, planUnits, applyPlan, validateWrittenFiles, appendLog,
 } from './lib/upstream.mjs';
@@ -21,6 +22,7 @@ const UPSTREAM_WHITELIST = [
   (p) => p === 'templates/stages/_feedback-log.md',
   (p) => p.startsWith('templates/stages/'),
   (p) => p.startsWith('templates/shared/'),
+  (p) => p.startsWith('templates/stacks/'),
 ];
 
 // 团队模板库只提交模板与回灌日志，不碰版本文件与 CHANGELOG。
@@ -29,6 +31,7 @@ const TEAM_WHITELIST = [
   (p) => p === 'docs/upstream-log.md',
   (p) => p.startsWith('templates/stages/'),
   (p) => p.startsWith('templates/shared/'),
+  (p) => p.startsWith('templates/stacks/'),
 ];
 
 function isWhitelisted(path, profile = 'upstream') {
@@ -135,15 +138,26 @@ function compareUrl(prRepo, base, headOwner, branch) {
 }
 
 function unitNames(units) {
-  return units.map((u) => (u.kind === 'shared' ? '共享规则' : `${u.name} 阶段`));
+  return units.map((u) => {
+    if (u.kind === 'shared') return '共享规则';
+    if (u.kind === 'stack') return `${u.name} 技术栈`;
+    return `${u.name} 阶段`;
+  });
+}
+
+function unitRelPath(unit, rel) {
+  if (unit.kind === 'shared') return `shared/${rel}`;
+  if (unit.kind === 'stack') return `stacks/${unit.name}/${rel}`;
+  return `${unit.name}/${rel}`;
 }
 
 /** 复用仓库 PR 模板，没有模板时退回内置结构。 */
 export function buildPrBody(pluginRoot, {
-  stage, stages, shared, projectName, files,
+  stage, stages, stacks, shared, projectName, files,
 }) {
   const names = [];
   for (const name of [...(stages || []), ...(stage ? [stage] : [])]) names.push(`${name} 阶段`);
+  for (const name of stacks || []) names.push(`${name} 技术栈`);
   if (shared) names.push('共享规则');
   const unitText = names.join('、') || '阶段规则';
   const tplFile = join(pluginRoot, '.github', 'pull_request_template.md');
@@ -247,6 +261,7 @@ function ghUpsert(worktreeDir, { base, head, headOwner, title, body }) {
 export async function main(argv = process.argv.slice(2)) {
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stages = argValues(argv, '--stage');
+  const stacks = argValues(argv, '--stack');
   const shared = hasFlag(argv, '--shared');
   const all = hasFlag(argv, '--all');
   const profile = argValue(argv, '--profile', 'upstream');
@@ -262,12 +277,17 @@ export async function main(argv = process.argv.slice(2)) {
   const remoteName = argValue(argv, '--remote', 'origin');
   const fork = hasFlag(argv, '--fork') || remoteName !== 'origin';
 
-  if (!stages.length && !shared && !all && !resume) {
-    throw new Error('必须指定 --stage <name>、--shared 或 --all');
+  if (!stages.length && !stacks.length && !shared && !all && !resume) {
+    throw new Error('必须指定 --stage <name>、--stack <name>、--shared 或 --all');
   }
   for (const stage of stages) {
     if (!isValidStageName(stage)) {
       throw new Error(`阶段名非法：${stage}。只允许小写字母开头的 [a-z0-9_-]。`);
+    }
+  }
+  for (const stack of stacks) {
+    if (!isValidStackName(stack)) {
+      throw new Error(`技术栈名非法：${stack}。只允许 [a-z0-9][a-z0-9_-]*。`);
     }
   }
 
@@ -310,7 +330,7 @@ export async function main(argv = process.argv.slice(2)) {
   const headOwner = fork && pushRepo ? pushRepo.owner : null;
   const needsForkOwner = Boolean(headOwner && prRepo && headOwner !== prRepo.owner);
 
-  const slug = (resume ? 'resume' : [...stages, ...(shared ? ['shared'] : []), ...(all ? ['all'] : [])].join('-'))
+  const slug = (resume ? 'resume' : [...stages, ...stacks, ...(shared ? ['shared'] : []), ...(all ? ['all'] : [])].join('-'))
     .replace(/[^A-Za-z0-9_-]/g, '-')
     .replace(/-+/g, '-') || 'upstream';
   const branchPrefix = profile === 'team' ? 'team' : 'upstream';
@@ -333,7 +353,7 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
-  const units = resume ? [] : resolveUnits(root, { stages, shared, all });
+  const units = resume ? [] : resolveUnits(root, { stages, stacks, shared, all });
   const plans = resume ? [] : planUnits(root, pluginRoot, units, config);
   const pending = plans.flatMap((p) => p.pending);
 
@@ -343,7 +363,7 @@ export async function main(argv = process.argv.slice(2)) {
     } else {
       for (const plan of plans) {
         for (const file of plan.files) {
-          const rel = `${plan.unit.kind === 'shared' ? '_shared' : plan.unit.name}/${file.rel}`;
+          const rel = unitRelPath(plan.unit, file.rel);
           if (file.skipped) console.log(`[跳过] ${rel}（${file.reason}）`);
           else if (file.verdict.type === 'local') console.log(`[项目专属] ${rel}`);
           else console.log(`[${file.changed ? '可回灌' : '无变化'}] ${rel}`);
@@ -430,13 +450,16 @@ export async function main(argv = process.argv.slice(2)) {
     const projectName = basename(root);
     const singleStage = units.length === 1 && units[0].kind === 'stage';
     const singleShared = units.length === 1 && units[0].kind === 'shared';
+    const singleStack = units.length === 1 && units[0].kind === 'stack';
     const subject = resume
       ? `feat(templates): 续做回灌 ${slug}`
       : singleStage
         ? `feat(templates): 回灌 ${units[0].name} 阶段规则`
         : singleShared
           ? 'feat(templates): 回灌共享规则'
-          : `feat(templates): 回灌 ${slug} 规则`;
+          : singleStack
+            ? `feat(templates): 回灌 ${units[0].name} 技术栈规范`
+            : `feat(templates): 回灌 ${slug} 规则`;
     if (toAdd.length) {
       const message = [
         subject,
@@ -469,6 +492,7 @@ export async function main(argv = process.argv.slice(2)) {
     const url = compareUrl(prRepo, base, needsForkOwner ? headOwner : null, branch);
     const prBody = buildPrBody(worktreeDir, {
       stages,
+      stacks,
       shared: units.some((u) => u.kind === 'shared'),
       projectName,
       files: toAdd.length ? toAdd : ['（续做，无新增文件）'],

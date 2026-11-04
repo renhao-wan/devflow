@@ -22,7 +22,7 @@ function pluginRootFromScript() {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..');
 }
 
-function renderHubYaml(subprojects, version, rootTest, { templates = null, blocklist = [] } = {}) {
+function renderHubYaml(subprojects, version, rootTest, { templates = null, blocklist = [], stack = null } = {}) {
   const lines = [
     '# devflow 项目真源配置。可以自由修改，改完运行 node scripts/devflow-gen.mjs。',
     'version: 1',
@@ -30,6 +30,7 @@ function renderHubYaml(subprojects, version, rootTest, { templates = null, block
     'stages:',
     ...STAGES.map((s) => `  - ${s}`),
   ];
+  if (stack) lines.push(`stack: ${JSON.stringify(stack)}`);
   if (subprojects.length) {
     lines.push('subprojects:');
     for (const s of subprojects) {
@@ -37,6 +38,7 @@ function renderHubYaml(subprojects, version, rootTest, { templates = null, block
       lines.push(`  ${key}:`);
       lines.push(`    path: ${JSON.stringify(s.path)}`);
       lines.push(`    stages: [${s.stages.join(', ')}]`);
+      if (s.stack) lines.push(`    stack: ${JSON.stringify(s.stack)}`);
       if (s.testCommand) lines.push(`    testCommand: ${JSON.stringify(s.testCommand)}`);
     }
   } else {
@@ -231,7 +233,20 @@ export async function main(argv = process.argv.slice(2)) {
     ensureDir(join(root, '.claude', 'hub', 'stages'));
     ensureDir(join(root, '.claude', 'hub', '_shared'));
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
+    ensureDir(join(root, '.claude', 'hub', 'stacks'));
     const existing = existsSync(hubFile) ? parseYaml(readText(hubFile)) : {};
+    const previousSubs = existing.subprojects && typeof existing.subprojects === 'object'
+      && !Array.isArray(existing.subprojects)
+      ? existing.subprojects
+      : {};
+    const previousStack = (sub) => {
+      const own = previousSubs[sub.name];
+      if (own?.stack) return String(own.stack);
+      for (const value of Object.values(previousSubs)) {
+        if (value?.path === sub.path && value?.stack) return String(value.stack);
+      }
+      return null;
+    };
     const config = {
       ...existing,
       templates: existing.templates || { order: ['personal', 'upstream'], personal: { enabled: true } },
@@ -244,10 +259,12 @@ export async function main(argv = process.argv.slice(2)) {
     const templateFiles = collectTemplateFiles(libraries);
     const copied = copyTemplates(templateFiles, root, force);
     const { list: subs, expanded } = discoverSubprojects(root);
+    const subsWithStack = subs.map((sub) => ({ ...sub, stack: previousStack(sub) }));
     const rootTest = detectTestCommand(root);
-    writeAtomic(hubFile, renderHubYaml(subs, info.version, rootTest, {
+    writeAtomic(hubFile, renderHubYaml(subsWithStack, info.version, rootTest, {
       templates: config.templates,
       blocklist: existing.upstream?.blocklist,
+      stack: existing.stack ? String(existing.stack) : null,
     }));
     writeSourceManifest(root, info.version, templateFiles);
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
@@ -324,10 +341,11 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', '初始化完成');
   }
   console.log('\n下一步：');
-  console.log('  1. 编辑 .claude/hub/hub.yaml（子项目、测试命令）');
+  console.log('  1. 编辑 .claude/hub/hub.yaml（子项目、测试命令、stack）');
   console.log('  2. 编辑 .claude/hub/stages/*/SKILL.md（项目规范）');
-  console.log('  3. node scripts/devflow-gen.mjs');
-  console.log('  4. node scripts/devflow-doctor.mjs');
+  console.log('  3. 需要按语言/框架复用规范时，在 .claude/hub/stacks/<stack>/ 放 _shared.md 或 <stage>.md');
+  console.log('  4. node scripts/devflow-gen.mjs');
+  console.log('  5. node scripts/devflow-doctor.mjs');
   return report;
 }
 

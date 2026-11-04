@@ -8,10 +8,11 @@ import {
 
 export const LIBRARY_KINDS = ['team', 'personal', 'upstream'];
 
-// 三个库共用插件模板布局：templates/stages/**、templates/shared/**。
+// 三个库共用插件模板布局：templates/stages/**、templates/shared/**、templates/stacks/**。
 const TEMPLATE_ROOTS = [
   { src: 'stages', hub: 'stages' },
   { src: 'shared', hub: '_shared' },
+  { src: 'stacks', hub: 'stacks' },
 ];
 
 export function defaultPersonalRoot() {

@@ -151,6 +151,30 @@ test('流程技能说明与 superpowers 的协作边界', () => {
   assert.match(skill, /fallback/);
 });
 
+test('六个阶段入口先读项目投影并说明技术栈与 overrides 优先级', () => {
+  for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+    const body = read(`skills/${stage}/SKILL.md`);
+    assert.match(
+      body,
+      new RegExp(`先读项目投影 \`\\.claude/skills/devflow-${stage}/SKILL\\.md\``),
+      `${stage} 未要求先读项目投影`,
+    );
+    assert.match(body, /「技术栈规范」/, `${stage} 未说明技术栈映射`);
+    assert.match(body, /`overrides` 优先/, `${stage} 未说明 overrides 优先`);
+    assert.match(body, /不得放宽门禁与安全底线/, `${stage} 未说明门禁不可放宽`);
+    assert.match(body, /devflow-gen\.mjs/, `${stage} 未给出投影缺失回退`);
+  }
+});
+
+test('阶段模板包含技术栈规范小节并声明 overrides 优先', () => {
+  for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+    const body = read(`templates/stages/${stage}/SKILL.md`);
+    assert.match(body, /## 技术栈规范/, `${stage} 模板缺少技术栈小节`);
+    assert.match(body, /以 `overrides` 为准/, `${stage} 模板未声明 overrides 优先`);
+    assert.match(body, /不得放宽阶段门禁与安全底线/, `${stage} 模板未声明门禁不可放宽`);
+  }
+});
+
 test('阶段入口技能以阶段 SKILL 为准并引用对应技能与子代理', () => {
   const refs = {
     req: [],

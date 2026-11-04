@@ -23,24 +23,31 @@
 
 ## 分层
 
+每个目录的职责、AI 读取时机、冲突优先级、同步与回灌范围见 [layers.md](layers.md)。这里只保留结构：
+
 ```
 插件（出厂默认）
-  skills/ + agents/ + hooks/ + templates/ + bin/ + evals/
-        │ init 时复制模板
+  skills/ + agents/ + hooks/ + templates/ + scripts/ + bin/ + evals/
+        │ init / sync：按 templates.order 合并启用的库并复制
         ▼
 项目 .claude/hub/（项目真源）
-  hub.yaml + stages/<stage>/{SKILL.md, references/, templates/} + _shared/
-  project-overview.md（派生文档：自动段 + 人工补充，不入源账本、不回灌、不触发投影）
-        │ 生成器投影
+  hub.yaml
+  stages/<stage>/{SKILL.md, references/, templates/}
+  _shared/
+  overrides/<sub>/<stage>.md
+  stacks/<stack>/
+  project-overview.md
+        │ devflow-gen 生成
         ▼
-项目 .claude/skills/devflow-*（薄壳）
+项目 .claude/skills/devflow-*（薄壳，勿手改）
 ```
 
 ## 职责边界
 
 - 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。阶段入口（req…sync）同样是 skills，只是带上了 `disable-model-invocation` 等调用约束，不再是独立的 `commands/`。
-- `templates/stages/` 是**项目级阶段规则**，init 复制为 `.claude/hub/`，描述“本项目每个阶段的具体规范”。
-- 两者主题相近但用途不同，不互相替代：修改阶段规范只动项目 hub，修改通用方法论才动插件 skills。
+- `templates/stages/` 是**项目级阶段规则**，init 复制为 `.claude/hub/stages/`，描述“本项目每个阶段的具体规范”。
+- `_shared/` 是跨阶段通用规则，生成投影时内联进每个阶段；`overrides/` 是子项目级例外，不参与同步与回灌；`stacks/` 按技术栈复用规范，参与同步与回灌。
+- 修改阶段规范只动项目 hub，修改通用方法论才动插件 skills；`overrides/`、`hub.yaml`、`project-overview.md` 不会同步或回灌到模板库。
 
 ## 六阶段与门禁
 
@@ -103,13 +110,13 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 
 ## 回灌与升级
 
-回灌把项目里验证过的规则送回模板库，分**范围**与**目标库**两个维度：范围是 `--stage <name>` / `--shared` / `--all`，目标是 `personal`（个人库）、`team`（团队库）与 `upstream`（插件源码；加 `--pr` 走分支与 PR）。三种目标共用同一套 `plan → apply` 流水线，避免分类规则分叉。个人库默认 `~/.claude/devflow`；团队库配置在 `hub.yaml`，必须指向本机已 clone 的 git 顶层，默认只写工作区，加 `--pr` 才提交推送；上游库由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。三个库共用同一写入流程，都不碰版本文件。
+回灌把项目里验证过的规则送回模板库，分**范围**与**目标库**两个维度：范围是 `--stage <name>` / `--shared` / `--stack <name>` / `--all`，目标是 `personal`（个人库）、`team`（团队库）与 `upstream`（插件源码；加 `--pr` 走分支与 PR）。三种目标共用同一套 `plan → apply` 流水线，避免分类规则分叉。个人库默认 `~/.claude/devflow`；团队库配置在 `hub.yaml`，必须指向本机已 clone 的 git 顶层，默认只写工作区，加 `--pr` 才提交推送；上游库由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根依次决定，落在安装缓存的写入会被拒绝。三个库共用同一写入流程，都不碰版本文件。
 
 分类采用**显式标记优先、行级剔敏兜底**：`devflow:local` 块整块剔除，`devflow:reusable` 块强制保留但仍做敏感扫描；未标记内容逐行匹配绝对路径、内网地址、常见密钥、blocklist 与子项目名，命中行单独剔除，其余行照常回灌；剔除后无正文才判为项目专属。这样一段通用规则不会因为相邻一行带内网地址而整文件丢失。
 
 回灌只改模板并写日志，不改版本文件；版本号由维护者在发版时统一调整。每次写入先备份到目标库的 `.devflow/backups/<id>/` 并记 journal，中断可续做；日志写 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`，`--revert <id>` 可回滚（未指定 `--to` 时依次查个人、团队、上游）。远程提交前重新扫描写出的文件并校验 `SKILL.md` frontmatter，`push` 失败保留本地分支，`--resume` 可续推；同 head 已有 PR 时更新而非重复创建。团队 profile 复用同一流程，但白名单只含模板与回灌日志，跳过版本与 CHANGELOG，分支前缀 `devflow/team-`。
 
-消费端按 `templates.order` 合并三个库，同名文件先到先得、整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底；没有 `templates` 块的旧项目只读上游。`hub-sync` 的账本升级为 schema v3，为每个文件记录 `{ base, local, source }`：本地未改 → 跟随模板；模板未变 → 保留手改并刷新 `source`；双方都改 → 用 `git merge-file` 三方合并。高优先库删除同名文件后自动回落到下一来源，所有库都不再提供时才从账本移除并保留本地文件。同步只动 `stages/` 与 `_shared/`，不碰 `hub.yaml` 与 `overrides/`。
+消费端按 `templates.order` 合并三个库，同名文件先到先得、整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底；没有 `templates` 块的旧项目只读上游。`hub-sync` 的账本升级为 schema v3，为每个文件记录 `{ base, local, source }`：本地未改 → 跟随模板；模板未变 → 保留手改并刷新 `source`；双方都改 → 用 `git merge-file` 三方合并。高优先库删除同名文件后自动回落到下一来源，所有库都不再提供时才从账本移除并保留本地文件。同步只动 `stages/`、`_shared/` 与 `stacks/`，不碰 `hub.yaml` 与 `overrides/`。
 
 多来源也带来版本错配：模板可能引用新插件才有的 loader，或依赖更新版本的行为。同步前先做兼容性校验——正文引用的 `scripts/devflow-*.mjs` 必须存在于当前插件的 `LOADERS`，模板 frontmatter 的 `minPluginVersion` 必须被当前插件版本满足；不通过的文件归为“不兼容，已跳过”，既不写入也不更新基线，等升级插件后重跑。`doctor` 用同一规则扫描项目内模板，提前暴露降级或换机后的断链。
 
@@ -170,3 +177,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
 - [x] 1.4.1：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）、轻量功能与小 bug 双通道（`brief.md` / `debug.md`）
 - [x] 1.5.0：`/devflow:onboard` 项目概览；`init` 生成简版，重扫只刷新标记块内自动段；`doctor` 通过事实指纹发现概览过期
+- [x] 第二层完善：阶段入口先读项目投影（内联 `_shared`、提示 `overrides`）、`stacks/` 技术栈映射与惰性读取、同步/回灌/`doctor` 覆盖技术栈
