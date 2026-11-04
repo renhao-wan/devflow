@@ -9,7 +9,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
 
 > 以下为入口摘要；与 `.claude/hub/stages/debug/SKILL.md` 冲突时，以 SKILL 为准。
 
-1. 读取 `.claude/hub/stages/debug/SKILL.md`；方法可用 `devflow-systematic-debugging` 技能，需要并行验证假设时用 `devflow:devflow-debug-investigator` 子代理（旧版本可能显示为 `devflow-debug-investigator`，以 `/agents` 列表为准）。
+1. 先读项目投影 `.claude/skills/devflow-debug/SKILL.md`（含共享规则、子项目覆盖与技术栈映射），再按其中「单一真源」读取 `.claude/hub/stages/debug/SKILL.md`；方法可用 `devflow-systematic-debugging` 技能，需要并行验证假设时用 `devflow:devflow-debug-investigator` 子代理（旧版本可能显示为 `devflow-debug-investigator`，以 `/agents` 列表为准）。
+   - 投影缺失：直接读 hub 源，并提示运行 `node scripts/devflow-gen.mjs`；两者都缺失时提示先运行 `/devflow:init`。
+   - 任务涉及子项目时，只按投影的「技术栈规范」读取对应栈文件；`overrides` 优先于栈规范，任何规则都不得放宽门禁与安全底线。
    - 工具路由（可跳过）：运行 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-route.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --stage debug <用户参数>`；未设置 `CLAUDE_PLUGIN_ROOT` 时用 `node scripts/devflow-route.mjs --stage debug <用户参数>`。用户参数中的 `--force-devflow` 原样透传。
    - `use-devflow`：直接继续本阶段。
    - `suggest`：说明候选工具与理由并询问；用户未同意时继续 devflow。

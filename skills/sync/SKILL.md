@@ -23,6 +23,6 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-sync.mjs" --root "${CLAUDE_PROJECT_DIR:-
    - 不兼容：模板引用了当前插件未提供的 loader，或 `minPluginVersion` 高于当前插件；这类文件**不写入**，本地内容保持不变；
    - 高优先库删除同名文件时自动回落到下一来源，不会误删项目文件。
 3. 输出里的 `[team]` / `[personal]` / `[upstream]` 表示该文件当前来自哪个库；账本 `.claude/.hub-sources.json` 为 v3，记录每个文件的 `{ base, local, source }`。
-4. 用户确认后去掉 `--dry-run` 执行。同步只改 `.claude/hub/stages/` 与 `.claude/hub/_shared/`，不会改动 `hub.yaml`、`overrides/`，也不会从 `pluginSourceRoot` 拉未发布模板。用 `--personal-library` / `--team-library` 传入的本机路径会写入 `.devflow.json`，下次可直接复用。
+4. 用户确认后去掉 `--dry-run` 执行。同步只改 `.claude/hub/stages/`、`.claude/hub/_shared/` 与 `.claude/hub/stacks/`，不会改动 `hub.yaml`、`overrides/`，也不会从 `pluginSourceRoot` 拉未发布模板。用 `--personal-library` / `--team-library` 传入的本机路径会写入 `.devflow.json`，下次可直接复用。
 5. 同步结束会自动运行生成器；若因 `requiresPlugin` 不满足而失败，提示用户升级插件或调整版本范围。出现“不兼容”时，说明是 loader 缺失还是模板要求更高版本，建议升级插件或改用兼容来源后重跑；不要用 `--force` 强行写入。
 6. 冲突较多时，提醒用户逐个对比 `.claude/hub/` 与对应来源库，不要盲目 `--force`。团队库路径不存在或未启用时，按 `/devflow:doctor` 的提示先修正 `hub.yaml` 或 clone。

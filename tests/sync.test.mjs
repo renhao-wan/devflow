@@ -102,6 +102,30 @@ test('sync 更新未改文件、保留手改、加入新资源', () => {
   }
 });
 
+test('sync 同步技术栈模板并保留本地手改', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-stacks-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stacks/java-spring/_shared.md': '# Java v1\n',
+      'templates/stacks/java-spring/plan.md': '# Java plan v1\n',
+    });
+    const root = makeProject(base, repo);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), /Java v1/);
+
+    writeFileSync(join(repo, 'templates', 'stacks', 'java-spring', '_shared.md'), '# Java v2\n');
+    writeFileSync(join(repo, 'templates', 'stacks', 'java-spring', 'review.md'), '# Java review\n');
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), '# 本地方案规范\n');
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), /Java v2/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'review.md'), 'utf8'), /Java review/);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'utf8'), /本地方案规范/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('sync 为老项目补入新增的 brief 模板', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-sync-light-'));
   try {

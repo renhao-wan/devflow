@@ -320,6 +320,31 @@ test('团队库默认只写工作区，不提交也不升版本', () => {
   }
 });
 
+test('团队库支持回灌技术栈规范', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-team-stack-'));
+  try {
+    const root = makeProject(base);
+    const team = join(base, 'team');
+    mkdirSync(team, { recursive: true });
+    assert.equal(git(team, ['init']).status, 0);
+
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(stackDir, { recursive: true });
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用\n');
+
+    const result = run('hub-upstream.mjs', [
+      '--root', root, '--to', 'team', '--team-library', team, '--stack', 'java-spring', '--apply',
+    ], root);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+
+    const target = join(team, 'templates', 'stacks', 'java-spring', '_shared.md');
+    assert.match(readFileSync(target, 'utf8'), /Java 通用/);
+    assert.match(readFileSync(join(team, '.devflow', 'upstream-log.jsonl'), 'utf8'), /java-spring 技术栈/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('团队库目标文件有未提交改动时拒绝，--force 备份后覆盖', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-team-dirty-'));
   try {

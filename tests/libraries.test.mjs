@@ -123,6 +123,8 @@ test('collectTemplateFiles 先到先得，并映射 shared 到 _shared', () => {
     writeTemplate(upstream, 'stages/review/SKILL.md', 'upstream review\n');
     writeTemplate(upstream, 'stages/req/SKILL.md', 'upstream req\n');
     writeTemplate(upstream, 'shared/common.md', 'shared\n');
+    writeTemplate(upstream, 'stacks/java-spring/_shared.md', 'java shared\n');
+    writeTemplate(personal, 'stacks/java-spring/plan.md', 'java plan\n');
     writeTemplate(upstream, 'stages/review/SKILL.md.bak-1', 'backup\n');
 
     const libs = resolveLibraries(makeDir(base, 'project'), {
@@ -137,6 +139,9 @@ test('collectTemplateFiles 先到先得，并映射 shared 到 _shared', () => {
     assert.equal(byRel['stages/req/SKILL.md'].source, 'upstream');
     assert.equal(byRel['_shared/common.md'].source, 'upstream');
     assert.equal(byRel['_shared/common.md'].destRel, '.claude/hub/_shared/common.md');
+    assert.equal(byRel['stacks/java-spring/_shared.md'].source, 'upstream');
+    assert.equal(byRel['stacks/java-spring/_shared.md'].destRel, '.claude/hub/stacks/java-spring/_shared.md');
+    assert.equal(byRel['stacks/java-spring/plan.md'].source, 'personal');
     assert.equal(byRel['stages/review/SKILL.md.bak-1'], undefined);
     assert.ok(!files.some((f) => f.hubRel.includes('_feedback-log')));
   } finally {

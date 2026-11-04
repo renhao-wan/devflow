@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildPrBody, redactText } from '../scripts/hub-ship.mjs';
+import { buildPrBody, buildSubject, redactText } from '../scripts/hub-ship.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -302,17 +302,46 @@ test('PR 正文复用仓库模板', () => {
   }
 });
 
+test('提交标题区分单阶段、单栈与 --all', () => {
+  assert.equal(buildSubject({ units: [{ kind: 'stage', name: 'review' }], slug: 'review' }),
+    'feat(templates): 回灌 review 阶段规则');
+  assert.equal(buildSubject({ units: [{ kind: 'stack', name: 'java-spring' }], slug: 'java-spring' }),
+    'feat(templates): 回灌 java-spring 技术栈规范');
+  assert.equal(buildSubject({ units: [{ kind: 'shared', name: 'shared' }], slug: 'shared' }),
+    'feat(templates): 回灌共享规则');
+  assert.equal(buildSubject({ all: true, units: [{}], slug: 'all' }),
+    'feat(templates): 回灌全部阶段与技术栈规则');
+  assert.equal(buildSubject({ units: [{ kind: 'stage', name: 'a' }, { kind: 'stage', name: 'b' }], slug: 'a-b' }),
+    'feat(templates): 回灌 a-b 规则');
+});
+
+test('PR 正文在 --all 时写所有阶段与技术栈', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-all-'));
+  try {
+    const repo = join(base, 'repo');
+    mkdirSync(repo, { recursive: true });
+    const body = buildPrBody(repo, {
+      all: true, projectName: 'demo', files: ['templates/stages/review/SKILL.md'],
+    });
+    assert.match(body, /回灌.*所有阶段与技术栈.*来源项目：demo/);
+    assert.match(body, /范围：所有阶段与技术栈/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('PR 正文在缺少模板时退回内置结构', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-ship-notpl-'));
   try {
     const repo = join(base, 'repo');
     mkdirSync(repo, { recursive: true });
     const body = buildPrBody(repo, {
-      stage: 'test', projectName: 'demo', files: ['templates/stages/test/SKILL.md'],
+      stage: 'test', stacks: ['java-spring'], projectName: 'demo', files: ['templates/stacks/java-spring/_shared.md'],
     });
     assert.match(body, /## 变更内容/);
     assert.match(body, /## 影响面/);
-    assert.match(body, /templates\/stages\/test\/SKILL\.md/);
+    assert.match(body, /java-spring 技术栈/);
+    assert.match(body, /templates\/stacks\/java-spring\/_shared\.md/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -405,6 +434,41 @@ test('ship 只更新模板，不改版本文件', () => {
     assert.equal(plugin.version, '1.0.0');
     assert.doesNotMatch(git(bare, ['show', `${branchName}:CHANGELOG.md`]), /## 1\.0\.1/);
     assert.match(git(bare, ['show', `${branchName}:templates/stages/review/SKILL.md`]), /先看正确性/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ship 支持回灌技术栈规范', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-stack-'));
+  try {
+    const root = makeProject();
+    const { repo, bare } = makePluginRepo(base);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(stackDir, { recursive: true });
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用\n\n- 使用构造函数注入。\n');
+
+    const r = run(['--root', root, '--stack', 'java-spring', '--plugin-root', repo], repo);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+
+    const branches = git(bare, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+    const branchName = branches.split('\n').find((b) => b.startsWith('devflow/upstream-java-spring'));
+    assert.ok(branchName, `未找到回灌分支：${branches}`);
+    assert.match(git(bare, ['show', `${branchName}:templates/stacks/java-spring/_shared.md`]), /构造函数注入/);
+    assert.match(git(bare, ['log', '--format=%s', '-1', branchName]), /回灌 java-spring 技术栈规范/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('ship 拒绝非法技术栈名', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-ship-stack-bad-'));
+  try {
+    const root = makeProject();
+    const { repo } = makePluginRepo(base);
+    const r = run(['--root', root, '--stack', '../escape', '--plugin-root', repo], repo);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /技术栈名非法/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

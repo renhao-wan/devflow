@@ -1,7 +1,7 @@
 ---
 name: ship
 description: 远程回灌：把项目改进写回上游插件或团队模板库，提交到分支并创建或更新 PR
-argument-hint: --stage <stage> | --shared | --all [--plugin-root <模板库根>] [--profile upstream|team] [--base <branch>] [--remote <name>] [--fork] [--pr-repo <owner/repo>] [--resume <branch>] [--no-pr] [--dry-run]
+argument-hint: --stage <stage> | --stack <name> | --shared | --all [--plugin-root <模板库根>] [--profile upstream|team] [--base <branch>] [--remote <name>] [--fork] [--pr-repo <owner/repo>] [--resume <branch>] [--no-pr] [--dry-run]
 allowed-tools: Bash(node:*), Bash(git:*), Bash(gh:*), Read, Glob, Grep
 disable-model-invocation: true
 ---
@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 前置条件：回灌目标必须是含 `.git` 的模板库根。默认 `--profile upstream` 指向插件源码仓库；`--profile team` 指向团队模板库，且必须显式传 `--plugin-root <团队模板库根>`。已安装的插件缓存只读，无法提交。
 
-1. 回灌范围三选一：`--stage <req|plan|implement|test|review|debug>`、`--shared` 或 `--all`；使用 `--resume <branch>` 续做时可不填。
+1. 回灌范围四选一：`--stage <req|plan|implement|test|review|debug>`、`--stack <name>`（技术栈规范）、`--shared`（共享规则）或 `--all`（全部阶段与技术栈）；使用 `--resume <branch>` 续做时可不填。
 2. 先预览，不写文件、不建分支：
 
 ```bash

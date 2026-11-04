@@ -15,9 +15,9 @@
 | `scripts/review-triage.mjs` | 判定审查触发、风险方向与子代理上限；`--check` 校验 review.md 是否完成审查；`--escalate` 判断轻量流程是否需升级；`--since` 做增量复审 | `--root` `--slug` `--base` `--since` `--focus` `--agents` `--no-subagents` `--focus-only` `--json` `--write` `--check` `--escalate` |
 | `scripts/statusline.mjs` | 输出单行进度，供 Claude Code `statusLine` 使用 | `--root` `--json` |
 | `scripts/hub-route.mjs` | 检测同类工具并判断当前阶段是否委派 | `--root` `--stage` `--tool` `--force-devflow` `--detect` `--list` `--home` `--json` |
-| `scripts/hub-upstream.mjs` | 回灌阶段模板到个人库、团队库或上游 | `--stage` `--shared` `--all` `--to` `--pr` `--apply` `--revert` `--force` `--root` `--plugin-root` `--personal-library` `--team-library` |
-| `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR（上游或团队 profile） | `--stage` `--plugin-root` `--profile` `--base` `--dry-run` `--resume` `--no-pr` |
-| `scripts/hub-sync.mjs` | 按来源优先级同步阶段与共享模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
+| `scripts/hub-upstream.mjs` | 回灌阶段、共享规则与技术栈到个人库、团队库或上游 | `--stage` `--stack` `--shared` `--all` `--to` `--pr` `--apply` `--revert` `--force` `--root` `--plugin-root` `--personal-library` `--team-library` |
+| `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR（上游或团队 profile） | `--stage` `--stack` `--shared` `--all` `--plugin-root` `--profile` `--base` `--dry-run` `--resume` `--no-pr` |
+| `scripts/hub-sync.mjs` | 按来源优先级同步阶段、共享与技术栈模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/mark-test.mjs` | 记录最近一次测试结果（退出码、耗时、命令）；`--gaps` 提示测试缺口；`--changed` 列出受影响的已存在测试 | `--root` `--command` `--exit-code` `--duration-ms` `--gaps` `--changed` `--base` `--json` |
 | `scripts/stage-check.mjs` | 校验 req / debug 产物的结构完整性，未通过时退出码 1 | `--root` `--stage` `--slug` `--json` |
 | `scripts/trace.mjs` | 输出验收项到 plan / test / review 的追踪矩阵；`--check` 存在缺口时退出码 1 | `--root` `--slug` `--check` `--json` |
@@ -37,11 +37,12 @@ hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test / review-triage
-scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态
+scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态、技术栈映射与阶段列表
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
 docs/README.md         # 文档索引与阅读顺序
+docs/layers.md         # 三层结构、目录职责、读取时机、冲突优先级、同步与回灌
 docs/usage.md          # 阶段细节、hub.yaml、资源、投影、多根工作区、statusline
 docs/hooks.md          # hooks 作用域、生成物写保护、deny/ask 清单
 docs/maintenance.md    # 回灌、升级、启用状态、ship/PR、故障排查
@@ -60,7 +61,7 @@ package.json           # 发布元数据与 npm test 脚本
 
 ```
 .claude/hub/           # 项目真源
-├─ hub.yaml            # 子项目、阶段、测试命令
+├─ hub.yaml            # 默认技术栈、子项目、阶段、测试命令
 ├─ ecosystem.yaml      # 同类工具索引与路由模式
 ├─ project-overview.md # 项目概览：自动段 + 人工补充（onboard 生成）
 ├─ stages/<stage>/     # 六个阶段的正文与资源
@@ -68,6 +69,7 @@ package.json           # 发布元数据与 npm test 脚本
 │  ├─ references/      # 按需读取的细则（可选）
 │  └─ templates/       # 产出骨架（可选）
 ├─ overrides/          # 子项目级覆盖（可选）
+├─ stacks/             # 技术栈规范：<stack>/_shared.md 与 <stage>.md（可选）
 └─ _shared/            # 跨阶段共用规则，生成时注入每条投影
 
 .claude/skills/        # 生成物，勿手改
@@ -87,7 +89,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 421 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 451 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、技术栈映射、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

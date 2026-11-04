@@ -8,6 +8,7 @@ import {
   resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub,
   isValidStageName, canonicalPath, relPosix, readMeta, contentHash,
 } from './lib/common.mjs';
+import { isValidStackName } from './lib/stacks.mjs';
 import {
   JOURNAL, resolveUnits, planUnits, applyPlan, makeId,
   appendLog, readLog, revertFromLog,
@@ -21,6 +22,26 @@ function normalizeTarget(raw, pr) {
 
 function labelOf(kind) {
   return ({ upstream: '上游插件库', personal: '个人库', team: '团队库' })[kind] || kind;
+}
+
+function argValues(argv, name) {
+  const out = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === name && argv[i + 1] && !argv[i + 1].startsWith('--')) out.push(argv[i + 1]);
+  }
+  return out;
+}
+
+function unitLabel(unit) {
+  if (unit.kind === 'shared') return '共享规则';
+  if (unit.kind === 'stack') return `${unit.name} 技术栈`;
+  return `${unit.name} 阶段`;
+}
+
+function unitPath(unit, rel) {
+  if (unit.kind === 'shared') return `_shared/${rel}`;
+  if (unit.kind === 'stack') return `stacks/${unit.name}/${rel}`;
+  return `${unit.name}/${rel}`;
 }
 
 function gitAt(dir, args) {
@@ -115,7 +136,7 @@ function reportText(plans) {
   let unchanged = 0;
   for (const plan of plans) {
     for (const file of plan.files) {
-      const rel = `${plan.unit.kind === 'shared' ? '_shared' : plan.unit.name}/${file.rel}`;
+      const rel = unitPath(plan.unit, file.rel);
       if (file.skipped) {
         console.log(`[跳过] ${rel}（${file.reason}）`);
         continue;
@@ -145,7 +166,7 @@ function jsonReport(plans, extra) {
     ...extra,
     units: plans.map((p) => ({ kind: p.unit.kind, name: p.unit.name })),
     files: plans.flatMap((p) => p.files.map((f) => ({
-      unit: p.unit.kind === 'shared' ? '_shared' : p.unit.name,
+      unit: p.unit.kind === 'shared' ? '_shared' : (p.unit.kind === 'stack' ? `stacks/${p.unit.name}` : p.unit.name),
       path: f.rel,
       type: f.skipped ? 'skipped' : f.verdict.type,
       changed: Boolean(f.changed),
@@ -171,6 +192,7 @@ async function runRemote(argv, { root, pluginRoot, units, target }) {
   if (target.kind === 'team') args.push('--profile', 'team');
   for (const unit of units) {
     if (unit.kind === 'stage') args.push('--stage', unit.name);
+    else if (unit.kind === 'stack') args.push('--stack', unit.name);
   }
   if (units.some((u) => u.kind === 'shared')) args.push('--shared');
   args.push(...passthrough(argv, ['--base', '--remote', '--resume', '--pr-repo']));
@@ -185,6 +207,7 @@ export async function main(argv = process.argv.slice(2)) {
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
   const shared = hasFlag(argv, '--shared');
+  const stacks = argValues(argv, '--stack');
   const all = hasFlag(argv, '--all');
   const apply = hasFlag(argv, '--apply');
   const json = hasFlag(argv, '--json');
@@ -201,6 +224,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (stage && !isValidStageName(stage)) {
     throw new Error(`阶段名非法：${stage}。只允许小写字母开头的 [a-z0-9_-]。`);
+  }
+  for (const stack of stacks) {
+    if (!isValidStackName(stack)) {
+      throw new Error(`技术栈名非法：${stack}。只允许 [a-z0-9][a-z0-9_-]*。`);
+    }
   }
 
   const { config } = loadHub(root);
@@ -238,7 +266,13 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`找不到回灌记录：${revertId}`);
   }
 
-  const units = resolveUnits(root, { stage, shared, all });
+  const units = resolveUnits(root, {
+    stage,
+    shared,
+    stacks,
+    all,
+    onSkip: (names) => log('warn', `跳过无法声明的技术栈目录：${names.join('、')}（只允许 [a-z0-9][a-z0-9_-]*）`),
+  });
   const libRoot = resolveKind(target.kind);
   const cacheTarget = target.kind === 'upstream' && isPluginCache(libRoot);
   if (cacheTarget && apply) throw new Error(cacheGuardMessage(libRoot));
@@ -253,10 +287,10 @@ export async function main(argv = process.argv.slice(2)) {
   if (!json) {
     console.log(`目标：${labelOf(target.kind)} ${posix(libRoot)}`);
     for (const plan of plans) {
-      console.log(`\n== ${plan.unit.kind === 'shared' ? '共享规则 .claude/hub/_shared' : `阶段 ${plan.unit.name}`} ==`);
+      console.log(`\n== ${unitLabel(plan.unit)} ==`);
       const counts = reportText([plan]);
       for (const file of plan.pending) {
-        showDiff(file.verdict.content, file.targetAbs, `${plan.unit.name}/${file.rel}（项目 → ${labelOf(target.kind)}，已剔除敏感行）`);
+        showDiff(file.verdict.content, file.targetAbs, `${unitPath(plan.unit, file.rel)}（项目 → ${labelOf(target.kind)}，已剔除敏感行）`);
       }
       console.log(
         `小结：${counts.reusable} 个可回灌（${counts.pending} 个有变化），`
@@ -359,7 +393,7 @@ export async function main(argv = process.argv.slice(2)) {
       id: journal.id,
       at: new Date().toISOString(),
       mode: target.kind,
-      units: units.map((u) => (u.kind === 'shared' ? '共享规则' : `${u.name} 阶段`)),
+      units: units.map(unitLabel),
       project: posix(root).split('/').pop(),
       files: written,
       created,
@@ -427,7 +461,7 @@ export async function main(argv = process.argv.slice(2)) {
     id: backupId,
     at: new Date().toISOString(),
     mode: 'upstream',
-    units: units.map((u) => (u.kind === 'shared' ? '共享规则' : `${u.name} 阶段`)),
+    units: units.map(unitLabel),
     project: posix(root).split('/').pop(),
     files: written,
     created,

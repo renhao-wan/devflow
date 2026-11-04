@@ -9,6 +9,7 @@ import {
   normalizeEol, isPathInside, isRealPathInside, posix,
   parseFrontmatter,
 } from './common.mjs';
+import { isValidStackName } from './stacks.mjs';
 
 export const LOG_JSONL = '.devflow/upstream-log.jsonl';
 export const LOG_MD = 'docs/upstream-log.md';
@@ -118,7 +119,9 @@ export function classifyText(text, config) {
   };
 }
 
-export function resolveUnits(root, { stage = null, stages = [], shared = false, all = false } = {}) {
+export function resolveUnits(root, {
+  stage = null, stages = [], shared = false, stacks = [], all = false, onSkip = null,
+} = {}) {
   const units = [];
   const seen = new Set();
   const add = (unit) => {
@@ -133,8 +136,15 @@ export function resolveUnits(root, { stage = null, stages = [], shared = false, 
     sourceRel: `.claude/hub/stages/${name}`,
     targetRel: `templates/stages/${name}`,
   });
+  const addStack = (name) => add({
+    kind: 'stack',
+    name,
+    sourceRel: `.claude/hub/stacks/${name}`,
+    targetRel: `templates/stacks/${name}`,
+  });
 
   for (const name of [...stages, ...(stage ? [stage] : [])]) addStage(name);
+  for (const name of stacks) addStack(name);
   const sharedDir = join(root, '.claude', 'hub', '_shared');
   if (shared || (all && existsSync(sharedDir))) {
     add({
@@ -151,15 +161,29 @@ export function resolveUnits(root, { stage = null, stages = [], shared = false, 
         if (entry.isDirectory() && !entry.name.startsWith('.')) addStage(entry.name);
       }
     }
+    const stacksDir = join(root, '.claude', 'hub', 'stacks');
+    if (existsSync(stacksDir)) {
+      const skipped = [];
+      for (const entry of readdirSync(stacksDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        // 只回灌 hub.yaml 能引用的合法栈名，避免把无法声明的目录写进模板库。
+        if (isValidStackName(entry.name)) addStack(entry.name);
+        else skipped.push(entry.name);
+      }
+      if (skipped.length && onSkip) onSkip(skipped);
+    }
   }
-  if (!units.length) throw new Error('必须指定 --stage <name>、--shared 或 --all');
+  if (!units.length) throw new Error('必须指定 --stage <name>、--shared、--stack <name> 或 --all');
   return units;
 }
+
+const UNIT_LABELS = { shared: '共享规则目录', stage: '阶段', stack: '技术栈' };
 
 export function planUnit(root, pluginRoot, unit, config) {
   const sourceDir = join(root, ...unit.sourceRel.split('/'));
   if (!existsSync(sourceDir)) {
-    throw new Error(`项目里没有${unit.kind === 'shared' ? '共享规则目录' : `阶段 ${unit.name}`}：${posix(sourceDir)}`);
+    const label = UNIT_LABELS[unit.kind] || unit.kind;
+    throw new Error(`项目里没有${unit.kind === 'shared' ? label : `${label} ${unit.name}`}：${posix(sourceDir)}`);
   }
   const files = walk(sourceDir)
     .map((abs) => ({ abs, rel: relPosix(sourceDir, abs) }))

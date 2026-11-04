@@ -13,7 +13,9 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 | `.claude/hub/stages/<stage>/SKILL.md` | 阶段规则的单一真源 | 可以 |
 | `.claude/hub/stages/<stage>/references/` | 阶段细则，按需读取 | 可以 |
 | `.claude/hub/stages/<stage>/templates/` | 产出骨架 | 可以 |
+| `.claude/hub/_shared/` | 所有阶段共用的规则，生成时内联进投影 | 可以 |
 | `.claude/hub/overrides/<sub>/<stage>.md` | 子项目级覆盖 | 可以 |
+| `.claude/hub/stacks/<stack>/` | 技术栈规范：`_shared.md` 与 `<stage>.md` | 可以 |
 | `.claude/skills/devflow-<stage>/SKILL.md` | 生成的投影 | 不要 |
 | `.claude/.hub-manifest.json` | 生成账本（哈希） | 不要 |
 | `.claude/.hub-sources.json` | 阶段源文件账本，供 sync 判断手改 | 不要 |
@@ -21,22 +23,23 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 改规则的正确流程
 
-1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`，需要补充细则或产出骨架时，在阶段目录下增删 `references/`、`templates/`。
-2. 运行 `node scripts/devflow-gen.mjs`（资源清单会进入投影与账本）。
+1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`，需要补充细则或产出骨架时，在阶段目录下增删 `references/`、`templates/`；语言/框架规范改 `.claude/hub/stacks/<stack>/`，并在 `hub.yaml` 用 `stack` 映射到子项目。
+2. 运行 `node scripts/devflow-gen.mjs`（资源清单与技术栈映射会进入投影与账本）。
 3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、资源未缺失。
 
 ## hub.yaml 要点
 
 - `requiresPlugin`：语义化版本范围，插件不满足时生成器会拒绝。
-- `stages`：声明哪些阶段启用；顺序即流程顺序。
-- `subprojects`：多根工作区映射；每个可声明 `path`、`stages`、`testCommand`。
+- `stages`：声明哪些阶段启用；顺序即流程顺序。省略或留空时扫描 `.claude/hub/stages/`，写 `[]` 表示不启用任何阶段。
+- `subprojects`：多根工作区映射；每个可声明 `path`、`stages`、`testCommand`、`stack`。
+- `stack`：工作区默认技术栈；子项目未写 `stack` 时继承，没有子项目时直接用于“工作区根”。
 - `defaults.testCommand`：没有子项目级命令时使用。
 - `upstream.blocklist`：回灌时识别项目专属内容的关键词。
 
 ## 多根工作区
 
 - 只从项目根启动；子项目不单独初始化 hub。
-- 共享规则放在根 hub；子项目差异放进 `overrides/`。
+- 共享规则放在根 hub；子项目差异放进 `overrides/`；同一技术栈的规范放进 `stacks/<stack>/`，并在 `hub.yaml` 用 `stack` 建立映射。
 - 测试命令按子项目声明，避免在根目录跑错命令。
 
 ## 漂移处理
@@ -50,7 +53,7 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 回灌
 
-`/devflow:upstream --stage <stage>` 默认只预览。`--apply` 才会写入目标库，回灌只写模板与回灌日志，不改版本文件。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
+`/devflow:upstream --stage <stage>` 默认只预览；技术栈用 `--stack <stack>`，`--all` 包含所有阶段与技术栈。`--apply` 才会写入目标库，回灌只写模板与回灌日志，不改版本文件。阶段目录下的 `references/`、`templates/` 会递归处理并保留相对路径。项目专属内容（绝对路径、内网地址、子项目名、blocklist 命中）不会回灌。
 
 回灌目标由 `--to` 选择：`personal` 个人库（默认 `~/.claude/devflow`）、`team` 团队库（`hub.yaml` 配置的本机 clone，默认只写工作区，`--pr` 才提交推送）、`upstream` 插件源码仓库（默认目标）。上游库路径由 `--plugin-root` > `.devflow.json` 的 `pluginSourceRoot` > 运行时插件根决定。从 marketplace 安装时运行时根在缓存里，写入会被拒绝；用 `--plugin-root` 或先运行 `/devflow:init --source-root <插件源码仓库>` 记录一次。
 

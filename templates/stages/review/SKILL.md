@@ -105,6 +105,11 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 
 写完后运行门禁自检：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --check`）。退出码非 0 表示结论未勾选、仍有未关闭阻断项，或画像字段与 `review-triage.json` 不一致（增量复审还需补齐「增量复审」小节）；按输出补全后重跑。`devflow status` 也用同一门禁判断任务能否离开 review。
 
+## 技术栈规范
+
+如果 `.claude/skills/devflow-<stage>/SKILL.md` 中存在「技术栈规范」映射，处理某个子项目时读取其对应文件；只读任务涉及的子项目，不预读全部。
+技术栈规范与 `overrides` 冲突时以 `overrides` 为准，且不得放宽阶段门禁与安全底线。
+
 ## 边界
 
 - 不把“看起来没问题”当结论；每条判断都要有依据。

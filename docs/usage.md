@@ -104,13 +104,17 @@ stages:
   - review
   - debug
 
+stack: java-spring
+
 subprojects:
   api:
     path: services/api
+    stack: java-spring
     stages: [plan, implement, test, review, debug]
     testCommand: "cd services/api && pnpm run test"
   worker:
     path: services/worker
+    stack: node-worker
     stages: [plan, implement, test, review, debug]
     testCommand: "cd services/worker && npm run test"
 
@@ -137,10 +141,12 @@ templates:
 | --- | --- |
 | `version` | 配置格式版本，当前为 `1` |
 | `requiresPlugin` | 插件版本范围，支持 `^` `~` `>=` `<=` `>` `<` `=` 和 `*`；不满足时生成器拒绝写入 |
-| `stages` | 启用的阶段及顺序；为空时回退扫描 `stages/` 目录 |
+| `stages` | 启用的阶段及顺序；省略或留空时回退扫描 `stages/` 目录；写 `[]` 表示不启用任何阶段；其他类型会被 `gen` / `doctor` 报错 |
 | `subprojects.<name>.path` | 子项目相对工作区根的路径 |
 | `subprojects.<name>.stages` | 该子项目适用的阶段 |
 | `subprojects.<name>.testCommand` | 必须能从工作区根执行；init 会生成 `cd <rel> && ...`。探测只是初判，需按实际复核 |
+| `stack` | 工作区默认技术栈名；没有子项目时直接使用 |
+| `subprojects.<name>.stack` | 该子项目的技术栈名，覆盖顶层 `stack`；未写时继承 |
 | `defaults.testCommand` | 没有子项目级命令时使用。根目录无构建文件时 init 会回退为 `npm test`，需要手动修改 |
 | `defaults.reviewRequired` | 流程约定字段，当前不参与脚本校验 |
 | `upstream.blocklist` | 回灌时用于识别项目专属内容的额外关键词 |
@@ -155,7 +161,7 @@ templates:
 
 - 正文引用的 `scripts/devflow-*.mjs` 必须在当前插件的 loader 列表中；缺失说明该模板来自更新版本，写进项目会断链。
 - 模板 frontmatter 可声明 `minPluginVersion`（如 `minPluginVersion: ">=1.7.0"`，无操作符按 `>=` 处理），当前插件版本不满足时跳过。
-- `sync` 把这类文件归为“不兼容，已跳过”，保留项目现有内容与账本；`doctor` 会扫描 `.claude/hub/stages/` 与 `_shared/` 报告同类问题。升级插件后重跑 `sync` 即可自动恢复。
+- `sync` 把这类文件归为“不兼容，已跳过”，保留项目现有内容与账本；`doctor` 会扫描 `.claude/hub/stages/`、`_shared/` 与 `stacks/` 报告同类问题。升级插件后重跑 `sync` 即可自动恢复。
 
 ## 阶段资源：references/ 与 templates/
 
@@ -174,6 +180,39 @@ templates:
 - `/devflow:doctor` 会校验账本中的资源是否仍然存在。
 - 回灌时 `references/`、`templates/` 会被递归处理并保留相对路径。
 
+## 技术栈规范（stacks/）
+
+按语言或框架存放规范，供同一技术栈的多个子项目复用。
+
+```
+.claude/hub/stacks/<stack>/
+├─ _shared.md      # 可选：该栈对所有阶段生效
+├─ <stage>.md      # 可选：该栈在某阶段的规范
+└─ references/     # 可选：由上面的文件按相对路径引用
+```
+
+声明方式（`hub.yaml`）：
+
+```yaml
+stack: java-spring
+subprojects:
+  api:
+    path: services/api
+    stack: java-spring
+  web:
+    path: apps/web
+    stack: vue3
+```
+
+- 子项目未写 `stack` 时继承顶层 `stack`；没有子项目时用顶层 `stack` 生成“工作区根”映射。
+- 栈名只允许 `[a-z0-9][a-z0-9_-]*`，不允许路径分隔符与 `..`。
+- 生成投影时写入“子项目 → 栈 → 本阶段规范/通用规范”映射；执行阶段只读任务涉及子项目的文件，不预读全部。
+- 优先级：阶段门禁与安全底线 > `overrides/<sub>/<stage>.md` > `stacks/<stack>/<stage>.md` > `stacks/<stack>/_shared.md` > `_shared/` > 阶段默认做法。
+- 改栈文件**内容**不需要重新生成；新增/删除栈文件或修改 `hub.yaml` 后需要重新生成。
+- 栈目录缺失或栈名非法是配置错误，`gen` 与 `doctor` 会报错；`stack` 声明不是字符串时同样报错，并在投影中标为「配置无效」。报错时 `gen` 仍会写出带「缺失」「名称非法」或「配置无效」标记的投影与账本，但退出码为 1。栈目录存在但没有任何 `.md` 时只给提醒。
+- 子项目省略 `stack` 即继承顶层；当前不支持显式退出继承，个别子项目需要不同规范时给它指定另一个栈。
+- 同步与回灌都覆盖 `stacks/`：对应模板库的 `templates/stacks/`；回灌使用 `devflow upstream --stack <name>`，`--all` 包含所有技术栈。`--all` 会跳过名字非法的栈目录，并提示被跳过的目录。
+
 ## 单一真源与投影
 
 ```
@@ -186,20 +225,25 @@ templates:
 
 来源按 `templates.order` 先到先得：同名文件由高优先库整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底。项目里已有的手改由 `sync` 的基线快照三方合并保留；`.claude/.hub-sources.json` 的 v3 账本记录每个文件的 `source`。删除高优先库的同名文件后，`sync` 会自动回落到下一来源。
 
+三层结构、各目录职责、冲突优先级与回灌范围见 [layers.md](layers.md)。
+
 ### AI 何时读取这些规则
 
 AI **不直接读取个人库、团队库或上游库**；三个库只在 `init` / `sync` 时作为来源被读取。落到项目后，读取时机如下：
 
-1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文。
-2. **用户进入阶段**：调用 `/devflow:req|plan|implement|test|review|debug` 时，Claude Code 加载对应的 `.claude/skills/devflow-<stage>/SKILL.md` 投影。
-3. **执行前**：投影正文要求 AI 完整读取 `.claude/hub/stages/<stage>/SKILL.md`；`references/`、`templates/` 等资源按需读取，相对路径以该源文件所在目录为基准。
-4. **共享规则**：`.claude/hub/_shared/` 的内容在生成投影时嵌入每个阶段，因此对所有阶段生效，不依赖会话启动注入。
+1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
+2. **进入阶段**：加载插件入口 `skills/<stage>/SKILL.md`；入口先读项目投影 `.claude/skills/devflow-<stage>/SKILL.md`，再按投影指令读取 `.claude/hub/stages/<stage>/SKILL.md`。
+3. **执行阶段**：`references/`、`templates/` 按需读取，相对路径以对应 `SKILL.md` 所在目录为基准。
+4. **共享规则与子项目例外**：`_shared/` 在生成投影时内联；`overrides/<sub>/<stage>.md` 的读取指令写在投影里。
+5. **技术栈规范**：投影给出“子项目 → 栈 → 规范文件”映射，处理某个子项目时只读对应栈文件。
+
+投影缺失时，入口直接读 hub 源并提示运行 `node scripts/devflow-gen.mjs`；两者都缺失时提示先运行 `/devflow:init`。目录职责、完整读取时序与冲突优先级见 [layers.md](layers.md)。
 
 所以回灌只更新库；其他项目要使用这些内容，需要在 `hub.yaml` 配好 `templates.order` 后运行 `/devflow:sync`，把模板落到项目的 `.claude/hub/` 并重新生成投影。
 
 改规则的流程：
 
-1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`（必要时增删 `references/`、`templates/`）。
+1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`（必要时增删 `references/`、`templates/`）；语言/框架规范改 `.claude/hub/stacks/<stack>/`。
 2. 运行 `node scripts/devflow-gen.mjs`。
 3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、无缺失资源。
 
@@ -224,7 +268,7 @@ AI **不直接读取个人库、团队库或上游库**；三个库只在 `init`
 ## 多根工作区
 
 - 只从工作区根初始化，子项目不单独初始化 hub。
-- 共享规则放在根 hub；子项目差异放进 `.claude/hub/overrides/<sub>/<stage>.md`（手动创建，生成器会在投影中提示优先读取）。
+- 共享规则放在根 hub；子项目差异放进 `.claude/hub/overrides/<sub>/<stage>.md`（手动创建，生成器会在投影中提示优先读取）；同一技术栈的多个子项目复用 `.claude/hub/stacks/<stack>/`。目录职责与读取时机见 [layers.md](layers.md)。
 - init 从工作区根向下探测最多两层。固定跳过 `.git`、`.claude`、`.idea`、`.vscode`、`node_modules`、`dist`、`build`、`target`、`scripts`、`templates`、`docs`、`coverage` 这些目录名；若真实模块恰好命名为 `scripts`/`templates`/`docs`，它不会被识别为子项目，需要在 `hub.yaml` 手动补充。
 - 目录名命中 `demand`/`require`/`design`/`spec`/`doc`（大小写不敏感）时按“需求文档目录”处理：只赋 `req` 阶段且不探测测试命令，避免把文档目录当成可构建单元。
 - **探测在第一个"像项目"的目录处停止下钻。** 判定依据：目录含 `.git`、`package.json`、`pom.xml`、`build.gradle`、`go.mod`、`Cargo.toml` 或 `pyproject.toml` 之一。命中后该目录本身就是子项目，其内部不会再被扫描。

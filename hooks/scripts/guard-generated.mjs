@@ -59,7 +59,7 @@ function reason(rel) {
   if (rel.startsWith('.claude/skills/devflow-')) {
     const parts = rel.split('/');
     const stage = (parts[2] || 'devflow-<stage>').replace(/^devflow-/, '') || '<stage>';
-    return `该技能投影由 devflow 生成。请修改 .claude/hub/stages/${stage}/SKILL.md（或 .claude/hub/_shared/），`
+    return `该技能投影由 devflow 生成。请修改 .claude/hub/stages/${stage}/SKILL.md、.claude/hub/_shared/ 或 .claude/hub/stacks/，`
       + '然后运行 node scripts/devflow-gen.mjs。';
   }
   return null;

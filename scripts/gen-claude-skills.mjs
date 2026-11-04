@@ -6,16 +6,10 @@ import {
   readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
   ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
+import { planStacks } from './lib/stacks.mjs';
+import { resolveStages } from './lib/stages.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
-
-function stageList(config, root) {
-  const declared = config.stages;
-  if (Array.isArray(declared) && declared.length) return declared.map(String);
-  const dir = join(root, '.claude', 'hub', 'stages');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-}
 
 function stageDescription(root, stage) {
   const file = join(root, '.claude', 'hub', 'stages', stage, 'SKILL.md');
@@ -24,15 +18,62 @@ function stageDescription(root, stage) {
   return description || `${stage} 阶段的工程流程`;
 }
 
-function subprojectRows(config) {
+function subprojectRows(config, stackPlan) {
   const subs = config.subprojects;
-  if (!subs || typeof subs !== 'object') return '未声明子项目（按单项目处理）。';
+  if (!subs || typeof subs !== 'object' || Array.isArray(subs)) return '未声明子项目（按单项目处理）。';
+  const stackBySub = new Map((stackPlan?.rows || []).map((row) => [row.subproject, row]));
   const rows = Object.entries(subs).map(([name, value]) => {
     const path = value?.path || name;
     const stages = Array.isArray(value?.stages) ? value.stages.join(', ') : '全部';
-    return `| ${name} | \`${path}\` | ${stages} |`;
+    const stackRow = stackBySub.get(name);
+    const stack = !stackRow
+      ? '—'
+      : stackRow.invalidConfig
+        ? '配置无效（检查 hub.yaml）'
+        : `${stackRow.stack}${stackRow.invalidName ? '（名称非法）' : stackRow.dirExists ? '' : '（缺失）'}`;
+    return `| ${name} | \`${path}\` | ${stages} | ${stack} |`;
   });
-  return ['| 子项目 | 路径 | 阶段 |', '| --- | --- | --- |', ...rows].join('\n');
+  return ['| 子项目 | 路径 | 阶段 | 技术栈 |', '| --- | --- | --- | --- |', ...rows].join('\n');
+}
+
+function stackSection(stackPlan, stage) {
+  const rows = stackPlan?.rows || [];
+  if (!rows.length) {
+    return '当前没有声明技术栈。可在 `hub.yaml` 设置顶层 `stack` 或 `subprojects.<name>.stack`，'
+      + '并把规范放到 `.claude/hub/stacks/<stack>/`。';
+  }
+  const invalidConfig = rows.some((row) => row.invalidConfig);
+  const table = rows.map((row) => {
+    const stageFile = row.stageFile?.[stage];
+    const sharedFile = row.sharedFile;
+    const stack = row.invalidConfig
+      ? '配置无效（检查 hub.yaml）'
+      : row.invalidName
+        ? `${row.stack}（名称非法，检查 hub.yaml）`
+        : `${row.stack}${row.dirExists ? '' : '（缺失，运行 /devflow:sync）'}`;
+    return `| ${row.subproject} | \`${row.path}\` | ${stack} | `
+      + `${stageFile ? `\`${stageFile}\`` : '—'} | ${sharedFile ? `\`${sharedFile}\`` : '—'} |`;
+  });
+  return [
+    '映射来自 `hub.yaml` 的 `stack` 字段与 `.claude/hub/stacks/`。进入阶段后，只读取任务涉及子项目的对应文件，不要预读所有栈规范。',
+    ...(invalidConfig ? ['', '部分 `stack` 声明不是字符串，已标为「配置无效」；请检查 `hub.yaml`，未修正前不要按该行读取栈规范。'] : []),
+    '',
+    '| 子项目 | 路径 | 技术栈 | 本阶段规范 | 通用规范 |',
+    '| --- | --- | --- | --- | --- |',
+    ...table,
+    '',
+    '规则优先级：阶段门禁与安全底线 > `overrides` > `stacks/<stack>/<stage>.md` > `stacks/<stack>/_shared.md` > `_shared` > 阶段默认做法。',
+    '技术栈规范不得放宽门禁或安全底线。',
+  ].join('\n');
+}
+
+function stackManifest(stackPlan) {
+  return (stackPlan?.stacks || []).map((stack) => ({
+    name: stack.name,
+    dir: stack.dir,
+    shared: stack.shared,
+    stages: stack.stages,
+  }));
 }
 
 function overrideList(root, stage) {
@@ -86,7 +127,7 @@ function safeSkillTarget(root, rel) {
   return target;
 }
 
-function buildSkill(root, stage, config, shared) {
+function buildSkill(root, stage, config, shared, stackPlan) {
   const source = `.claude/hub/stages/${stage}/SKILL.md`;
   const sourceAbs = join(root, ...source.split('/'));
   if (!existsSync(sourceAbs)) {
@@ -118,6 +159,7 @@ ${description}
 ## 单一真源
 
 执行前必须完整读取 \`${source}\`。
+本项目投影已内联 \`_shared\`；\`overrides\` 与 \`stacks\` 按下方指令惰性读取。
 其中的 \`references/\`、\`templates/\` 等相对引用，以**该文件所在目录**为基准。
 
 ## 共享规则
@@ -134,7 +176,11 @@ ${resourceBlock}
 
 ## 当前工作区
 
-${subprojectRows(config)}
+${subprojectRows(config, stackPlan)}
+
+## 技术栈规范
+
+${stackSection(stackPlan, stage)}
 
 ## 子项目覆盖
 
@@ -198,16 +244,22 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`插件版本 ${version} 不满足 hub.yaml 的 requiresPlugin ${requires}。请先升级插件。`);
   }
 
-  const stages = stageList(config, root);
+  const stagePlan = resolveStages(config, root);
+  const stages = stagePlan.stages;
   const shared = sharedRules(root);
+  const stackPlan = planStacks(root, config, stages);
   const results = [];
   const errors = [];
+  if (stagePlan.error) errors.push({ stage: null, error: stagePlan.error });
+  errors.push(...stackPlan.issues
+    .filter((issue) => issue.severity === 'error')
+    .map((issue) => ({ stage: null, error: issue.message })));
   for (const stage of stages) {
     if (!isValidStageName(stage)) {
       errors.push({ stage, error: `阶段名 "${stage}" 非法：只允许小写字母开头的 [a-z0-9_-]。` });
       continue;
     }
-    const built = buildSkill(root, stage, config, shared);
+    const built = buildSkill(root, stage, config, shared, stackPlan);
     if (built.error) errors.push(built);
     else results.push(built);
   }
@@ -215,7 +267,8 @@ export async function main(argv = process.argv.slice(2)) {
   const previous = readManifest(root);
   const erroredStages = new Set(errors.map((e) => e.stage));
   const currentNames = new Set(results.map((r) => r.name));
-  const stale = previous.skills.filter((s) => s.name
+  // stages 类型错误时无法判断哪些投影该保留：不清空账本，也不删除现有投影。
+  const stale = stagePlan.error ? [] : previous.skills.filter((s) => s.name
     && !currentNames.has(s.name)
     && !erroredStages.has(s.name.replace(/^devflow-/, '')));
 
@@ -230,7 +283,9 @@ export async function main(argv = process.argv.slice(2)) {
     else if (contentHash(readText(target)) !== contentHash(r.content)) drift.push({ ...r, reason: 'changed' });
   }
   for (const s of stale) drift.push({ name: s.name, target: s.target, reason: 'stale' });
-  for (const e of errors) drift.push({ name: `devflow-${e.stage}`, reason: 'source-missing', detail: e.error });
+  for (const e of errors) {
+    if (e.stage) drift.push({ name: `devflow-${e.stage}`, reason: 'source-missing', detail: e.error });
+  }
 
   const report = {
     root: posix(root),
@@ -256,7 +311,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const e of errors) log('error', e.error);
       log(drift.length ? 'warn' : 'ok', drift.length ? `发现 ${drift.length} 处漂移` : '投影与 hub 一致');
     }
-    if (drift.length) process.exitCode = 1;
+    if (drift.length || errors.length) process.exitCode = 1;
     return report;
   }
 
@@ -324,9 +379,10 @@ export async function main(argv = process.argv.slice(2)) {
 
   // 源文件出错的阶段可能暂时无法生成：保留账本中的旧条目，避免投影失去归属。
   const writtenNames = new Set(written.map((r) => r.name));
-  const erroredNames = new Set(errors.map((e) => `devflow-${e.stage}`));
+  const erroredNames = new Set(errors.filter((e) => e.stage).map((e) => `devflow-${e.stage}`));
   const preserved = previous.skills.filter((s) => s.name && s.target
-    && erroredNames.has(s.name) && !writtenNames.has(s.name));
+    && !writtenNames.has(s.name)
+    && (stagePlan.error || erroredNames.has(s.name)));
 
   const manifest = {
     schemaVersion: 1,
@@ -335,6 +391,7 @@ export async function main(argv = process.argv.slice(2)) {
     requiresPlugin: requires,
     source: '.claude/hub',
     shared: shared.map((s) => ({ path: s.path, hash: s.hash })),
+    stacks: stackManifest(stackPlan),
     skills: [
       ...written.map((r) => ({
         name: r.name,

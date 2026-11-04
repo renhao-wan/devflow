@@ -23,6 +23,12 @@ test('bin/devflow 输出帮助并列出命令', () => {
   }
 });
 
+test('bin/devflow 帮助说明技术栈回灌', () => {
+  const r = run(['--help']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /--stack java-spring/);
+});
+
 test('bin/devflow 对未知命令报错', () => {
   const r = run(['nope']);
   assert.equal(r.status, 1);

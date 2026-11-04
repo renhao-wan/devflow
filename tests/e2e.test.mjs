@@ -92,6 +92,152 @@ test('init → gen → doctor → mark-test 全链路', () => {
   }
 });
 
+test('技术栈映射进入投影、账本与体检', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    assert.ok(existsSync(join(root, '.claude', 'hub', 'stacks')));
+
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(join(stackDir, 'references'), { recursive: true });
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用规范\n\n- 使用构造函数注入。\n');
+    writeFileSync(join(stackDir, 'plan.md'), '# Java 方案规范\n\n- 先确认事务边界。\n');
+    writeFileSync(join(stackDir, 'references', 'style.md'), '# 风格\n');
+
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const yaml = readFileSync(hubFile, 'utf8');
+    assert.doesNotMatch(yaml, /^stack:/m);
+    writeFileSync(hubFile, yaml.replace('stages:', 'stack: java-spring\nstages:'));
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 0, gen.stdout + gen.stderr);
+    for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
+      const text = readFileSync(join(root, '.claude', 'skills', `devflow-${stage}`, 'SKILL.md'), 'utf8');
+      assert.match(text, /## 技术栈规范/);
+      assert.match(text, /\.claude\/hub\/stacks\/java-spring\/_shared\.md/);
+      assert.match(text, /阶段门禁与安全底线 > `overrides`/);
+    }
+    const planProjection = readFileSync(join(root, '.claude', 'skills', 'devflow-plan', 'SKILL.md'), 'utf8');
+    assert.match(planProjection, /\.claude\/hub\/stacks\/java-spring\/plan\.md/);
+
+    const manifest = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    assert.equal(manifest.stacks.length, 1);
+    assert.equal(manifest.stacks[0].name, 'java-spring');
+    assert.equal(manifest.stacks[0].shared, '.claude/hub/stacks/java-spring/_shared.md');
+    assert.equal(manifest.stacks[0].stages.plan, '.claude/hub/stacks/java-spring/plan.md');
+
+    const checkFresh = run('gen-claude-skills.mjs', ['--root', root, '--check'], root);
+    assert.equal(checkFresh.status, 0, checkFresh.stdout + checkFresh.stderr);
+
+    // 栈正文变化不影响投影：投影只记录路径。
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用规范（更新）\n');
+    const checkContent = run('gen-claude-skills.mjs', ['--root', root, '--check'], root);
+    assert.equal(checkContent.status, 0, checkContent.stdout + checkContent.stderr);
+
+    // 新增阶段文件改变映射，需要重新生成。
+    writeFileSync(join(stackDir, 'implement.md'), '# Java 实现规范\n');
+    const checkMapping = run('gen-claude-skills.mjs', ['--root', root, '--check'], root);
+    assert.equal(checkMapping.status, 1, checkMapping.stdout + checkMapping.stderr);
+
+    const regen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(regen.status, 0, regen.stdout + regen.stderr);
+
+    rmSync(stackDir, { recursive: true, force: true });
+    const missing = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout + missing.stderr, /技术栈目录不存在/);
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 1);
+    assert.match(doctor.stdout, /技术栈目录不存在/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('未声明 stages 时 doctor 按目录扫描校验技术栈阶段文件', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const yaml = readFileSync(hubFile, 'utf8')
+      .replace(/^stages:\n(?:  - .*\n)+/m, '')
+      .replace(/^subprojects:/m, 'stack: java-spring\nsubprojects:');
+    writeFileSync(hubFile, yaml);
+
+    // plan.md 是目录而不是文件：只有按目录扫描出的阶段列表才会去检查它。
+    mkdirSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), { recursive: true });
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 1, doctor.stdout);
+    assert.match(doctor.stdout, /不是文件/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stages 类型错误时保留投影，空数组清空投影', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const base = readFileSync(hubFile, 'utf8');
+
+    writeFileSync(hubFile, base.replace(/^stages:\n(?:  - .*\n)+/m, 'stages: req,plan\n'));
+    const broken = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(broken.status, 1);
+    assert.match(broken.stdout + broken.stderr, /stages 必须是列表/);
+    assert.ok(existsSync(join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md')));
+    const preserved = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    assert.ok(preserved.skills.some((s) => s.name === 'devflow-req'));
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 1);
+    assert.match(doctor.stdout, /stages 必须是列表/);
+
+    writeFileSync(hubFile, base.replace(/^stages:\n(?:  - .*\n)+/m, 'stages: []\n'));
+    const cleared = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(cleared.status, 0, cleared.stdout + cleared.stderr);
+    assert.equal(existsSync(join(root, '.claude', 'skills', 'devflow-req')), false);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8')).skills, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stack 与 subprojects 类型错误在投影中给出明确提示', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    const base = readFileSync(hubFile, 'utf8');
+
+    writeFileSync(hubFile, base.replace(/^stages:/m, 'stack: 123\nstages:'));
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 1);
+    assert.match(gen.stdout + gen.stderr, /顶层 stack 必须是字符串/);
+    const projection = readFileSync(join(root, '.claude', 'skills', 'devflow-plan', 'SKILL.md'), 'utf8');
+    assert.match(projection, /配置无效（检查 hub\.yaml）/);
+    assert.doesNotMatch(projection, /java-spring/);
+
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(doctor.status, 1);
+    assert.match(doctor.stdout, /顶层 stack 必须是字符串/);
+
+    writeFileSync(hubFile, base.replace(/^subprojects:[\s\S]*?(?=\ndefaults:)/m, 'subprojects: []\n'));
+    const arraySubs = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(arraySubs.status, 0, arraySubs.stdout + arraySubs.stderr);
+    assert.match(readFileSync(join(root, '.claude', 'skills', 'devflow-plan', 'SKILL.md'), 'utf8'), /未声明子项目/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('doctor 发现项目概览标记块残缺', () => {
   const root = makeSandbox();
   try {

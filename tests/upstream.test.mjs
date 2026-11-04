@@ -468,6 +468,80 @@ test('回灌 --revert 恢复模板', () => {
   }
 });
 
+test('回灌技术栈到 templates/stacks', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(stackDir, { recursive: true });
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用\n\n- 使用构造函数注入。\n');
+    writeFileSync(join(stackDir, 'plan.md'), '# Java 方案\n\n- 先确认事务边界。\n');
+
+    const result = run('hub-upstream.mjs', [
+      '--root', root, '--stack', 'java-spring', '--plugin-root', pluginCopy, '--apply',
+    ], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /已回灌 2 个文件/);
+
+    assert.match(readFileSync(join(pluginCopy, 'templates', 'stacks', 'java-spring', '_shared.md'), 'utf8'), /构造函数注入/);
+    assert.match(readFileSync(join(pluginCopy, 'templates', 'stacks', 'java-spring', 'plan.md'), 'utf8'), /事务边界/);
+    assert.match(readFileSync(join(pluginCopy, '.devflow', 'upstream-log.jsonl'), 'utf8'), /java-spring 技术栈/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌 --all 同时包含技术栈', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(stackDir, { recursive: true });
+    writeFileSync(join(stackDir, '_shared.md'), '# Java 通用\n');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--all', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /已回灌 2 个文件/);
+    assert.ok(existsSync(join(pluginCopy, 'templates', 'stacks', 'java-spring', '_shared.md')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌 --all 跳过非法命名的技术栈目录', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const stacksDir = join(root, '.claude', 'hub', 'stacks');
+    mkdirSync(join(stacksDir, 'java-spring'), { recursive: true });
+    writeFileSync(join(stacksDir, 'java-spring', '_shared.md'), '# Java 通用\n');
+    mkdirSync(join(stacksDir, 'Bad Name'), { recursive: true });
+    writeFileSync(join(stacksDir, 'Bad Name', '_shared.md'), '# 非法目录\n');
+
+    const result = run('hub-upstream.mjs', ['--root', root, '--all', '--plugin-root', pluginCopy, '--apply'], root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout + result.stderr, /跳过无法声明的技术栈目录：Bad Name/);
+    assert.ok(existsSync(join(pluginCopy, 'templates', 'stacks', 'java-spring', '_shared.md')));
+    assert.equal(existsSync(join(pluginCopy, 'templates', 'stacks', 'Bad Name')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('回灌拒绝非法技术栈名', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const result = run('hub-upstream.mjs', [
+      '--root', root, '--stack', '../escape', '--plugin-root', pluginCopy, '--apply',
+    ], root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /技术栈名非法/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('回灌 --all 在没有共享目录时仍处理所有阶段', () => {
   const root = makeProject();
   const pluginCopy = makePluginCopy(root);
