@@ -127,6 +127,8 @@ test('非法栈名与非字符串声明是错误，同一栈只报告一次', ()
     const invalidType = planStacks(root, { subprojects: { api: { stack: 3 }, web: { stack: 3 } } }, STAGES);
     const typeIssues = invalidType.issues.filter((issue) => /必须是字符串/.test(issue.message));
     assert.equal(typeIssues.length, 2);
+    assert.equal(invalidType.rows.length, 2);
+    assert.ok(invalidType.rows.every((row) => row.invalidConfig && row.stack === '—'));
 
     writeStack(root, 'java-spring', { '_shared.md': '# java\n' });
     const duplicate = planStacks(root, {

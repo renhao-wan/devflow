@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildPrBody, redactText } from '../scripts/hub-ship.mjs';
+import { buildPrBody, buildSubject, redactText } from '../scripts/hub-ship.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -300,6 +300,19 @@ test('PR 正文复用仓库模板', () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('提交标题区分单阶段、单栈与 --all', () => {
+  assert.equal(buildSubject({ units: [{ kind: 'stage', name: 'review' }], slug: 'review' }),
+    'feat(templates): 回灌 review 阶段规则');
+  assert.equal(buildSubject({ units: [{ kind: 'stack', name: 'java-spring' }], slug: 'java-spring' }),
+    'feat(templates): 回灌 java-spring 技术栈规范');
+  assert.equal(buildSubject({ units: [{ kind: 'shared', name: 'shared' }], slug: 'shared' }),
+    'feat(templates): 回灌共享规则');
+  assert.equal(buildSubject({ all: true, units: [{}], slug: 'all' }),
+    'feat(templates): 回灌全部阶段与技术栈规则');
+  assert.equal(buildSubject({ units: [{ kind: 'stage', name: 'a' }, { kind: 'stage', name: 'b' }], slug: 'a-b' }),
+    'feat(templates): 回灌 a-b 规则');
 });
 
 test('PR 正文在 --all 时写所有阶段与技术栈', () => {

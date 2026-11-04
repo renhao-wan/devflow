@@ -18,7 +18,7 @@ import {
 } from './lib/ecosystem.mjs';
 import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
 import { planStacks } from './lib/stacks.mjs';
-import { stageList } from './lib/stages.mjs';
+import { resolveStages } from './lib/stages.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -124,7 +124,11 @@ export async function main(argv = process.argv.slice(2)) {
     const blocked = config.upstream?.blocklist;
     if (blocked != null && !Array.isArray(blocked)) add('warn', 'hub.yaml upstream.blocklist 应为列表', '把 .claude/hub/hub.yaml 的 upstream.blocklist 改为 YAML 列表');
 
-    const stages = stageList(config, root);
+    const stagePlan = resolveStages(config, root);
+    if (stagePlan.error) {
+      add('error', stagePlan.error, '把 .claude/hub/hub.yaml 的 stages 改成 YAML 列表；写 [] 表示不启用任何阶段');
+    }
+    const stages = stagePlan.stages;
     const stackPlan = planStacks(root, config, stages);
     for (const issue of stackPlan.issues) {
       const hint = issue.severity === 'error'

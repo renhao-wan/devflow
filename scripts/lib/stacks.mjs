@@ -99,8 +99,24 @@ export function planStacks(root, config = {}, stages = []) {
     return inspectedByName.get(name);
   };
 
-  const addRow = (subproject, path, declared) => {
-    if (!declared.name) return;
+  const addRow = (subproject, path, declared, invalidConfig = false) => {
+    if (!declared.name) {
+      // 声明了 stack 但不是字符串：保留一行占位，避免投影误以为该子项目继承默认栈。
+      if (invalidConfig) {
+        rows.push({
+          subproject,
+          path,
+          stack: '—',
+          dir: null,
+          dirExists: false,
+          invalidName: false,
+          invalidConfig: true,
+          stageFile: {},
+          sharedFile: null,
+        });
+      }
+      return;
+    }
     const inspected = inspectOnce(declared.name);
     rows.push({
       subproject,
@@ -109,6 +125,7 @@ export function planStacks(root, config = {}, stages = []) {
       dir: inspected.summary.dir || `.claude/hub/stacks/${declared.name}`,
       dirExists: inspected.dirExists,
       invalidName: inspected.invalidName === true,
+      invalidConfig: false,
       stageFile: inspected.stageFiles,
       sharedFile: inspected.sharedFile,
     });
@@ -116,15 +133,17 @@ export function planStacks(root, config = {}, stages = []) {
 
   const subEntries = Object.entries(subs);
   if (!subEntries.length) {
-    addRow('（工作区根）', '.', rootStack);
+    addRow('（工作区根）', '.', rootStack, rootStack.invalid);
   } else {
     for (const [name, value] of subEntries) {
       const own = declaredStack(value?.stack);
       if (own.invalid) {
         issues.push({ severity: 'error', message: `子项目 ${name} 的 stack 必须是字符串。` });
+        addRow(name, value?.path || name, own, true);
+        continue;
       }
       const declared = own.name ? own : rootStack;
-      addRow(name, value?.path || name, declared);
+      addRow(name, value?.path || name, declared, rootStack.invalid && !own.name);
     }
   }
 

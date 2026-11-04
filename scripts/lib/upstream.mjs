@@ -120,7 +120,7 @@ export function classifyText(text, config) {
 }
 
 export function resolveUnits(root, {
-  stage = null, stages = [], shared = false, stacks = [], all = false,
+  stage = null, stages = [], shared = false, stacks = [], all = false, onSkip = null,
 } = {}) {
   const units = [];
   const seen = new Set();
@@ -163,12 +163,14 @@ export function resolveUnits(root, {
     }
     const stacksDir = join(root, '.claude', 'hub', 'stacks');
     if (existsSync(stacksDir)) {
+      const skipped = [];
       for (const entry of readdirSync(stacksDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
         // 只回灌 hub.yaml 能引用的合法栈名，避免把无法声明的目录写进模板库。
-        if (entry.isDirectory() && !entry.name.startsWith('.') && isValidStackName(entry.name)) {
-          addStack(entry.name);
-        }
+        if (isValidStackName(entry.name)) addStack(entry.name);
+        else skipped.push(entry.name);
       }
+      if (skipped.length && onSkip) onSkip(skipped);
     }
   }
   if (!units.length) throw new Error('必须指定 --stage <name>、--shared、--stack <name> 或 --all');

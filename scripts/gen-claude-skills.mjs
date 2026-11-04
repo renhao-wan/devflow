@@ -7,7 +7,7 @@ import {
   ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside,
 } from './lib/common.mjs';
 import { planStacks } from './lib/stacks.mjs';
-import { stageList } from './lib/stages.mjs';
+import { resolveStages } from './lib/stages.mjs';
 
 const MARKER = '> 本文件由 devflow 生成，**勿手改**。';
 
@@ -20,15 +20,17 @@ function stageDescription(root, stage) {
 
 function subprojectRows(config, stackPlan) {
   const subs = config.subprojects;
-  if (!subs || typeof subs !== 'object') return '未声明子项目（按单项目处理）。';
+  if (!subs || typeof subs !== 'object' || Array.isArray(subs)) return '未声明子项目（按单项目处理）。';
   const stackBySub = new Map((stackPlan?.rows || []).map((row) => [row.subproject, row]));
   const rows = Object.entries(subs).map(([name, value]) => {
     const path = value?.path || name;
     const stages = Array.isArray(value?.stages) ? value.stages.join(', ') : '全部';
     const stackRow = stackBySub.get(name);
-    const stack = stackRow
-      ? `${stackRow.stack}${stackRow.invalidName ? '（名称非法）' : stackRow.dirExists ? '' : '（缺失）'}`
-      : '—';
+    const stack = !stackRow
+      ? '—'
+      : stackRow.invalidConfig
+        ? '配置无效（检查 hub.yaml）'
+        : `${stackRow.stack}${stackRow.invalidName ? '（名称非法）' : stackRow.dirExists ? '' : '（缺失）'}`;
     return `| ${name} | \`${path}\` | ${stages} | ${stack} |`;
   });
   return ['| 子项目 | 路径 | 阶段 | 技术栈 |', '| --- | --- | --- | --- |', ...rows].join('\n');
@@ -40,17 +42,21 @@ function stackSection(stackPlan, stage) {
     return '当前没有声明技术栈。可在 `hub.yaml` 设置顶层 `stack` 或 `subprojects.<name>.stack`，'
       + '并把规范放到 `.claude/hub/stacks/<stack>/`。';
   }
+  const invalidConfig = rows.some((row) => row.invalidConfig);
   const table = rows.map((row) => {
     const stageFile = row.stageFile?.[stage];
     const sharedFile = row.sharedFile;
-    const stack = row.invalidName
-      ? `${row.stack}（名称非法，检查 hub.yaml）`
-      : `${row.stack}${row.dirExists ? '' : '（缺失，运行 /devflow:sync）'}`;
+    const stack = row.invalidConfig
+      ? '配置无效（检查 hub.yaml）'
+      : row.invalidName
+        ? `${row.stack}（名称非法，检查 hub.yaml）`
+        : `${row.stack}${row.dirExists ? '' : '（缺失，运行 /devflow:sync）'}`;
     return `| ${row.subproject} | \`${row.path}\` | ${stack} | `
       + `${stageFile ? `\`${stageFile}\`` : '—'} | ${sharedFile ? `\`${sharedFile}\`` : '—'} |`;
   });
   return [
     '映射来自 `hub.yaml` 的 `stack` 字段与 `.claude/hub/stacks/`。进入阶段后，只读取任务涉及子项目的对应文件，不要预读所有栈规范。',
+    ...(invalidConfig ? ['', '部分 `stack` 声明不是字符串，已标为「配置无效」；请检查 `hub.yaml`，未修正前不要按该行读取栈规范。'] : []),
     '',
     '| 子项目 | 路径 | 技术栈 | 本阶段规范 | 通用规范 |',
     '| --- | --- | --- | --- | --- |',
@@ -238,13 +244,16 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`插件版本 ${version} 不满足 hub.yaml 的 requiresPlugin ${requires}。请先升级插件。`);
   }
 
-  const stages = stageList(config, root);
+  const stagePlan = resolveStages(config, root);
+  const stages = stagePlan.stages;
   const shared = sharedRules(root);
   const stackPlan = planStacks(root, config, stages);
   const results = [];
-  const errors = stackPlan.issues
+  const errors = [];
+  if (stagePlan.error) errors.push({ stage: null, error: stagePlan.error });
+  errors.push(...stackPlan.issues
     .filter((issue) => issue.severity === 'error')
-    .map((issue) => ({ stage: null, error: issue.message }));
+    .map((issue) => ({ stage: null, error: issue.message })));
   for (const stage of stages) {
     if (!isValidStageName(stage)) {
       errors.push({ stage, error: `阶段名 "${stage}" 非法：只允许小写字母开头的 [a-z0-9_-]。` });
@@ -258,7 +267,8 @@ export async function main(argv = process.argv.slice(2)) {
   const previous = readManifest(root);
   const erroredStages = new Set(errors.map((e) => e.stage));
   const currentNames = new Set(results.map((r) => r.name));
-  const stale = previous.skills.filter((s) => s.name
+  // stages 类型错误时无法判断哪些投影该保留：不清空账本，也不删除现有投影。
+  const stale = stagePlan.error ? [] : previous.skills.filter((s) => s.name
     && !currentNames.has(s.name)
     && !erroredStages.has(s.name.replace(/^devflow-/, '')));
 
@@ -369,9 +379,10 @@ export async function main(argv = process.argv.slice(2)) {
 
   // 源文件出错的阶段可能暂时无法生成：保留账本中的旧条目，避免投影失去归属。
   const writtenNames = new Set(written.map((r) => r.name));
-  const erroredNames = new Set(errors.map((e) => `devflow-${e.stage}`));
+  const erroredNames = new Set(errors.filter((e) => e.stage).map((e) => `devflow-${e.stage}`));
   const preserved = previous.skills.filter((s) => s.name && s.target
-    && erroredNames.has(s.name) && !writtenNames.has(s.name));
+    && !writtenNames.has(s.name)
+    && (stagePlan.error || erroredNames.has(s.name)));
 
   const manifest = {
     schemaVersion: 1,

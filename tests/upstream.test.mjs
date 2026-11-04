@@ -520,6 +520,7 @@ test('回灌 --all 跳过非法命名的技术栈目录', () => {
 
     const result = run('hub-upstream.mjs', ['--root', root, '--all', '--plugin-root', pluginCopy, '--apply'], root);
     assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout + result.stderr, /跳过无法声明的技术栈目录：Bad Name/);
     assert.ok(existsSync(join(pluginCopy, 'templates', 'stacks', 'java-spring', '_shared.md')));
     assert.equal(existsSync(join(pluginCopy, 'templates', 'stacks', 'Bad Name')), false);
   } finally {

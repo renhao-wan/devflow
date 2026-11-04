@@ -266,7 +266,13 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`找不到回灌记录：${revertId}`);
   }
 
-  const units = resolveUnits(root, { stage, shared, stacks, all });
+  const units = resolveUnits(root, {
+    stage,
+    shared,
+    stacks,
+    all,
+    onSkip: (names) => log('warn', `跳过无法声明的技术栈目录：${names.join('、')}（只允许 [a-z0-9][a-z0-9_-]*）`),
+  });
   const libRoot = resolveKind(target.kind);
   const cacheTarget = target.kind === 'upstream' && isPluginCache(libRoot);
   if (cacheTarget && apply) throw new Error(cacheGuardMessage(libRoot));

@@ -152,6 +152,18 @@ function unitRelPath(unit, rel) {
 }
 
 /** 复用仓库 PR 模板，没有模板时退回内置结构。 */
+export function buildSubject({ resume = false, units = [], all = false, slug = '' } = {}) {
+  if (resume) return `feat(templates): 续做回灌 ${slug}`;
+  if (units.length === 1) {
+    const unit = units[0];
+    if (unit.kind === 'stage') return `feat(templates): 回灌 ${unit.name} 阶段规则`;
+    if (unit.kind === 'shared') return 'feat(templates): 回灌共享规则';
+    if (unit.kind === 'stack') return `feat(templates): 回灌 ${unit.name} 技术栈规范`;
+  }
+  if (all) return 'feat(templates): 回灌全部阶段与技术栈规则';
+  return `feat(templates): 回灌 ${slug} 规则`;
+}
+
 export function buildPrBody(pluginRoot, {
   stage, stages, stacks, shared, all, projectName, files,
 }) {
@@ -356,7 +368,13 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
-  const units = resume ? [] : resolveUnits(root, { stages, stacks, shared, all });
+  const units = resume ? [] : resolveUnits(root, {
+    stages,
+    stacks,
+    shared,
+    all,
+    onSkip: (names) => log('warn', `跳过无法声明的技术栈目录：${names.join('、')}（只允许 [a-z0-9][a-z0-9_-]*）`),
+  });
   const plans = resume ? [] : planUnits(root, pluginRoot, units, config);
   const pending = plans.flatMap((p) => p.pending);
 
@@ -451,18 +469,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     const projectName = basename(root);
-    const singleStage = units.length === 1 && units[0].kind === 'stage';
-    const singleShared = units.length === 1 && units[0].kind === 'shared';
-    const singleStack = units.length === 1 && units[0].kind === 'stack';
-    const subject = resume
-      ? `feat(templates): 续做回灌 ${slug}`
-      : singleStage
-        ? `feat(templates): 回灌 ${units[0].name} 阶段规则`
-        : singleShared
-          ? 'feat(templates): 回灌共享规则'
-          : singleStack
-            ? `feat(templates): 回灌 ${units[0].name} 技术栈规范`
-            : `feat(templates): 回灌 ${slug} 规则`;
+    const subject = buildSubject({ resume, units, all, slug });
     if (toAdd.length) {
       const message = [
         subject,
