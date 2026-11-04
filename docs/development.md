@@ -89,7 +89,7 @@ node --test
 
 不带路径参数，由 Node 在仓库内自动发现 `**/*.test.mjs`。不要写 `node --test tests/`：Node 22.x 起目录参数不再被当作搜索目录，而会当模块路径执行并报 `MODULE_NOT_FOUND`。
 
-- 测试使用 `node:test`，无外部依赖；当前共 445 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、技术栈映射、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
+- 测试使用 `node:test`，无外部依赖；当前共 451 项，覆盖脚本、hooks、清单一致性、模板约定、CLI、状态视图与计划漂移、statusline、工具路由、模板库解析、多来源同步、技术栈映射、回灌、模板兼容校验、测试缺口与受影响测试提示、阶段产物门禁、验收追踪、增量复审、评测用例结构、文档链接与端到端链路。
 - 运行测试与插件运行均要求 Node >= 20.11，与 `package.json` 的 `engines` 一致。
 - 改动约定：项目规则只编辑 `.claude/hub/`；插件开发时编辑插件源码与 `templates/`。不要手改生成的 `.claude/skills/devflow-*`。
 - 修改模板或 hub 配置后，依次运行 `node scripts/devflow-gen.mjs` 与 `node scripts/devflow-doctor.mjs`。

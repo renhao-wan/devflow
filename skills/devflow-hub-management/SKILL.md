@@ -30,7 +30,7 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 ## hub.yaml 要点
 
 - `requiresPlugin`：语义化版本范围，插件不满足时生成器会拒绝。
-- `stages`：声明哪些阶段启用；顺序即流程顺序。
+- `stages`：声明哪些阶段启用；顺序即流程顺序。省略或留空时扫描 `.claude/hub/stages/`，写 `[]` 表示不启用任何阶段。
 - `subprojects`：多根工作区映射；每个可声明 `path`、`stages`、`testCommand`、`stack`。
 - `stack`：工作区默认技术栈；子项目未写 `stack` 时继承，没有子项目时直接用于“工作区根”。
 - `defaults.testCommand`：没有子项目级命令时使用。

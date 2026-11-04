@@ -141,7 +141,7 @@ templates:
 | --- | --- |
 | `version` | 配置格式版本，当前为 `1` |
 | `requiresPlugin` | 插件版本范围，支持 `^` `~` `>=` `<=` `>` `<` `=` 和 `*`；不满足时生成器拒绝写入 |
-| `stages` | 启用的阶段及顺序；为空时回退扫描 `stages/` 目录 |
+| `stages` | 启用的阶段及顺序；省略或留空时回退扫描 `stages/` 目录；写 `[]` 表示不启用任何阶段；其他类型会被 `gen` / `doctor` 报错 |
 | `subprojects.<name>.path` | 子项目相对工作区根的路径 |
 | `subprojects.<name>.stages` | 该子项目适用的阶段 |
 | `subprojects.<name>.testCommand` | 必须能从工作区根执行；init 会生成 `cd <rel> && ...`。探测只是初判，需按实际复核 |
@@ -209,9 +209,9 @@ subprojects:
 - 生成投影时写入“子项目 → 栈 → 本阶段规范/通用规范”映射；执行阶段只读任务涉及子项目的文件，不预读全部。
 - 优先级：阶段门禁与安全底线 > `overrides/<sub>/<stage>.md` > `stacks/<stack>/<stage>.md` > `stacks/<stack>/_shared.md` > `_shared/` > 阶段默认做法。
 - 改栈文件**内容**不需要重新生成；新增/删除栈文件或修改 `hub.yaml` 后需要重新生成。
-- 栈目录缺失或栈名非法是配置错误，`gen` 与 `doctor` 会报错；报错时 `gen` 仍会写出带「缺失」或「名称非法」标记的投影与账本，但退出码为 1。栈目录存在但没有任何 `.md` 时只给提醒。
+- 栈目录缺失或栈名非法是配置错误，`gen` 与 `doctor` 会报错；`stack` 声明不是字符串时同样报错，并在投影中标为「配置无效」。报错时 `gen` 仍会写出带「缺失」「名称非法」或「配置无效」标记的投影与账本，但退出码为 1。栈目录存在但没有任何 `.md` 时只给提醒。
 - 子项目省略 `stack` 即继承顶层；当前不支持显式退出继承，个别子项目需要不同规范时给它指定另一个栈。
-- 同步与回灌都覆盖 `stacks/`：对应模板库的 `templates/stacks/`；回灌使用 `devflow upstream --stack <name>`，`--all` 包含所有技术栈。
+- 同步与回灌都覆盖 `stacks/`：对应模板库的 `templates/stacks/`；回灌使用 `devflow upstream --stack <name>`，`--all` 包含所有技术栈。`--all` 会跳过名字非法的栈目录，并提示被跳过的目录。
 
 ## 单一真源与投影
 
