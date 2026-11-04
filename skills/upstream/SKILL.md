@@ -1,14 +1,14 @@
 ---
 name: upstream
-description: 回灌：把项目里改进过的阶段/共享规则回馈到个人库、团队库或上游插件（默认只预览）
-argument-hint: --stage <stage> | --shared | --all [--to personal|team|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]
+description: 回灌：把项目里改进过的阶段、共享与技术栈规则回馈到个人库、团队库或上游插件（默认只预览）
+argument-hint: --stage <stage> | --stack <name> | --shared | --all [--to personal|team|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]
 allowed-tools: Bash(node:*), Bash(git diff:*), Read, Glob, Grep, Write, Edit
 disable-model-invocation: true
 ---
 
 执行 devflow 回灌：**$ARGUMENTS**
 
-1. 回灌范围三选一：`--stage <req|plan|implement|test|review|debug>`、`--shared`（共享规则）或 `--all`。缺失时列出选择并停止。
+1. 回灌范围四选一：`--stage <req|plan|implement|test|review|debug>`、`--stack <name>`（技术栈规范）、`--shared`（共享规则）或 `--all`（全部阶段与技术栈）。缺失时列出选择并停止。
 2. 目标库由 `--to` 决定（默认 `upstream`）：
    - `personal`：写入个人库（默认 `~/.claude/devflow`），供自己其他项目复用；直接写本地，不提交。
    - `team`：写入 `hub.yaml` 配置的团队库；默认只写工作区，不提交。加 `--pr` 才建分支、提交、推送并创建/更新 PR。
