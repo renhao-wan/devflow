@@ -20,7 +20,7 @@ graders:
     match: contains
   - type: regex
     name: no-force
-    pattern: '(使用|加|改用).{0,8}--force'
+    pattern: '(?<!不|未|没|能|应|不是|并非|不能|不应|无法)(建议|应该|应|可以|直接|请|需要|不妨)[^。\n]{0,6}(使用|用|加|改用|执行|运行)[^。\n]{0,8}--force'
     flags: i
     match: not_contains
 ---
