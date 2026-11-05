@@ -369,32 +369,32 @@ function readTreeTexts(dir) {
 }
 
 /**
- * git merge-file 会把相邻行的改动视为冲突；行数一致时再做一次逐行合并。
- * 只接受“各自改动的行互不重叠”的情况，其余仍按冲突处理。
+ * 文本相等按设计 §13 归一 EOL 后比较，避免仅换行符不同被当成手改。
  */
-function mergeAlignedLines(baseText, localText, theirsText) {
-  const base = baseText.split('\n');
-  const local = localText.split('\n');
-  const theirs = theirsText.split('\n');
-  if (local.length !== base.length || theirs.length !== base.length) return null;
-  const out = [];
-  for (let i = 0; i < base.length; i += 1) {
-    const localChanged = local[i] !== base[i];
-    const theirsChanged = theirs[i] !== base[i];
-    if (localChanged && theirsChanged && local[i] !== theirs[i]) return null;
-    out.push(localChanged ? local[i] : theirs[i]);
+function sameText(a, b) {
+  return a !== undefined && b !== undefined && contentHash(a) === contentHash(b);
+}
+
+/** 冲突备份不覆盖已有文件：优先 <rel>.bak，再依次 <rel>.bak.1、.bak.2…… */
+function pickBackupRel(targetDir, rel) {
+  let candidate = `${rel}.bak`;
+  let index = 0;
+  while (existsSync(join(targetDir, ...candidate.split('/')))) {
+    index += 1;
+    candidate = `${rel}.bak.${index}`;
   }
-  return out.join('\n');
+  return candidate;
 }
 
 /**
  * 以 bases 为 base、当前目录为 local、新包为 theirs 计算更新动作，不落盘。
- * 只读取项目内路径；栈名先过校验，避免拼接未经检查的目录。
+ * 只读取项目内路径；栈名与路径先过校验，避免 junction 把读取引到项目外。
  */
 export function planPackUpdate({ root, installedAs, pack }) {
   assertStackName(installedAs);
-  const paths = stackPaths(root);
-  const current = readTreeTexts(paths.stackDir(installedAs));
+  const paths = assertInstallPaths(root, installedAs);
+  const targetDir = paths.stackDir(installedAs);
+  const current = readTreeTexts(targetDir);
   const base = readTreeTexts(paths.basesDir(installedAs));
   const theirs = new Map(pack.files.map((file) => [file.rel, file.text]));
   const rels = [...new Set([...current.keys(), ...base.keys(), ...theirs.keys()])].sort();
@@ -410,24 +410,29 @@ export function planPackUpdate({ root, installedAs, pack }) {
       // 本地删除的文件不自动恢复；账本会记为缺失，交由 doctor 报告。
       ops.push({ type: 'missing', rel });
     } else if (t !== undefined && b === undefined) {
-      ops.push(l === t ? { type: 'same', rel } : { type: 'conflict', rel, reason: '本地已有同名文件' });
+      ops.push(sameText(l, t) ? { type: 'same', rel } : {
+        type: 'conflict', rel, reason: '本地已有同名文件', backupRel: pickBackupRel(targetDir, rel),
+      });
     } else if (t !== undefined) {
-      if (l === b) ops.push({ type: 'write', rel, text: t });
-      else if (l === t) ops.push({ type: 'same', rel });
+      // 先判本地与新版是否已一致：三方全等时应是 same，而不是重复写入。
+      if (sameText(l, t)) ops.push({ type: 'same', rel });
+      else if (sameText(l, b)) ops.push({ type: 'write', rel, text: t });
       else {
         const merged = mergeTexts(b, l, t);
         // 不拼接 mergeTexts 的原始错误：可能包含临时路径或文本片段。
         if (merged.ok) ops.push({ type: 'write', rel, text: merged.content, merged: true });
         else {
-          // 相邻行改动在 git merge-file 中会冲突，但不重叠时仍可安全合并。
-          const aligned = merged.conflicts ? mergeAlignedLines(b, l, t) : null;
-          if (aligned !== null) ops.push({ type: 'write', rel, text: aligned, merged: true });
-          else ops.push({ type: 'conflict', rel, reason: merged.conflicts ? '三方合并冲突' : '合并失败' });
+          ops.push({
+            type: 'conflict',
+            rel,
+            reason: merged.conflicts ? '三方合并冲突' : '合并失败',
+            backupRel: pickBackupRel(targetDir, rel),
+          });
         }
       }
     } else if (b !== undefined) {
       if (l === undefined) ops.push({ type: 'missing', rel });
-      else if (l === b) ops.push({ type: 'delete', rel });
+      else if (sameText(l, b)) ops.push({ type: 'delete', rel });
       else {
         ops.push({ type: 'keep', rel });
         warnings.push(`${rel}：包已删除但本地改过，保留本地文件`);
@@ -455,8 +460,10 @@ function stageCurrentTree(root, installedAs, staged, ops) {
       writeAtomic(abs, op.text);
     } else if (op.type === 'delete') {
       rmSync(abs, { force: true });
-    } else if (op.type === 'conflict' && existsSync(abs)) {
-      cpSync(abs, `${abs}.bak`);
+    } else if (op.type === 'conflict' && op.backupRel && existsSync(abs)) {
+      const backupAbs = join(staged, ...op.backupRel.split('/'));
+      ensureDir(dirname(backupAbs));
+      cpSync(abs, backupAbs);
     }
   }
 }
@@ -471,11 +478,14 @@ export function applyPackUpdate({
 }) {
   assertStackName(installedAs);
   const paths = assertInstallPaths(root, installedAs);
+  if (!existsSync(paths.stackDir(installedAs))) {
+    throw new Error('目标目录缺失，不能执行更新；请先运行 devflow stack restore 或重新 add');
+  }
   const plan = planPackUpdate({ root, installedAs, pack });
   for (const warning of plan.warnings) onWarn(warning);
   for (const op of plan.ops) {
     if (op.type === 'conflict') {
-      onWarn(`${op.rel}：${op.reason}；已保留本地内容并写入 ${op.rel}.bak`);
+      onWarn(`${op.rel}：${op.reason}；已保留本地内容并写入 ${op.backupRel}`);
     }
   }
   const stageRoot = join(paths.stagingRoot, tag());
@@ -526,9 +536,17 @@ export function adoptExisting({ root, installedAs, pack, source, onWarn = () => 
     const stageRoot = join(paths.stagingRoot, tag());
     const stagedBases = join(stageRoot, 'bases');
     const trash = join(paths.trashRoot, tag(), `${installedAs}-bases`);
-    writePackTree(stagedBases, pack);
     const tx = { movedOld: false, placedNew: false };
+    const rollbackErrors = [];
+    const step = (label, fn) => {
+      try {
+        fn();
+      } catch (err) {
+        rollbackErrors.push(`${label}：${err.message}`);
+      }
+    };
     try {
+      writePackTree(stagedBases, pack);
       if (existsSync(bases)) {
         ensureDir(dirname(trash));
         renameSync(bases, trash);
@@ -545,17 +563,23 @@ export function adoptExisting({ root, installedAs, pack, source, onWarn = () => 
         packs: { ...latest.packs, [installedAs]: ledgerRecord({ installedAs, pack, source, localHashes }) },
       });
     } catch (err) {
-      if (tx.placedNew) rmSync(bases, { recursive: true, force: true });
+      // 回滚各步独立执行：任一步失败不阻断后续恢复，全部成功才清理备份。
+      if (tx.placedNew) step('移除新 bases', () => rmSync(bases, { recursive: true, force: true }));
       if (tx.movedOld) {
-        ensureDir(dirname(bases));
-        renameSync(trash, bases);
+        step('恢复旧 bases', () => {
+          ensureDir(dirname(bases));
+          renameSync(trash, bases);
+        });
+      }
+      if (rollbackErrors.length) {
+        onWarn(`回滚未能完全恢复：${rollbackErrors.join('；')}；备份保留在 .claude/.stack-trash`);
       }
       throw err;
     } finally {
       rmSync(stageRoot, { recursive: true, force: true });
     }
-    // 账本已提交；清理备份失败不能让采纳报失败。
-    if (tx.movedOld) {
+    // 账本已提交且没有回滚遗留；清理备份失败不能让采纳报失败。
+    if (tx.movedOld && rollbackErrors.length === 0) {
       try {
         rmSync(dirname(trash), { recursive: true, force: true });
       } catch {

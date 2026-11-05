@@ -321,11 +321,11 @@ test('更新合并本地改动、保留未改文件并删除包删除的干净�
   const root = mkdtempSync(join(tmpdir(), 'devflow-update-'));
   try {
     const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
-    const v1 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nc\n', 'old.md': '# old\n' });
+    const v1 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nc\nd\ne\n', 'old.md': '# old\n' });
     applyInstall({ root, installedAs: 'java-spring', pack: v1, source, sources: { schemaVersion: 1, packs: {} }, noGen: true });
-    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'a\nLOCAL\nc\n');
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'a\nLOCAL\nc\nd\ne\n');
 
-    const v2 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nC2\n' });
+    const v2 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nc\nC2\ne\n' });
     const plan = planPackUpdate({ root, installedAs: 'java-spring', pack: v2, sources: readSources(root) });
     assert.ok(plan.ops.some((op) => op.rel === 'old.md' && op.type === 'delete'));
     assert.ok(plan.ops.some((op) => op.rel === 'plan.md' && op.type === 'write'));
@@ -374,6 +374,68 @@ test('adoptExisting 为内容一致目录补账本与 bases', () => {
     });
     assert.equal(readSources(root).packs['java-spring'].files['.claude/hub/stacks/java-spring/_shared.md'].base, contentHash('# shared\n'));
     assert.equal(readFileSync(join(root, '.claude', '.stack-bases', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('本地仅改 CRLF 时包删除文件仍判干净删除', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-eol-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    applyInstall({
+      root, installedAs: 'java-spring', source, noGen: true,
+      pack: packOf({ '_shared.md': '# shared\n', 'eol.md': '# eol\n' }),
+      sources: { schemaVersion: 1, packs: {} },
+    });
+    // 仅换行符不同不算本地改动，包删除时应直接删除。
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'eol.md'), '# eol\r\n');
+    const plan = planPackUpdate({
+      root, installedAs: 'java-spring', pack: packOf({ '_shared.md': '# shared\n' }),
+    });
+    assert.ok(plan.ops.some((op) => op.rel === 'eol.md' && op.type === 'delete'));
+    assert.ok(!plan.ops.some((op) => op.rel === 'eol.md' && op.type === 'keep'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('冲突备份不覆盖已有 .bak', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-bak-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    applyInstall({
+      root, installedAs: 'java-spring', source, noGen: true,
+      pack: packOf({ 'plan.md': 'a\nb\nc\n' }),
+      sources: { schemaVersion: 1, packs: {} },
+    });
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    writeFileSync(join(dir, 'plan.md'), 'a\nLOCAL\nc\n');
+    writeFileSync(join(dir, 'plan.md.bak'), 'KEEP\n');
+    const warnings = [];
+    applyPackUpdate({
+      root, installedAs: 'java-spring', source, noGen: true,
+      pack: packOf({ 'plan.md': 'a\nTHEIRS\nc\n' }),
+      onWarn: (message) => warnings.push(message),
+    });
+    assert.equal(readFileSync(join(dir, 'plan.md.bak'), 'utf8'), 'KEEP\n');
+    assert.equal(readFileSync(join(dir, 'plan.md.bak.1'), 'utf8'), 'a\nLOCAL\nc\n');
+    assert.equal(readFileSync(join(dir, 'plan.md'), 'utf8'), 'a\nLOCAL\nc\n');
+    assert.ok(warnings.some((message) => message.includes('plan.md.bak.1')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('目标目录缺失时拒绝更新', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-missing-'));
+  try {
+    assert.throws(() => applyPackUpdate({
+      root, installedAs: 'java-spring', noGen: true,
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+    }), /目标目录缺失.*devflow stack restore.*重新 add/s);
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stacks', 'java-spring')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
