@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import {
-  readMeta, findPluginRoot, isPluginCache, isPathInside, canonicalPath,
+  readMeta, readText, isDraft, findPluginRoot, isPluginCache, isPathInside, canonicalPath,
   posix, walk, relPosix, isGeneratedArtifact,
 } from './common.mjs';
 
@@ -179,6 +179,9 @@ export function resolveLibraryRoot(root, kind, {
 export function collectTemplateFiles(libraries) {
   const seen = new Set();
   const out = [];
+  // 草稿不参与“先到先得”：高优先库的草稿不能遮蔽低优先库的正式模板。
+  // 没有任何正式模板时仍返回草稿，由调用方决定跳过或统计。
+  const drafts = [];
   for (const library of libraries) {
     for (const def of TEMPLATE_ROOTS) {
       const base = join(library.templateRoot, def.src);
@@ -188,15 +191,24 @@ export function collectTemplateFiles(libraries) {
         if (isGeneratedArtifact(rel) || rel.split('/').pop() === '_feedback-log.md') continue;
         const hubRel = `${def.hub}/${rel}`;
         if (seen.has(hubRel)) continue;
-        seen.add(hubRel);
-        out.push({
+        const file = {
           hubRel,
           destRel: `.claude/hub/${hubRel}`,
           src: abs,
           source: library.kind,
-        });
+        };
+        if (isDraft(readText(abs))) drafts.push(file);
+        else {
+          seen.add(hubRel);
+          out.push(file);
+        }
       }
     }
+  }
+  for (const file of drafts) {
+    if (seen.has(file.hubRel)) continue;
+    seen.add(file.hubRel);
+    out.push(file);
   }
   return out.sort((a, b) => a.hubRel.localeCompare(b.hubRel));
 }

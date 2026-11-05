@@ -147,15 +147,15 @@ export async function main(argv = process.argv.slice(2)) {
       continue;
     }
 
-    const templateUnchanged = record && record.base === templateHash;
-    if (templateUnchanged) {
-      actions.push({ ...file, dest, type: 'keep', templateText, templateHash });
+    // --force 是用户明确的覆盖意图，优先于“模板未变就保留”和自动三方合并。
+    if (force) {
+      actions.push({ ...file, dest, type: 'overwrite', templateText, templateHash });
       continue;
     }
 
-    // --force 是用户明确的覆盖意图，优先于自动三方合并。
-    if (force) {
-      actions.push({ ...file, dest, type: 'overwrite', templateText, templateHash });
+    const templateUnchanged = record && record.base === templateHash;
+    if (templateUnchanged) {
+      actions.push({ ...file, dest, type: 'keep', templateText, templateHash });
       continue;
     }
 

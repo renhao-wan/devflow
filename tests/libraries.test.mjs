@@ -149,6 +149,29 @@ test('collectTemplateFiles 先到先得，并映射 shared 到 _shared', () => {
   }
 });
 
+test('高优先库的草稿不遮蔽低优先库的正式模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-libs-draft-'));
+  try {
+    const personal = makeDir(base, 'personal');
+    const upstream = makeDir(base, 'upstream');
+    writeTemplate(personal, 'stages/review/SKILL.md', '<!-- devflow:draft -->\n# 草稿\n\n- TODO: 补充。\n');
+    writeTemplate(upstream, 'stages/review/SKILL.md', 'upstream review\n');
+    writeTemplate(personal, 'stages/plan/SKILL.md', '<!-- devflow:draft -->\n# 草稿\n\n- TODO: 补充。\n');
+
+    const libs = resolveLibraries(makeDir(base, 'project'), {
+      templates: { order: ['personal', 'upstream'] },
+    }, { pluginRoot: upstream, personalLibrary: personal, env: {} });
+    const byRel = Object.fromEntries(collectTemplateFiles(libs).map((f) => [f.hubRel, f]));
+
+    // personal 的草稿让位给 upstream 的正式模板。
+    assert.equal(byRel['stages/review/SKILL.md'].source, 'upstream');
+    // 没有任何正式模板时，草稿仍会返回，由调用方跳过并统计。
+    assert.equal(byRel['stages/plan/SKILL.md'].source, 'personal');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('模板库不能与项目互相嵌套，也不能落在插件缓存', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-libs-'));
   try {

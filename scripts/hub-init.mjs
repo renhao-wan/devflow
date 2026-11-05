@@ -128,6 +128,8 @@ await mod.main(process.argv.slice(2));
 function copyTemplates(files, root, force) {
   let copied = 0;
   for (const file of files) {
+    // 模板库草稿不是规则，不复制到项目，也不写入源文件账本。
+    if (isDraft(readText(file.src))) continue;
     const dst = join(root, ...file.destRel.split('/'));
     if (existsSync(dst) && (!force || isDraft(readText(dst)))) continue;
     ensureDir(dirname(dst));
