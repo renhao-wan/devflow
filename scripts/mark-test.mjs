@@ -180,8 +180,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (!report.statsAvailable) {
       console.log('[WARN] 无法统计 git 改动，测试缺口提示不完整；请人工核对。');
-    }
-    if (!report.stats.changedFiles) {
+    } else if (!report.stats.changedFiles) {
       console.log('[OK]   没有可统计的改动。');
     } else if (!report.gaps.length) {
       console.log(`[OK]   源码改动均有对应测试痕迹（${report.stats.sourceFiles} 个源码文件）。`);
@@ -202,8 +201,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (!report.statsAvailable) {
       console.log('[WARN] 无法统计 git 改动，受影响测试提示不完整；请人工核对。');
-    }
-    if (!report.stats.changedFiles) {
+    } else if (!report.stats.changedFiles) {
       console.log('[OK]   没有可统计的改动。');
     }
     if (report.tests.length) {
@@ -214,8 +212,10 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`[UNMAPPED] ${report.unmapped.length} 个源码文件未映射到已存在测试，建议跑全量或补充测试：`);
       for (const file of report.unmapped) console.log(`  - ${file}`);
     }
-    if (!report.statsAvailable || (!report.tests.length && !report.unmapped.length)) {
+    if (!report.statsAvailable) {
       console.log('  无法确定受影响范围时，优先运行全量测试。');
+    } else if (!report.tests.length && !report.unmapped.length && report.stats.changedFiles) {
+      console.log('  没有可提示的受影响测试。');
     }
     for (const warning of report.warnings) console.log(`  注意：${warning}`);
     return report;

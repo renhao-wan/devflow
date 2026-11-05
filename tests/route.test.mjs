@@ -420,3 +420,15 @@ test('检测名拒绝路径穿越，只接受单段名称', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('route 拒绝语法合法但不存在的阶段名', () => {
+  const { root, home } = setup();
+  try {
+    const r = run(root, home, ['--stage', 'foobar', '--json']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /未知阶段/);
+    assert.match(r.stderr, /req、plan、implement、test、review、debug/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

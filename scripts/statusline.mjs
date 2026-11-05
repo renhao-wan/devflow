@@ -51,7 +51,8 @@ function readInput(timeoutMs = 400) {
 
 function rootFrom(input, argv) {
   const explicit = argValue(argv, '--root', null);
-  if (explicit) return explicit;
+  // 与默认路径保持一致：显式 --root 也向上查找 hub.yaml，允许指向子目录。
+  if (explicit) return projectRoot(explicit);
   const candidate = process.env.CLAUDE_PROJECT_DIR
     || input?.workspace?.current_dir
     || input?.cwd

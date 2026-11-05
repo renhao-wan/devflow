@@ -1,8 +1,9 @@
 import {
   existsSync, lstatSync, readFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { isPathInside, readText } from './common.mjs';
 
 export const DIRECTIONS = [
@@ -149,8 +150,10 @@ const CONTENT_RULES = [
 const DOC_PATTERN = /(^|\/)(docs?|documentation)(\/|$)|\.(md|mdx|rst|txt)$/i;
 const GENERATED_PATTERN = /(^|\/)(dist|build|coverage|node_modules)(\/|$)|\.(min|map)$/i;
 const TEST_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$/i;
-// 测试与规则定义里的正则文本会命中自身规则，扫描内容时跳过，避免自我放大。
-const CONTENT_SKIP_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$|(^|\/)scripts\/lib\/review\.mjs$/i;
+// 测试文件里的正则文本会命中自身规则，扫描内容时跳过，避免自我放大。
+// 插件自身的规则定义文件由调用方通过 selfPath 传入，不能硬编码路径：
+// 普通项目里同名的 scripts/lib/review.mjs 是用户代码，仍应正常扫描。
+const CONTENT_SKIP_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$/i;
 // 未跟踪文件没有 diff，读取有限内容补足风险信号；超过该大小按路径计分。
 const UNTRACKED_LIMIT = 64 * 1024;
 
@@ -180,14 +183,26 @@ function scanPath(file, map) {
   }
 }
 
-function scanDiff(text, map) {
+/** 本模块自身在项目内的相对路径；只在 devflow 仓库开发时非 null。 */
+export function selfSourcePath(root) {
+  try {
+    const rel = relative(root, fileURLToPath(import.meta.url));
+    if (!rel || isAbsolute(rel) || rel.startsWith('..')) return null;
+    return rel.replace(/\\/g, '/');
+  } catch {
+    return null;
+  }
+}
+
+function scanDiff(text, map, selfPath = null) {
   const lines = String(text || '').split(/\r?\n/);
   let current = null;
   let skipContent = false;
   for (const line of lines) {
     if (line.startsWith('+++ ')) {
       current = line.slice(4).replace(/^b\//, '');
-      skipContent = CONTENT_SKIP_PATTERN.test(current);
+      skipContent = CONTENT_SKIP_PATTERN.test(current)
+        || Boolean(selfPath && current === selfPath);
       continue;
     }
     if (line.startsWith('--- ') || line.startsWith('@@') || line.startsWith('diff ')) continue;
@@ -217,6 +232,7 @@ export function profileChanges({
   agents = null,
   noSubagents = false,
   focusOnly = false,
+  selfPath = null,
 } = {}) {
   const map = new Map();
   const normalizedFiles = files.map((file) => ({
@@ -227,7 +243,7 @@ export function profileChanges({
   }));
 
   for (const file of normalizedFiles) scanPath(file, map);
-  scanDiff(diffText, map);
+  scanDiff(diffText, map, selfPath);
 
   const changedLines = normalizedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0);
   const codeFiles = normalizedFiles.filter((f) => isCodeFile(f.path));
@@ -433,8 +449,9 @@ export function readReviewMarker(root, slug) {
   if (!existsSync(file)) return null;
   try {
     const head = readText(file).split(/\r?\n/).slice(0, 10).join('\n');
-    const m = /^review:\s*['"]?(required|skipped)['"]?\s*$/m.exec(head);
-    return m ? m[1] : null;
+    // 只支持显式要求审查；`review: skipped` 不能作为绕过 triage 的开关。
+    const m = /^review:\s*['"]?required['"]?\s*$/m.exec(head);
+    return m ? 'required' : null;
   } catch {
     return null;
   }
@@ -596,8 +613,11 @@ export function buildReviewPlan({
   noSubagents = false,
   focusOnly = false,
   statsAvailable = true,
+  selfPath = null,
 } = {}) {
-  let profile = profileChanges({ files, diffText, focus, agents, noSubagents, focusOnly });
+  let profile = profileChanges({
+    files, diffText, focus, agents, noSubagents, focusOnly, selfPath,
+  });
   const userSpecified = [...new Set(focus)].filter((d) => DIRECTIONS.includes(d)).length > 0;
   // 用户显式要求派代理，等同于要求审查，不能因为风险低而判成跳过。
   const explicitAgents = agents !== null && agents !== undefined

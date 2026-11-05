@@ -7,6 +7,7 @@ import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/c
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
+import { isTaskDir } from './lib/slug.mjs';
 import { summarizeTrace, traceFor } from './lib/trace.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
@@ -73,6 +74,8 @@ function scanSlugs(root) {
   for (const entry of readdirSync(docs, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const dir = join(docs, entry.name);
+    // 与 listCandidates 保持同一口径：只有 test.md/review.md 的目录不是任务。
+    if (!isTaskDir(dir)) continue;
     const files = ARTIFACTS.filter((name) => existsSync(join(dir, name)));
     const substantive = new Set(files.filter((name) => hasSubstance(join(dir, name))));
     const latest = Math.max(mtimeOf(dir), ...files.map((name) => mtimeOf(join(dir, name))));
@@ -221,10 +224,10 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     suggestions.push(`存在 ${slugs.length} 个任务；执行工作流命令时请显式带上 slug，或先运行 /devflow:status --slug <slug>`);
   }
   if (testsPending) {
-    suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>"`);
+    suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>" --exit-code 0`);
   }
   if (state.lastTestStatus === 'failed') {
-    suggestions.push(`上次测试失败（exit ${state.lastTestExitCode ?? '?'}）；修复后重新运行并用 node scripts/devflow-test.mjs 记录结果`);
+    suggestions.push(`上次测试失败（exit ${state.lastTestExitCode ?? '?'}）；修复后重新运行并用 node scripts/devflow-test.mjs --command "<命令>" --exit-code <退出码> 记录结果`);
   }
   for (const row of rows) {
     if (!row.planDrift || row.planDrift.skipped) continue;

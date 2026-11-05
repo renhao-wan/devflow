@@ -199,12 +199,15 @@ export function checkStage(root, slug, stage) {
     }
     const file = join(dir, 'req.md');
     if (!existsSync(file)) {
+      const hint = flow === 'light-bug'
+        ? '轻量修复请使用 --stage debug；升级为完整流程时先补 req.md'
+        : '请先创建 req.md';
       return {
         ok: false,
         stage,
         slug,
         flow,
-        errors: ['缺少 req.md（轻量功能请先创建 brief.md）'],
+        errors: [`缺少 req.md（${hint}）`],
         warnings: [],
       };
     }

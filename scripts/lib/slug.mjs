@@ -5,6 +5,13 @@ import { isRealPathInside } from './common.mjs';
 
 export const MISSING = Symbol('missing');
 
+/** 决定一个目录是否算任务入口的产物；hub-status 与 slug 解析共用同一口径。 */
+export const ENTRY_ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md'];
+
+export function isTaskDir(dir) {
+  return ENTRY_ARTIFACTS.some((file) => existsSync(join(dir, file)));
+}
+
 export function validSlug(slug) {
   return Boolean(slug) && !slug.includes('..') && !/[\\/]/.test(slug);
 }
@@ -15,8 +22,8 @@ export function listCandidates(root) {
   return readdirSync(docs, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
     .map((entry) => entry.name)
-    .filter((name) => ['req.md', 'plan.md', 'brief.md', 'debug.md']
-      .some((file) => existsSync(join(docs, name, file))));
+    // 只有 test.md/review.md 的目录不是可解析的任务，扫描与解析必须一致。
+    .filter((name) => isTaskDir(join(docs, name)));
 }
 
 /** 显式 slug 不存在时返回 MISSING；未指定且候选不唯一时抛错。 */

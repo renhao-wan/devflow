@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
-  argValue, hasFlag, isMain, log, posix, projectRoot, isValidStageName, isRealPathInside,
+  argValue, hasFlag, isMain, log, posix, projectRoot, isValidStageName, isKnownStage, isRealPathInside,
+  DEVFLOW_STAGES,
 } from './lib/common.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE,
@@ -151,6 +152,12 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (!isValidStageName(stage)) {
     note(json, 'error', `非法阶段名：${stage}；只允许小写字母开头的 [a-z0-9_-]`);
+    process.exitCode = 1;
+    return;
+  }
+  // 语法合法不等于阶段存在：避免 foobar 这类拼写错误被静默路由。
+  if (!isKnownStage(stage)) {
+    note(json, 'error', `未知阶段：${stage}；可选 ${DEVFLOW_STAGES.join('、')}`);
     process.exitCode = 1;
     return;
   }

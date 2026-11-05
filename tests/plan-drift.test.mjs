@@ -145,3 +145,26 @@ test('buildStatus 在真实 git 仓库中提示计划外改动，statusline 模�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('路径大小写、前后空格、目录尾斜杠与分隔符不影响匹配', () => {
+  const root = makeRoot('devflow-drift6-');
+  try {
+    writeFileSync(join(root, 'docs', 'devflow', 'demo', 'plan.md'), `# 计划
+
+## 任务拆分
+
+| # | 任务 | 涉及文件 | 验证方式 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 | 实现 | \`Src/Auth/\` | 单测 | 待办 |
+| 2 | 补充 | \` src/a.js \`、src/b.js | 单测 | 待办 |
+`);
+    const drift = planDriftFor(root, 'demo', {
+      changes: changes(['src/auth/session.js', 'src/a.js', 'src/b.js']),
+    });
+    assert.equal(drift.skipped, false);
+    assert.deepEqual(drift.plannedButUnchanged, []);
+    assert.deepEqual(drift.unplannedChanged, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

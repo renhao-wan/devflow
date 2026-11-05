@@ -56,6 +56,13 @@ export function isValidStageName(name) {
   return STAGE_NAME_RE.test(String(name));
 }
 
+/** devflow 自身的六个阶段；`--stage` 等入口只接受这些值。 */
+export const DEVFLOW_STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
+
+export function isKnownStage(name) {
+  return DEVFLOW_STAGES.includes(String(name));
+}
+
 export function isMain(metaUrl) {
   if (!process.argv[1]) return false;
   return metaUrl === pathToFileURL(resolve(process.argv[1])).href;

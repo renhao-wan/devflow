@@ -155,3 +155,20 @@ test('devflow statusline 通过统一 CLI 分发', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('statusline --root 支持子目录并向上查找项目根', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-sub-'));
+  try {
+    makeTask(root, 'sub-task', ['req.md', 'plan.md']);
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'version: 1\n');
+    const sub = join(root, 'packages', 'app');
+    mkdirSync(sub, { recursive: true });
+
+    const r = run(['--root', sub, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).slug, 'sub-task');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

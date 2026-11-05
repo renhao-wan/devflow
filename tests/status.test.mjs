@@ -52,6 +52,22 @@ test('status 在无任务时提示开始需求阶段', () => {
   }
 });
 
+test('status 不把只有 test.md 或 review.md 的目录当成任务', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-orphan-'));
+  try {
+    const dir = makeTask(root, 'orphan');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK);
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    // 与 review-triage/stage-check 的 slug 解析口径一致：没有 req/plan/brief/debug 就不是任务。
+    assert.equal(r.json.slugs.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('status 按单个 slug 推断阶段并给出下一步', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-single-'));
   try {
@@ -68,7 +84,7 @@ test('status 按单个 slug 推断阶段并给出下一步', () => {
     assert.equal(report.slugs[0].stage, 'test');
     assert.equal(report.slugs[0].gap, 'test.md');
     assert.match(report.slugs[0].next, /\/devflow:test add-login/);
-    assert.ok(report.suggestions.some((s) => s.includes('尚未验证')));
+    assert.ok(report.suggestions.some((s) => s.includes('尚未验证') && s.includes('--exit-code')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

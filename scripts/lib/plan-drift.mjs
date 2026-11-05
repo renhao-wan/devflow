@@ -16,8 +16,12 @@ function normalize(path) {
     .trim()
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
-    .replace(/^`|`$/g, '')
-    .replace(/\/+$/, '');
+    .replace(/^`|`$/g, '');
+}
+
+/** 比较键：去掉目录尾斜杠并统一小写，避免大小写或 `src/` 写法造成误报。 */
+function pathKey(path) {
+  return normalize(path).replace(/\/+$/, '').toLowerCase();
 }
 
 function planTable(root, slug) {
@@ -41,15 +45,26 @@ function planTable(root, slug) {
 
 function pathTokens(cell) {
   return String(cell || '')
-    .split(/[、,，;；\s]+/)
-    .map(normalize)
+    .split(/[、,，;；]+/)
+    .flatMap((part) => {
+      const whole = normalize(part);
+      if (!whole) return [];
+      // 以扩展名结尾时优先当作单个路径，避免把“my file.js”拆成两段。
+      if (/\.[a-z0-9]{1,8}$/i.test(whole)) return [whole];
+      return whole.split(/\s+/).map(normalize).filter(Boolean);
+    })
     .filter((token) => token && !IGNORED.test(token))
     // 只认像路径的 token：带 `/` 或带扩展名，避免把一句说明当成文件。
     .filter((token) => token.includes('/') || /\.[a-z0-9]{1,8}$/i.test(token));
 }
 
 function covers(planned, path) {
-  return planned === path || (planned.includes('/') && path.startsWith(`${planned}/`));
+  const p = pathKey(planned);
+  const file = pathKey(path);
+  if (!p || !file) return false;
+  // 计划写目录（`src/` 或 `src`）时，目录下的文件都算已覆盖。
+  return p === file || (p.includes('/') && file.startsWith(`${p}/`))
+    || (planned.endsWith('/') && file.startsWith(`${p}/`));
 }
 
 /**

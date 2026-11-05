@@ -6,7 +6,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkDebug, checkReq } from '../scripts/lib/stage-gate.mjs';
+import { checkDebug, checkReq, checkStage } from '../scripts/lib/stage-gate.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SCRIPT = join(ROOT, 'scripts', 'stage-check.mjs');
@@ -240,4 +240,28 @@ test('CLI 缺少 --stage 或阶段未知时报错', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('轻量修复误用 req 门禁时提示改用 debug，而不是提示创建 brief', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-gate-flow-'));
+  try {
+    const dir = join(root, 'docs', 'devflow', 'bug');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'debug.md'), '# debug\n');
+
+    const result = checkStage(root, 'bug', 'req');
+    assert.equal(result.flow, 'light-bug');
+    assert.equal(result.ok, false);
+    assert.match(result.errors[0], /--stage debug/);
+    assert.doesNotMatch(result.errors[0], /brief\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stage-check 直接运行时参数错误给出可读信息而非堆栈', () => {
+  const r = spawnSync(process.execPath, [SCRIPT, '--root', process.cwd()], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /\[ERR\] --stage 必填/);
+  assert.doesNotMatch(r.stderr, /at .*stage-check\.mjs/);
 });

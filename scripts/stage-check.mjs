@@ -34,5 +34,11 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 if (isMain(import.meta.url)) {
-  main();
+  try {
+    main();
+  } catch (err) {
+    // 直接运行时也要给出可读错误，而不是打印堆栈。
+    console.error(`[ERR] ${err.message}`);
+    process.exit(1);
+  }
 }
