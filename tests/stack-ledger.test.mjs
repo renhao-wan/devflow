@@ -189,6 +189,34 @@ test('未知顶层字段读取后原样保留并可再次 round-trip', () => {
   }
 });
 
+test('未知顶层字段的块列表即使与父键同缩进也原样保留', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-lock-blocklist-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(stackPaths(root).lock, [
+      'version: 1',
+      'packs: {}',
+      'mylist:',
+      '- a: b',
+      '- c: d',
+      '',
+    ].join('\n'));
+    const lock = readLock(root);
+    assert.deepEqual(lock.mylist, [{ a: 'b' }, { c: 'd' }]);
+    lock.packs['java-spring'] = {
+      installedAs: 'java-spring', repo: 'https://example.com/r.git', packId: 'java-spring',
+      path: 'stacks/java-spring', ref: 'main', commit: 'd'.repeat(40), version: '1.2.0',
+    };
+    writeLock(root, lock);
+    const text = readFileSync(stackPaths(root).lock, 'utf8');
+    assert.match(text, /^- a: b$/m);
+    assert.match(text, /^- c: d$/m);
+    assert.deepEqual(readLock(root).mylist, [{ a: 'b' }, { c: 'd' }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('新构造 lock 的未知字段递归渲染后可解析', () => {
   const lock = {
     version: 1,

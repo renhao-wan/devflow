@@ -94,7 +94,7 @@ function rawTopLevelFields(text) {
   for (const line of text.split(/\r?\n/)) {
     const indent = /^ */.exec(line)[0].length;
     const trimmed = line.trim();
-    if (indent === 0 && trimmed && !trimmed.startsWith('#')) {
+    if (indent === 0 && trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('- ')) {
       const m = /^([^:]+):\s*(.*)$/.exec(line);
       if (m) {
         flush();
@@ -260,23 +260,34 @@ export function dropHubOwnership(root, installedAs) {
   }
   const file = join(root, '.claude', '.hub-sources.json');
   if (existsSync(file)) {
+    let data;
+    let readable = true;
     try {
-      const data = JSON.parse(readText(file));
-      if (plainObject(data) && plainObject(data.files)) {
-        const prefix = `.claude/hub/stacks/${installedAs}/`;
-        let changed = false;
-        for (const rel of Object.keys(data.files)) {
-          if (rel.startsWith(prefix)) {
-            delete data.files[rel];
-            changed = true;
-          }
-        }
-        if (changed) writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
-      } else {
-        warnings.push(`.hub-sources.json 格式不支持：${posix(file)}`);
-      }
+      data = JSON.parse(readText(file));
     } catch {
+      readable = false;
+    }
+    if (!readable) {
       warnings.push(`.hub-sources.json 无法读取或解析：${posix(file)}`);
+    } else if (!plainObject(data) || !plainObject(data.files)) {
+      warnings.push(`.hub-sources.json 格式不支持：${posix(file)}`);
+    } else {
+      const prefix = `.claude/hub/stacks/${installedAs}/`;
+      let changed = false;
+      for (const rel of Object.keys(data.files)) {
+        if (rel.startsWith(prefix)) {
+          delete data.files[rel];
+          changed = true;
+        }
+      }
+      if (changed) {
+        try {
+          writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
+        } catch {
+          // 不拼接异常原文：它可能回显路径之外的敏感信息。
+          warnings.push(`.hub-sources.json 无法写入：${posix(file)}`);
+        }
+      }
     }
   }
   const baseDir = join(root, '.claude', '.hub-bases', 'stacks', installedAs);
