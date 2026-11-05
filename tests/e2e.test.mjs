@@ -370,7 +370,9 @@ test('gen --json 普通执行时 stdout 只输出可解析的 JSON', () => {
     assert.equal(report.written.length, 6);
     assert.equal(report.errors.length, 0);
     assert.doesNotMatch(gen.stdout, /\[OK\]/);
-    assert.match(gen.stderr, /\[ok\]/);
+    assert.match(gen.stderr, /\[OK\]/);
+    // JSON 模式的 stderr 日志与普通输出使用同一套大写标签。
+    assert.doesNotMatch(gen.stderr, /\[(ok|warn|error)\]/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -529,11 +531,11 @@ test('doctor 对未启用个人库的项目不误报个人库目录', () => {
   try {
     assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
     const hub = join(root, '.claude', 'hub', 'hub.yaml');
-    writeFileSync(hub, `${readFileSync(hub, 'utf8')}\n`
-      + 'templates:\n'
-      + '  order: [upstream]\n'
-      + '  personal:\n'
-      + '    enabled: false\n');
+    // 原地修改已有 templates 块：重复键现在会被解析器拒绝。
+    const yaml = readFileSync(hub, 'utf8')
+      .replace(/^(templates:\n  order: )\[[^\]]*\]/m, '$1[upstream]')
+      .replace(/(^  personal:\n    enabled: )true/m, '$1false');
+    writeFileSync(hub, yaml);
 
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);

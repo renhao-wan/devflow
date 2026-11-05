@@ -6,6 +6,7 @@ import {
   pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath, walk,
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside, isDraft,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
@@ -92,6 +93,7 @@ function safeManifestTarget(root, rel) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--json']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const rows = [];

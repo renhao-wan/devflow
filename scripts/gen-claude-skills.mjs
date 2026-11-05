@@ -5,6 +5,7 @@ import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
   readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
   ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside, isDraft,
+  warnUnknownArgs, LOG_TAGS,
 } from './lib/common.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
@@ -237,14 +238,15 @@ function readManifest(root) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--check', '--dry-run', '--force', '--json', '--no-plugin']);
   const root = argValue(argv, '--root', projectRoot());
   const check = hasFlag(argv, '--check');
   const dryRun = hasFlag(argv, '--dry-run');
   const json = hasFlag(argv, '--json');
   const force = hasFlag(argv, '--force');
-  // JSON 模式下 stdout 只输出报告，过程日志走 stderr，避免把输出流混在一起。
+  // JSON 模式下 stdout 只输出报告，过程日志走 stderr，避免把输出流混在一起；标签与 log() 同为小写转大写。
   const emit = json
-    ? (status, message) => process.stderr.write(`[${status}] ${message}\n`)
+    ? (status, message) => process.stderr.write(`[${LOG_TAGS[status] || status}] ${message}\n`)
     : log;
 
   const { config, file: hubFile } = loadHub(root);

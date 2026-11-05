@@ -1,8 +1,9 @@
 import {
   existsSync, lstatSync, readFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { isPathInside, readText } from './common.mjs';
 
 export const DIRECTIONS = [
@@ -149,8 +150,10 @@ const CONTENT_RULES = [
 const DOC_PATTERN = /(^|\/)(docs?|documentation)(\/|$)|\.(md|mdx|rst|txt)$/i;
 const GENERATED_PATTERN = /(^|\/)(dist|build|coverage|node_modules)(\/|$)|\.(min|map)$/i;
 const TEST_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$/i;
-// 测试与规则定义里的正则文本会命中自身规则，扫描内容时跳过，避免自我放大。
-const CONTENT_SKIP_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$|(^|\/)scripts\/lib\/review\.mjs$/i;
+// 测试文件里的正则文本会命中自身规则，扫描内容时跳过，避免自我放大。
+// 插件自身的规则定义文件由调用方通过 selfPath 传入，不能硬编码路径：
+// 普通项目里同名的 scripts/lib/review.mjs 是用户代码，仍应正常扫描。
+const CONTENT_SKIP_PATTERN = /(^|\/)(tests?|__tests__|spec|specs)(\/|$)|\.(test|spec)\.[^.]+$/i;
 // 未跟踪文件没有 diff，读取有限内容补足风险信号；超过该大小按路径计分。
 const UNTRACKED_LIMIT = 64 * 1024;
 
@@ -180,14 +183,26 @@ function scanPath(file, map) {
   }
 }
 
-function scanDiff(text, map) {
+/** 本模块自身在项目内的相对路径；只在 devflow 仓库开发时非 null。 */
+export function selfSourcePath(root) {
+  try {
+    const rel = relative(root, fileURLToPath(import.meta.url));
+    if (!rel || isAbsolute(rel) || rel.startsWith('..')) return null;
+    return rel.replace(/\\/g, '/');
+  } catch {
+    return null;
+  }
+}
+
+function scanDiff(text, map, selfPath = null) {
   const lines = String(text || '').split(/\r?\n/);
   let current = null;
   let skipContent = false;
   for (const line of lines) {
     if (line.startsWith('+++ ')) {
       current = line.slice(4).replace(/^b\//, '');
-      skipContent = CONTENT_SKIP_PATTERN.test(current);
+      skipContent = CONTENT_SKIP_PATTERN.test(current)
+        || Boolean(selfPath && current === selfPath);
       continue;
     }
     if (line.startsWith('--- ') || line.startsWith('@@') || line.startsWith('diff ')) continue;
@@ -217,6 +232,7 @@ export function profileChanges({
   agents = null,
   noSubagents = false,
   focusOnly = false,
+  selfPath = null,
 } = {}) {
   const map = new Map();
   const normalizedFiles = files.map((file) => ({
@@ -227,7 +243,7 @@ export function profileChanges({
   }));
 
   for (const file of normalizedFiles) scanPath(file, map);
-  scanDiff(diffText, map);
+  scanDiff(diffText, map, selfPath);
 
   const changedLines = normalizedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0);
   const codeFiles = normalizedFiles.filter((f) => isCodeFile(f.path));
@@ -433,8 +449,9 @@ export function readReviewMarker(root, slug) {
   if (!existsSync(file)) return null;
   try {
     const head = readText(file).split(/\r?\n/).slice(0, 10).join('\n');
-    const m = /^review:\s*['"]?(required|skipped)['"]?\s*$/m.exec(head);
-    return m ? m[1] : null;
+    // 只支持显式要求审查；`review: skipped` 不能作为绕过 triage 的开关。
+    const m = /^review:\s*['"]?required['"]?\s*$/m.exec(head);
+    return m ? 'required' : null;
   } catch {
     return null;
   }
@@ -449,6 +466,26 @@ export function detectFlow(root, slug) {
   return 'unknown';
 }
 
+/** 大仓库的 diff 可能超过默认 1MB；超出时 spawnSync 会以 ENOBUFS 失败，这里放宽并显式提示。 */
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+function git(root, args) {
+  // core.quotePath=false 避免非 ASCII 路径被转义成 "\346\226\207" 形式。
+  return spawnSync('git', ['-c', 'core.quotePath=false', ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: GIT_MAX_BUFFER,
+  });
+}
+
+/** numstat 的 rename 路径可能写成 `dir/{old => new}/file` 或 `old => new`。 */
+function renameTarget(raw) {
+  const brace = /^(.*?)\{(.*?) => (.*?)\}(.*)$/.exec(raw);
+  if (brace) return `${brace[1]}${brace[3]}${brace[4]}`.replace(/\/{2,}/g, '/').replace(/^\//, '');
+  const arrow = /^(.*) => (.*)$/.exec(raw);
+  return arrow ? arrow[2].trim() : raw.trim();
+}
+
 /**
  * 从 git 收集工作区或分支差异。
  * base 用三点比较（合并基线后的分支改动）；since 用两点（该提交之后的所有改动，含工作区）；
@@ -457,56 +494,54 @@ export function detectFlow(root, slug) {
 export function collectChanges(root, { base = null, since = null } = {}) {
   if (base && since) throw new Error('base 与 since 不能同时使用');
   const range = since || (base ? `${base}...HEAD` : 'HEAD');
-  const numstat = spawnSync(
-    'git',
-    ['diff', '--numstat', '--find-renames', '--no-ext-diff', '--no-textconv', range],
-    { cwd: root, encoding: 'utf8' },
-  );
-  const diff = spawnSync(
-    'git',
-    ['diff', '--no-color', '--unified=0', '--no-ext-diff', '--no-textconv', range],
-    { cwd: root, encoding: 'utf8' },
-  );
+  const numstat = git(root, ['diff', '--numstat', '--find-renames', '--no-ext-diff', '--no-textconv', range]);
+  const diff = git(root, ['diff', '--no-color', '--unified=0', '--no-ext-diff', '--no-textconv', range]);
   const warnings = [];
   const files = [];
   if (numstat.status === 0) {
     for (const line of numstat.stdout.split(/\r?\n/).filter(Boolean)) {
       const [added, removed, ...rest] = line.split('\t');
-      const path = rest.join('\t').replace(/^.* => /, '').replace(/[{}]/g, '');
+      const path = renameTarget(rest.join('\t'));
+      if (!path) continue;
       files.push({
-        path: path.trim(),
+        path,
         additions: added === '-' ? 0 : Number(added) || 0,
         deletions: removed === '-' ? 0 : Number(removed) || 0,
       });
     }
+  } else if (numstat.error?.code === 'ENOBUFS') {
+    warnings.push('git diff 输出超过缓冲上限，改动统计可能不完整');
   } else {
     warnings.push('无法统计 git diff 的文件改动，改动规模可能不完整');
   }
-  // 未跟踪文件不属于 diff，但仍是本次改动的一部分。
-  const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
-    cwd: root,
-    encoding: 'utf8',
-  });
-  const untrackedPaths = [];
+  // 未跟踪文件不属于 diff，但仍是本次改动的一部分；行数按实际内容统计。
+  const untracked = git(root, ['ls-files', '--others', '--exclude-standard']);
+  const untrackedDiffs = [];
   if (untracked.status === 0) {
     for (const line of untracked.stdout.split(/\r?\n/).filter(Boolean)) {
       const path = line.trim();
-      files.push({ path, additions: 0, deletions: 0, untracked: true });
-      untrackedPaths.push(path);
+      const content = readUntrackedText(root, path);
+      const additions = content ? content.split(/\r?\n/).length - (content.endsWith('\n') ? 1 : 0) : 0;
+      files.push({ path, additions, deletions: 0, untracked: true });
+      // 未跟踪文件没有 diff，读取有限内容补足密钥、迁移等信号。
+      if (content) {
+        untrackedDiffs.push(`diff --git a/${path} b/${path}\n--- /dev/null\n+++ b/${path}\n`
+          + content.split(/\r?\n/).map((text) => `+${text}`).join('\n'));
+      }
     }
+  } else if (untracked.error?.code === 'ENOBUFS') {
+    warnings.push('未跟踪文件列表超过缓冲上限，新增文件可能未完整计入');
   } else {
     warnings.push('无法读取未跟踪文件列表，新增文件可能未计入');
   }
   const parts = [];
   if (diff.status === 0) parts.push(diff.stdout);
-  else warnings.push('无法读取 git diff 内容，内容风险信号可能缺失');
-  // 未跟踪文件没有 diff，读取有限内容补足密钥、迁移等信号。
-  for (const rel of untrackedPaths) {
-    const content = readUntrackedText(root, rel);
-    if (!content) continue;
-    const added = content.split(/\r?\n/).map((line) => `+${line}`).join('\n');
-    parts.push(`diff --git a/${rel} b/${rel}\n--- /dev/null\n+++ b/${rel}\n${added}`);
+  else if (diff.error?.code === 'ENOBUFS') {
+    warnings.push('git diff 内容超过缓冲上限，内容风险信号可能缺失');
+  } else {
+    warnings.push('无法读取 git diff 内容，内容风险信号可能缺失');
   }
+  parts.push(...untrackedDiffs);
   return {
     files,
     diffText: parts.join('\n'),
@@ -578,8 +613,11 @@ export function buildReviewPlan({
   noSubagents = false,
   focusOnly = false,
   statsAvailable = true,
+  selfPath = null,
 } = {}) {
-  let profile = profileChanges({ files, diffText, focus, agents, noSubagents, focusOnly });
+  let profile = profileChanges({
+    files, diffText, focus, agents, noSubagents, focusOnly, selfPath,
+  });
   const userSpecified = [...new Set(focus)].filter((d) => DIRECTIONS.includes(d)).length > 0;
   // 用户显式要求派代理，等同于要求审查，不能因为风险低而判成跳过。
   const explicitAgents = agents !== null && agents !== undefined

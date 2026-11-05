@@ -56,6 +56,13 @@ export function isValidStageName(name) {
   return STAGE_NAME_RE.test(String(name));
 }
 
+/** devflow 自身的六个阶段；`--stage` 等入口只接受这些值。 */
+export const DEVFLOW_STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
+
+export function isKnownStage(name) {
+  return DEVFLOW_STAGES.includes(String(name));
+}
+
 export function isMain(metaUrl) {
   if (!process.argv[1]) return false;
   return metaUrl === pathToFileURL(resolve(process.argv[1])).href;
@@ -231,10 +238,17 @@ export function parseYaml(text) {
       if (!m) throw new Error(`YAML 第 ${line} 行无法解析：${text}`);
       const key = unquote(m[1].trim());
       const rest = m[2].trim();
+      // 重复键会静默覆盖前一个值，配置里通常意味着写错了。
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        throw new Error(`YAML 第 ${line} 行重复键：${key}`);
+      }
       i += 1;
       if (rest === '') {
         if (i < lines.length && lines[i].indent > indent) {
           obj[key] = parseBlock(lines[i].indent);
+        } else if (i < lines.length && lines[i].indent === indent && lines[i].text.startsWith('- ')) {
+          // YAML 允许块列表与父键同缩进，按列表处理而不是当成缺失值。
+          obj[key] = parseList(indent);
         } else {
           obj[key] = null;
         }
@@ -261,6 +275,11 @@ export function parseYaml(text) {
   }
 
   const value = parseBlock(lines.length ? lines[0].indent : 0);
+  // 剩余行通常意味着缩进错误或使用了尚未支持的语法（如块标量 |）。
+  // 静默丢弃会让配置看起来生效、实际未生效，这里直接报错。
+  if (i < lines.length) {
+    throw new Error(`YAML 第 ${lines[i].line} 行缩进或语法不受支持：${lines[i].text}`);
+  }
   return value ?? {};
 }
 
@@ -269,6 +288,44 @@ function unquote(v) {
     return v.slice(1, -1);
   }
   return v;
+}
+
+function splitInline(body, sep) {
+  const out = [];
+  let quote = null;
+  let buf = '';
+  for (let k = 0; k < body.length; k += 1) {
+    const ch = body[k];
+    if (quote) {
+      buf += ch;
+      if (ch === quote && body[k - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      buf += ch;
+    } else if (ch === sep) {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  out.push(buf);
+  return out;
+}
+
+function indexOfUnquoted(body, sep) {
+  let quote = null;
+  for (let k = 0; k < body.length; k += 1) {
+    const ch = body[k];
+    if (quote) {
+      if (ch === quote && body[k - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === sep) {
+      return k;
+    }
+  }
+  return -1;
 }
 
 function parseScalar(v) {
@@ -280,17 +337,18 @@ function parseScalar(v) {
   if (s.startsWith('[') && s.endsWith(']')) {
     const body = s.slice(1, -1).trim();
     if (!body) return [];
-    return body.split(',').map((x) => parseScalar(x.trim()));
+    // 按引号外的逗号切分，避免 ["a,b"] 被拆成两项。
+    return splitInline(body, ',').map((x) => parseScalar(x.trim()));
   }
   if (s === '{}') return {};
   if (s.startsWith('{') && s.endsWith('}')) {
     const body = s.slice(1, -1).trim();
     if (!body) return {};
     const obj = {};
-    for (const pair of body.split(',')) {
-      const idx = pair.indexOf(':');
+    for (const pair of splitInline(body, ',')) {
+      const idx = indexOfUnquoted(pair, ':');
       if (idx < 0) continue;
-      obj[pair.slice(0, idx).trim()] = parseScalar(pair.slice(idx + 1).trim());
+      obj[unquote(pair.slice(0, idx).trim())] = parseScalar(pair.slice(idx + 1).trim());
     }
     return obj;
   }
@@ -405,23 +463,56 @@ export function satisfies(version, range) {
 }
 
 export function argValue(argv, name, fallback = null) {
-  // 同时支持 --name value 与 --name=value，避免带等号时被静默忽略。
-  const inline = argv.find((arg) => arg.startsWith(`${name}=`));
-  if (inline !== undefined) {
-    const value = inline.slice(name.length + 1);
-    return value || fallback;
+  // 同时支持 --name value 与 --name=value；重复出现时取最后一次，符合常见 CLI 习惯。
+  for (let i = argv.length - 1; i >= 0; i -= 1) {
+    const arg = argv[i];
+    if (arg.startsWith(`${name}=`)) {
+      const value = arg.slice(name.length + 1);
+      return value || fallback;
+    }
+    if (arg === name) {
+      const value = argv[i + 1];
+      // 漏传值时不能把下一个开关当成值，否则会静默吞掉后续参数。
+      if (value === undefined || value.startsWith('-')) return fallback;
+      return value;
+    }
   }
-  const i = argv.indexOf(name);
-  if (i === -1) return fallback;
-  const value = argv[i + 1];
-  // 漏传值时不能把下一个开关当成值，否则会静默吞掉后续参数。
-  if (value === undefined || value.startsWith('-')) return fallback;
-  return value;
+  return fallback;
+}
+
+/** 选项是否出现（包括 --name=value 形式），用于区分“没传”和“传了但缺值”。 */
+export function hasOption(argv, name) {
+  return argv.includes(name) || argv.some((arg) => arg.startsWith(`${name}=`));
 }
 
 export function hasFlag(argv, name) {
   return argv.includes(name);
 }
+
+/** 列出未声明的长参数；`--name=value` 只取参数名，值不参与判断。 */
+export function unknownArgs(argv, known) {
+  const allowed = known instanceof Set ? known : new Set(known);
+  const out = [];
+  for (const arg of argv) {
+    if (!arg.startsWith('--') || arg === '--') continue;
+    const name = arg.split('=')[0];
+    if (!allowed.has(name) && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * 提示未声明的长参数但不改变退出码。
+ * 静默忽略拼错的参数会让脚本按默认行为执行，结果看起来成功；写到 stderr 也不污染 JSON 输出。
+ */
+export function warnUnknownArgs(argv, known, { stream = process.stderr } = {}) {
+  const unknown = unknownArgs(argv, known);
+  for (const name of unknown) stream.write(`[WARN] 未知参数：${name}（已忽略）\n`);
+  return unknown;
+}
+
+/** 日志标签的统一大写形式；JSON 模式下日志写 stderr 时与 log() 保持一致。 */
+export const LOG_TAGS = { ok: 'OK', warn: 'WARN', error: 'ERR' };
 
 export function log(status, message) {
   const tag = status === 'ok' ? '[OK]  ' : status === 'warn' ? '[WARN]' : status === 'error' ? '[ERR] ' : '[..]  ';
@@ -442,14 +533,14 @@ function sleepSync(ms) {
  * 用独占锁文件串行化状态读改写，避免多个进程互相覆盖。
  * 锁超过 staleMs 视为残留；等待超时后降级为无锁执行，不能让维护脚本卡死。
  */
-export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 5000 } = {}) {
+export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 15000 } = {}) {
   const lock = `${file}.lock`;
   const deadline = Date.now() + timeoutMs;
   let acquired = false;
   while (true) {
     try {
       mkdirSync(dirname(lock), { recursive: true });
-      writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      writeFileSync(lock, `${process.pid}\n${Date.now()}`, { flag: 'wx' });
       acquired = true;
       break;
     } catch (err) {
@@ -468,17 +559,26 @@ export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 5000 } = {}
     return fn();
   } finally {
     if (acquired) {
-      try { rmSync(lock, { force: true }); } catch { /* 清理失败不影响结果 */ }
+      try {
+        // 只删除自己持有的锁：stale 抢占后原持有者可能仍在运行。
+        const owner = readText(lock).split('\n')[0].trim();
+        if (owner === String(process.pid)) rmSync(lock, { force: true });
+      } catch { /* 清理失败不影响结果 */ }
     }
   }
 }
 
-/** 在锁内读取-修改-写回 JSON 状态；解析失败按 fallback 处理。 */
+/** 在锁内读取-修改-写回 JSON 状态；解析失败或形状不是普通对象时按 fallback 处理。 */
 export function updateJson(file, update, fallback = {}) {
   return withFileLock(file, () => {
     let value = fallback;
     if (existsSync(file)) {
-      try { value = JSON.parse(readText(file)); } catch { value = fallback; }
+      try {
+        const parsed = JSON.parse(readText(file));
+        // 数组、null、标量都不是合法的状态对象，直接使用会静默丢弃属性。
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) value = parsed;
+        else value = fallback;
+      } catch { value = fallback; }
     }
     const result = update(value) ?? value;
     writeAtomic(file, `${JSON.stringify(result, null, 2)}\n`);

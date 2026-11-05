@@ -23,7 +23,7 @@ function emptyTotals() {
   };
 }
 
-export function normalizeId(raw) {
+function normalizeId(raw) {
   const digits = /\d+/.exec(String(raw || ''));
   return digits ? `AC-${Number(digits[0])}` : null;
 }
@@ -50,7 +50,7 @@ function columnIndex(header, ...patterns) {
 }
 
 /** 解析 req/brief 的验收标准，或 debug 的「正确行为依据」。 */
-export function parseAcceptance(text, { source = 'req' } = {}) {
+function parseAcceptance(text, { source = 'req' } = {}) {
   const warnings = [];
   if (source === 'debug') {
     const body = section(text, '正确行为依据');
@@ -125,7 +125,7 @@ function assignIds(entries) {
 }
 
 /** 解析 plan 的「任务拆分」或 brief 的「改动范围与测试计划」。 */
-export function parsePlanCoverage(text, { title = '任务拆分' } = {}) {
+function parsePlanCoverage(text, { title = '任务拆分' } = {}) {
   if (!text) return { available: false, byId: {}, warnings: [] };
   const body = section(text, title);
   if (body === null) return { available: false, byId: {}, warnings: [`缺少「## ${title}」段落`] };
@@ -172,7 +172,7 @@ function classifyTest(raw) {
 }
 
 /** 解析 test.md 的「验收覆盖」表。 */
-export function parseTestCoverage(text) {
+function parseTestCoverage(text) {
   if (!text) return { available: false, byId: {}, warnings: [] };
   const body = section(text, '验收覆盖');
   if (body === null) return { available: false, byId: {}, warnings: ['缺少「## 验收覆盖」小节'] };
@@ -326,10 +326,10 @@ export function buildTrace({ flow, source, texts = {} }) {
       warnings.push(`${item.id} 的测试结论与 review 不一致，以 review 为准`);
     }
     let status;
-    if (reviewRow?.status === 'blocked') status = 'blocked';
-    else if (reviewRow?.status === 'covered' || testRow?.covered) status = 'covered';
-    else if (reviewRow?.status === 'accepted') status = 'accepted';
-    else if (reviewRow?.status === 'uncovered') status = 'uncovered';
+    // 审查结论是最终裁决：review 说未覆盖时，不能因为测试通过就判为已覆盖。
+    if (reviewStatus === 'blocked') status = 'blocked';
+    else if (['covered', 'accepted', 'uncovered'].includes(reviewStatus)) status = reviewStatus;
+    else if (testRow?.covered) status = 'covered';
     else if (planRows.length) status = 'planned';
     else status = 'uncovered';
 

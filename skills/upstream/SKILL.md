@@ -14,17 +14,20 @@ disable-model-invocation: true
    - `team`：写入 `hub.yaml` 配置的团队库；默认只写工作区，不提交。加 `--pr` 才建分支、提交、推送并创建/更新 PR。
    - `upstream`：写入插件源码仓库的 `templates/`，不提交。加 `--pr` 才建分支、提交、推送并创建/更新 PR。
    - `personal` 不支持 `--pr`；三个库的回灌都不改版本文件。
-3. 默认先预览（不加 `--apply`）：
+3. 默认先预览（不加 `--apply`）。预览命令中必须去掉用户参数里的 `--apply`，否则预览会直接写入目标库：
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-upstream.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" $ARGUMENTS
+node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-upstream.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" <用户参数，去掉 --apply>
 ```
+
+   - `--revert <记录 ID>` 是独立的写入操作，不接受预览：不要把它拼进预览命令；只有用户明确要求回滚、并确认记录 ID 与目标库后才执行 `--to <库> --revert <记录 ID>`。
+   - `--pr` 只在 `--apply` 时真正创建 PR；单独出现时随预览一起展示将要提交的范围。
 
 4. 向用户解释分类结果：
    - `[可回灌]`：通用内容。命中敏感行时只剔除对应行，其余内容仍可回灌。
    - `[项目专属]`：位于 `<!-- devflow:local -->` 块内，或剔除后没有正文，不会回灌。
    - `<!-- devflow:reusable -->` 块一定会保留，但仍会做敏感扫描。
-5. 只有用户明确同意后才追加 `--apply`。回灌只写模板与回灌日志，不改版本文件；发版由维护者另行处理。个人库与团队库写入后由用户自行提交（团队库 `--pr` 例外）。
+5. 只有用户明确同意后才在预览命令上追加 `--apply`；确认执行命令中不含 `--revert`。回灌只写模板与回灌日志，不改版本文件；发版由维护者另行处理。个人库与团队库写入后由用户自行提交（团队库 `--pr` 例外）。
 6. 回灌后可用的后续动作：
    - 回滚本次写入：`--to <库> --revert <记录 ID>`；未指定 `--to` 时依次在个人、团队、上游日志中查找；
    - 同步到项目：`/devflow:sync`；

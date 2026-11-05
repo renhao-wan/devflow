@@ -18,6 +18,14 @@ test('evals 的 not_contains 不会误伤正确回答', () => {
     'generated-file-protection': '应该修改 .claude/hub/stages/req/SKILL.md，改完运行 node scripts/devflow-gen.mjs。'
       + '不要直接修改 .claude/skills/devflow-req/SKILL.md，它是生成物。',
     'stage-routing': '应该先进入 debug 阶段：问题无法稳定复现，先收集证据。不要直接修改代码，也不要先改代码。',
+    'light-flow-escalation': '应该停止轻量流程并升级完整流程：涉及认证与安全边界，'
+      + '不能继续轻量修复，也不是“不需要升级”的场景。',
+    'template-compat-skip': '应跳过该文件，升级插件或改用兼容来源后重跑 sync；不要使用 --force 强行覆盖。',
+  };
+  // 反向样本：禁用模式必须真的命中“建议继续 / 建议强制覆盖”的错误结论。
+  const wrong = {
+    'light-flow-escalation': '可以继续轻量修复，不需要升级。',
+    'template-compat-skip': '可以用 --force 强制覆盖。',
   };
   for (const [name, answer] of Object.entries(samples)) {
     const front = frontmatter(readFileSync(join(EVALS, name, 'prompt.md'), 'utf8'));
@@ -26,7 +34,9 @@ test('evals 的 not_contains 不会误伤正确回答', () => {
     let checked = 0;
     while ((m = re.exec(front))) {
       const [, graderName, pattern, flags] = m;
-      assert.doesNotMatch(answer, new RegExp(pattern, flags || ''), `${name}/${graderName} 误伤正确回答`);
+      const regex = new RegExp(pattern, flags || '');
+      assert.doesNotMatch(answer, regex, `${name}/${graderName} 误伤正确回答`);
+      if (wrong[name]) assert.match(wrong[name], regex, `${name}/${graderName} 没有拦住错误结论`);
       checked += 1;
     }
     assert.ok(checked > 0, `${name} 应至少有一个 not_contains grader`);

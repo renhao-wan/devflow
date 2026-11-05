@@ -174,6 +174,55 @@ test('sync --force 覆盖时生成 .bak 备份', () => {
   }
 });
 
+test('sync --force 覆盖模板未变时的手改文件', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-force-keep-'));
+  try {
+    const repo = makePlugin(base, {});
+    const root = makeProject(base, repo);
+    const target = join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md');
+    const original = readFileSync(target, 'utf8');
+    writeFileSync(target, '本地手改\n');
+
+    // 模板未变时默认保留手改。
+    const plain = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo], root);
+    assert.equal(plain.status, 0, plain.stderr + plain.stdout);
+    assert.equal(readFileSync(target, 'utf8'), '本地手改\n');
+
+    // 用户显式 --force 时覆盖，并保留备份。
+    const forced = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo, '--force'], root);
+    assert.equal(forced.status, 0, forced.stderr + forced.stdout);
+    assert.equal(readFileSync(target, 'utf8'), original);
+    const backup = readdirSync(join(root, '.claude', 'hub', 'stages', 'review'))
+      .find((f) => f.startsWith('SKILL.md.bak-'));
+    assert.ok(backup, '未生成备份');
+    assert.equal(readFileSync(join(root, '.claude', 'hub', 'stages', 'review', backup), 'utf8'), '本地手改\n');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 中个人库草稿不遮蔽上游正式模板', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-draft-shadow-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/plan/references/note.md': '# 上游参考\n',
+    });
+    const root = makeProject(base, repo);
+    const personal = join(base, 'personal');
+    writeLibraryFile(personal, 'stages/plan/references/note.md', `${DRAFT_MARKER}\n# 模板草稿\n\n- TODO: 补充。\n`);
+
+    const sync = run('hub-sync.mjs', [
+      '--root', root, '--plugin-root', repo, '--personal-library', personal,
+    ], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    const target = join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'note.md');
+    assert.equal(readFileSync(target, 'utf8'), '# 上游参考\n');
+    assert.doesNotMatch(sync.stdout, /跳过草稿 1（其中模板库草稿 1）/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('sync 在缺少源文件账本时要求 --force 才覆盖', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-sync-legacy-'));
   try {

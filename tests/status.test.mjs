@@ -52,6 +52,22 @@ test('status 在无任务时提示开始需求阶段', () => {
   }
 });
 
+test('status 不把只有 test.md 或 review.md 的目录当成任务', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-orphan-'));
+  try {
+    const dir = makeTask(root, 'orphan');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
+    writeFileSync(join(dir, 'review.md'), REVIEW_OK);
+
+    const r = run(['--root', root, '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    // 与 review-triage/stage-check 的 slug 解析口径一致：没有 req/plan/brief/debug 就不是任务。
+    assert.equal(r.json.slugs.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('status 按单个 slug 推断阶段并给出下一步', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-single-'));
   try {
@@ -68,7 +84,7 @@ test('status 按单个 slug 推断阶段并给出下一步', () => {
     assert.equal(report.slugs[0].stage, 'test');
     assert.equal(report.slugs[0].gap, 'test.md');
     assert.match(report.slugs[0].next, /\/devflow:test add-login/);
-    assert.ok(report.suggestions.some((s) => s.includes('尚未验证')));
+    assert.ok(report.suggestions.some((s) => s.includes('尚未验证') && s.includes('--exit-code')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -79,7 +95,7 @@ test('status 在审查产物齐全后标记完成', () => {
   try {
     const dir = makeTask(root, 'fix-typo');
     for (const name of ['req.md', 'plan.md', 'test.md']) {
-      writeFileSync(join(dir, name), '# x\n');
+      writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
     }
     writeFileSync(join(dir, 'review.md'), REVIEW_OK);
     const r = run(['--root', root, '--json']);
@@ -96,7 +112,7 @@ test('status 在审查结论未勾选或仍有阻断项时回到 review', () => 
   try {
     const dir = makeTask(root, 'gate-task');
     for (const name of ['req.md', 'plan.md', 'test.md']) {
-      writeFileSync(join(dir, name), '# x\n');
+      writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
     }
 
     writeFileSync(join(dir, 'review.md'), REVIEW_OK.replace('- [x] 可以交付', '- [ ] 可以交付'));
@@ -125,7 +141,7 @@ test('status 校验审查画像与 triage 快照一致', () => {
   try {
     const dir = makeTask(root, 'profile-task');
     for (const name of ['req.md', 'plan.md', 'test.md']) {
-      writeFileSync(join(dir, name), '# x\n');
+      writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
     }
     writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({
       trigger: 'auto',
@@ -171,7 +187,7 @@ test('status 完整流程审查早于测试证据时回到测试阶段', () => {
   try {
     const dir = makeTask(root, 'review-before-test');
     for (const name of ['req.md', 'plan.md', 'review.md']) {
-      writeFileSync(join(dir, name), '# x\n');
+      writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
     }
     const r = run(['--root', root, '--json']);
     assert.equal(r.status, 0, r.stderr);
@@ -187,7 +203,7 @@ test('status 在审查后又有未验证改动时回到测试阶段', () => {
   try {
     const dir = makeTask(root, 'post-review-change');
     for (const name of ['req.md', 'plan.md', 'test.md', 'review.md']) {
-      writeFileSync(join(dir, name), '# x\n');
+      writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
     }
     writeState(root, { testsPending: true });
     const r = run(['--root', root, '--json']);
@@ -328,7 +344,7 @@ test('status 轻量功能必须有测试证据才进入 review', () => {
   try {
     const dir = makeTask(root, 'brief-review');
     writeFileSync(join(dir, 'brief.md'), '# brief\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     const review = run(['--root', root, '--json']);
     assert.equal(review.json.slugs[0].stage, 'review');
     assert.equal(review.json.slugs[0].gap, 'review.md');
@@ -348,7 +364,7 @@ test('status 轻量功能在改动未验证时回到 test', () => {
   try {
     const dir = makeTask(root, 'brief-pending');
     writeFileSync(join(dir, 'brief.md'), '# brief\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     writeFileSync(join(dir, 'review.md'), '# review\n');
     writeState(root, { testsPending: true });
     const r = run(['--root', root, '--json']);
@@ -380,7 +396,7 @@ test('status 轻量修复测试通过后结束，风险项要求 review', () => 
   try {
     const dir = makeTask(root, 'plain-bug');
     writeFileSync(join(dir, 'debug.md'), '# debug\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     const done = run(['--root', root, '--json']);
     assert.equal(done.json.slugs[0].stage, 'done');
 
@@ -464,7 +480,7 @@ test('status 文本输出标注轻量模式与需补审查', () => {
 
     const bug = makeTask(root, 'risky-bug');
     writeFileSync(join(bug, 'debug.md'), '---\nreview: required\n---\n# debug\n');
-    writeFileSync(join(bug, 'test.md'), '# test\n');
+    writeFileSync(join(bug, 'test.md'), '# test\n\n已运行 node --test。\n');
     const reviewText = run(['--root', root, '--slug', 'risky-bug']);
     assert.equal(reviewText.status, 0, reviewText.stderr);
     assert.match(reviewText.stdout, /模式：轻量修复，需补审查/);
@@ -482,7 +498,7 @@ test('status 只认 debug.md 前 10 行的 review: required', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-review-head-'));
   try {
     const dir = makeTask(root, 'head-markers');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
 
     const cases = [
       { name: '注释不生效', body: '---\n# review: required\n---\n', expected: false },
@@ -543,7 +559,7 @@ test('status 混用 brief 与 debug 时按轻量功能处理，不误标 reviewR
     const dir = makeTask(root, 'mixed-light');
     writeFileSync(join(dir, 'brief.md'), '# brief\n');
     writeFileSync(join(dir, 'debug.md'), '---\nreview: required\n---\n# debug\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     const r = run(['--root', root, '--json']);
     assert.equal(r.json.slugs[0].flow, 'light-feature');
     assert.equal(r.json.slugs[0].reviewRequired, false);
@@ -558,7 +574,7 @@ test('status 完整流程不因 debug.md 的风险标记改变推断', () => {
     const dir = makeTask(root, 'full-with-debug');
     writeFileSync(join(dir, 'req.md'), '# req\n');
     writeFileSync(join(dir, 'plan.md'), '# plan\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     writeFileSync(join(dir, 'debug.md'), '---\nreview: required\n---\n# debug\n');
     const r = run(['--root', root, '--json']);
     assert.equal(r.json.slugs[0].flow, 'full');
@@ -574,7 +590,7 @@ test('status 优先使用 review-triage.json 的触发结果', () => {
   try {
     const dir = makeTask(root, 'fix-small');
     writeFileSync(join(dir, 'debug.md'), '# debug\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
 
     writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'auto', level: 'high' }));
     const auto = run(['--root', root, '--json']);
@@ -597,7 +613,7 @@ test('status 在 triage 文件损坏时回退 review: required 标记', () => {
   try {
     const dir = makeTask(root, 'fix-broken');
     writeFileSync(join(dir, 'debug.md'), '---\nreview: required\n---\n# debug\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     writeFileSync(join(dir, 'review-triage.json'), '{not-json');
     const r = run(['--root', root, '--json']);
     assert.equal(r.json.slugs[0].reviewRequired, true);
@@ -613,7 +629,7 @@ test('status 的显式 review: required 优先于 triage 的 skipped', () => {
   try {
     const dir = makeTask(root, 'fix-marker');
     writeFileSync(join(dir, 'debug.md'), '# debug\nreview: required\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'skipped', level: 'low' }));
     const r = run(['--root', root, '--json']);
     assert.equal(r.json.slugs[0].reviewRequired, true);
@@ -628,7 +644,7 @@ test('status 提示 triage 快照早于 debug.md 时可能过期', () => {
   try {
     const dir = makeTask(root, 'fix-stale');
     writeFileSync(join(dir, 'debug.md'), '# debug\n');
-    writeFileSync(join(dir, 'test.md'), '# test\n');
+    writeFileSync(join(dir, 'test.md'), '# test\n\n已运行 node --test。\n');
     writeFileSync(join(dir, 'review-triage.json'), JSON.stringify({ trigger: 'skipped', level: 'low' }));
     const later = new Date(Date.now() + 5000);
     utimesSync(join(dir, 'debug.md'), later, later);

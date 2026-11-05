@@ -6,6 +6,7 @@ import {
   argValue, hasFlag, projectRoot,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
   samePath, isValidStageName, loadHub,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { isValidStackName } from './lib/stacks.mjs';
 import {
@@ -274,6 +275,10 @@ function ghUpsert(worktreeDir, { base, head, headOwner, title, body }) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--stage', '--stack', '--shared', '--all', '--profile', '--base',
+    '--dry-run', '--no-pr', '--resume', '--remote', '--fork', '--plugin-root', '--pr-repo',
+  ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stages = argValues(argv, '--stage');
   const stacks = argValues(argv, '--stack');
@@ -355,6 +360,13 @@ export async function main(argv = process.argv.slice(2)) {
   const conflicts = baseline.filter((f) => isWhitelisted(f.path, profile));
 
   if (resume) {
+    // 只允许续做本工具创建的分支：--resume 不能变成推送任意分支的入口。
+    const prefix = `devflow/${branchPrefix}-`;
+    if (!String(resume).startsWith(prefix)) {
+      throw new Error(`--resume 只接受本工具创建的分支（${prefix}*），收到：${resume}`);
+    }
+    const validRef = git(pluginRoot, ['check-ref-format', '--branch', resume]);
+    if (validRef.status !== 0) throw new Error(`--resume 分支名非法：${resume}`);
     const exists = git(pluginRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${resume}`]).status === 0;
     if (!exists) throw new Error(`--resume 需要本地分支已存在：${resume}`);
   }

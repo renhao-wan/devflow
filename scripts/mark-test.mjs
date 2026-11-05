@@ -2,7 +2,8 @@
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import {
-  isMain, projectRoot, argValue, hasFlag, updateJson,
+  isMain, projectRoot, argValue, hasFlag, hasOption, updateJson, isPathInside, isRealPathInside,
+  unknownArgs,
 } from './lib/common.mjs';
 import { collectChanges } from './lib/review.mjs';
 
@@ -56,10 +57,12 @@ function testCandidates(file) {
 export function findChangedTests(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
   const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
-  const changedTestFiles = paths.filter((path) => TEST_FILE.test(path));
+  // 已删除的文件不在工作区：不能作为覆盖证据或待运行测试，但仍计入改动统计。
+  const existing = paths.filter((path) => existsSync(join(root, path)));
+  const changedTestFiles = existing.filter((path) => TEST_FILE.test(path));
   const changedStems = new Set(changedTestFiles.map(subjectStem));
   const tests = new Set(changedTestFiles);
-  const sources = paths.filter(isSourceFile);
+  const sources = existing.filter(isSourceFile);
 
   const unmapped = [];
   for (const file of sources) {
@@ -91,8 +94,10 @@ export function findChangedTests(root, { base = null } = {}) {
 export function findTestGaps(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
   const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
-  const changedTests = new Set(paths.filter((path) => TEST_FILE.test(path)).map(subjectStem));
-  const sources = paths.filter(isSourceFile);
+  // 已删除的文件不在工作区：不能当作覆盖证据，但删除本身仍属于改动统计。
+  const existing = paths.filter((path) => existsSync(join(root, path)));
+  const changedTests = new Set(existing.filter((path) => TEST_FILE.test(path)).map(subjectStem));
+  const sources = existing.filter(isSourceFile);
 
   const gaps = [];
   const covered = [];
@@ -114,7 +119,7 @@ export function findTestGaps(root, { base = null } = {}) {
     stats: {
       changedFiles: paths.length,
       sourceFiles: sources.length,
-      changedTestFiles: paths.filter((path) => TEST_FILE.test(path)).length,
+      changedTestFiles: existing.filter((path) => TEST_FILE.test(path)).length,
     },
     warnings: changes.warnings,
     statsAvailable: changes.statsAvailable,
@@ -127,7 +132,35 @@ function parseCount(raw, name) {
   return Number(raw);
 }
 
+const KNOWN_FLAGS = new Set([
+  '--root', '--base', '--gaps', '--changed', '--json', '--command',
+  '--exit-code', '--duration-ms', '--help', '-h',
+]);
+
+/** 拒绝未知长参数，避免拼错时静默按默认行为执行（例如 test --help 被当成一次通过）。 */
+function assertKnownArgs(argv) {
+  const unknown = unknownArgs(argv, KNOWN_FLAGS);
+  if (unknown.length) throw new Error(`未知参数：${unknown[0]}`);
+}
+
+
 export async function main(argv = process.argv.slice(2)) {
+  if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
+    console.log([
+      '用法：devflow test [选项]',
+      '',
+      '  --gaps                 列出缺少测试痕迹的源码改动',
+      '  --changed              列出可能受影响的测试文件',
+      '  --exit-code <n>        记录测试退出码（非负整数；0 表示通过）',
+      '  --duration-ms <n>      记录耗时（毫秒）',
+      '  --command <cmd>        记录测试命令',
+      '  --json                 输出 JSON',
+      '  --root <dir>           项目根目录',
+      '  --base <ref>           比较基线',
+    ].join('\n'));
+    return null;
+  }
+  assertKnownArgs(argv);
   const root = argValue(argv, '--root', projectRoot());
   const base = argValue(argv, '--base', null);
   const gaps = hasFlag(argv, '--gaps');
@@ -143,8 +176,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (!report.statsAvailable) {
       console.log('[WARN] 无法统计 git 改动，测试缺口提示不完整；请人工核对。');
-    }
-    if (!report.stats.changedFiles) {
+    } else if (!report.stats.changedFiles) {
       console.log('[OK]   没有可统计的改动。');
     } else if (!report.gaps.length) {
       console.log(`[OK]   源码改动均有对应测试痕迹（${report.stats.sourceFiles} 个源码文件）。`);
@@ -165,8 +197,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (!report.statsAvailable) {
       console.log('[WARN] 无法统计 git 改动，受影响测试提示不完整；请人工核对。');
-    }
-    if (!report.stats.changedFiles) {
+    } else if (!report.stats.changedFiles) {
       console.log('[OK]   没有可统计的改动。');
     }
     if (report.tests.length) {
@@ -177,21 +208,36 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`[UNMAPPED] ${report.unmapped.length} 个源码文件未映射到已存在测试，建议跑全量或补充测试：`);
       for (const file of report.unmapped) console.log(`  - ${file}`);
     }
-    if (!report.statsAvailable || (!report.tests.length && !report.unmapped.length)) {
+    if (!report.statsAvailable) {
       console.log('  无法确定受影响范围时，优先运行全量测试。');
+    } else if (!report.tests.length && !report.unmapped.length && report.stats.changedFiles) {
+      console.log('  没有可提示的受影响测试。');
     }
     for (const warning of report.warnings) console.log(`  注意：${warning}`);
     return report;
   }
 
   const command = argValue(argv, '--command', null);
-  const exitCode = parseCount(argValue(argv, '--exit-code', null), '--exit-code') ?? 0;
-  const durationMs = parseCount(argValue(argv, '--duration-ms', null), '--duration-ms');
+  const exitCodeRaw = argValue(argv, '--exit-code', null);
+  // 标志存在但没拿到合法值时必须报错，不能回退成 0 把失败记录为通过。
+  if (hasOption(argv, '--exit-code') && exitCodeRaw === null) {
+    throw new Error('--exit-code 需要非负整数，例如 --exit-code 1 或 --exit-code=1');
+  }
+  const exitCode = exitCodeRaw === null ? 0 : parseCount(exitCodeRaw, '--exit-code');
+  const durationRaw = argValue(argv, '--duration-ms', null);
+  if (hasOption(argv, '--duration-ms') && durationRaw === null) {
+    throw new Error('--duration-ms 需要非负整数');
+  }
+  const durationMs = durationRaw === null ? null : parseCount(durationRaw, '--duration-ms');
   const passed = exitCode === 0;
   const at = new Date().toISOString();
   const file = join(root, '.claude', '.devflow-state.json');
+  // 状态文件与 .claude 目录都可能被 junction/符号链接替换，写入前必须确认仍在项目内。
+  if (!isPathInside(root, file) || !isRealPathInside(root, file)) {
+    throw new Error(`拒绝写入项目外的状态文件：${file}`);
+  }
   const state = updateJson(file, (current) => {
-    const next = current && typeof current === 'object' ? current : {};
+    const next = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
     next.lastTestAt = at;
     next.lastTestExitCode = exitCode;
     next.lastTestStatus = passed ? 'passed' : 'failed';

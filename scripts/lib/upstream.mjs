@@ -38,10 +38,15 @@ const SECRET_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
+  /\bglpat-[A-Za-z0-9_-]{20,}\b/,
+  /\bnpm_[A-Za-z0-9]{36}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, // JWT
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\bBearer\s+[A-Za-z0-9._\-]{20,}/,
-  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
+  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, // URL 中 user:pass@
 ];
 
@@ -82,12 +87,16 @@ function collapseBlank(text) {
  * - 未标记内容按行扫描，命中行剔除并记录；
  * - 剔除后没有正文时判为整体项目专属。
  */
+const PEM_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/;
+
 export function classifyText(text, config) {
   const lines = normalizeEol(text).split('\n');
   const kept = [];
   const removed = [];
   const hints = new Set();
   let mode = null;
+  let pem = false;
 
   for (let i = 0; i < lines.length; i += 1) {
     const trimmed = lines[i].trim();
@@ -98,6 +107,13 @@ export function classifyText(text, config) {
 
     if (mode === 'local') {
       removed.push({ line: i + 1, reason: '显式标记为项目专属' });
+      continue;
+    }
+    // 私钥是多行块：只剔除 BEGIN 行会把 base64 正文全部回灌，必须整块剔除。
+    if (pem || PEM_BEGIN.test(trimmed)) {
+      hints.add('疑似密钥或凭据（多行私钥块）');
+      removed.push({ line: i + 1, reason: '疑似密钥或凭据（多行私钥块）' });
+      pem = !PEM_END.test(trimmed);
       continue;
     }
     const found = scanLine(lines[i], config);
@@ -289,11 +305,21 @@ export function readLog(pluginRoot) {
 
 /** 回滚还会尝试恢复版本文件，兼容早期回灌记录里包含版本备份的情况。 */
 export function revertFromLog(root, id, { restoreVersionFiles = true } = {}) {
+  if (!/^[A-Za-z0-9._-]+$/.test(String(id)) || String(id).includes('..')) {
+    throw new Error(`非法的回灌记录 ID：${id}`);
+  }
   const entry = readLog(root).find((e) => e.id === id);
   if (!entry) throw new Error(`找不到回灌记录：${id}`);
   const restore = (rel) => {
-    const bak = join(root, ...BACKUP_ROOT.split('/'), id, ...rel.split('/'));
-    const target = join(root, ...rel.split('/'));
+    const target = join(root, ...String(rel).split('/'));
+    // 日志文件可能被手改或来自不可信仓库：回滚路径必须仍落在插件根内。
+    if (!isPathInside(root, target) || !isRealPathInside(root, target)) {
+      throw new Error(`回滚路径越界：${rel}`);
+    }
+    const bak = join(root, ...BACKUP_ROOT.split('/'), id, ...String(rel).split('/'));
+    if (existsSync(bak) && !isRealPathInside(root, bak)) {
+      throw new Error(`回滚备份路径越界：${rel}`);
+    }
     if (existsSync(bak)) {
       ensureDir(dirname(target));
       copyFileSync(bak, target);

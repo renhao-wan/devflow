@@ -16,8 +16,12 @@ function normalize(path) {
     .trim()
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
-    .replace(/^`|`$/g, '')
-    .replace(/\/+$/, '');
+    .replace(/^`|`$/g, '');
+}
+
+/** 比较键：去掉目录尾斜杠并统一小写，避免大小写或 `src/` 写法造成误报。 */
+function pathKey(path) {
+  return normalize(path).replace(/\/+$/, '').toLowerCase();
 }
 
 function planTable(root, slug) {
@@ -39,17 +43,23 @@ function planTable(root, slug) {
   return null;
 }
 
-function pathTokens(cell) {
+function pathTokens(cell, root) {
   return String(cell || '')
-    .split(/[、,，;；\s]+/)
-    .map(normalize)
+    .split(/[、,，;；]+/)
+    .flatMap((part) => normalize(part).split(/\s+/).map(normalize).filter(Boolean))
     .filter((token) => token && !IGNORED.test(token))
-    // 只认像路径的 token：带 `/` 或带扩展名，避免把一句说明当成文件。
-    .filter((token) => token.includes('/') || /\.[a-z0-9]{1,8}$/i.test(token));
+    // 带 `/`、带扩展名，或确实存在于项目根目录的条目才算路径；
+    // 只写 `src` 这样的顶层目录也要能识别，普通说明词仍被排除。
+    .filter((token) => token.includes('/') || /\.[a-z0-9]{1,8}$/i.test(token)
+      || existsSync(join(root, token)));
 }
 
 function covers(planned, path) {
-  return planned === path || (planned.includes('/') && path.startsWith(`${planned}/`));
+  const p = pathKey(planned);
+  const file = pathKey(path);
+  if (!p || !file) return false;
+  // 计划写目录时，目录下的文件都算已覆盖；计划写文件时不会出现更深的子路径。
+  return p === file || file.startsWith(`${p}/`);
 }
 
 /**
@@ -68,7 +78,7 @@ export function planDriftFor(root, slug, { changes = null } = {}) {
       warnings: [],
     };
   }
-  const planned = [...new Set(table.rows.flatMap(pathTokens))];
+  const planned = [...new Set(table.rows.flatMap((cell) => pathTokens(cell, root)))];
   if (!planned.length) {
     return {
       skipped: true,

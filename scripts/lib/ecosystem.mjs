@@ -12,7 +12,7 @@ export const ECOSYSTEM_FILE = '.claude/hub/ecosystem.yaml';
 export const STATE_FILE = '.claude/.ecosystem-state.json';
 
 /** 阶段对应的执行技法入口；用于把 invoke 模板里的 {capability} 替换成实际技能。 */
-export const STAGE_CAPABILITY = {
+const STAGE_CAPABILITY = {
   plan: 'brainstorming',
   implement: 'test-driven-development',
   test: 'verification-before-completion',
@@ -24,7 +24,7 @@ export const STAGE_CAPABILITY = {
  * 已知工具目录。detectSkills 对应技能目录名，detectPlugins 对应 settings.enabledPlugins 的键。
  * technique 只接管执行技法，workflow 会改变整个流程，因此 auto 模式只自动委派 technique。
  */
-export const CATALOG = {
+const CATALOG = {
   superpowers: {
     label: 'superpowers',
     kind: 'technique',
@@ -146,7 +146,8 @@ function normalizeTool(id, parsed, base) {
   const kind = p.kind ?? b.kind ?? 'workflow';
   return {
     label: String(p.label ?? b.label ?? id),
-    enabled: p.enabled !== false,
+    // 显式写了 enabled 就必须是布尔真才启用：null、字符串 "false" 都不能当作启用。
+    enabled: Object.prototype.hasOwnProperty.call(p, 'enabled') ? p.enabled === true : b.enabled !== false,
     // 未知 kind 一律按 workflow 处理：宁可多问一次，也不自动接管流程。
     kind: kind === 'technique' ? 'technique' : 'workflow',
     stages: toArray(p.stages ?? b.stages),
@@ -257,8 +258,17 @@ export function loadState(root) {
     };
   }
   try {
-    const state = JSON.parse(readText(file));
-    return { file, exists: true, state, error: null };
+    const parsed = JSON.parse(readText(file));
+    // 检测结果由脚本维护；null / 数组等非法形状按损坏处理并提示重新检测。
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        file,
+        exists: true,
+        state: { schemaVersion: 1, detectedAt: null, tools: {} },
+        error: '状态文件结构非法，请运行 devflow route --detect 重建',
+      };
+    }
+    return { file, exists: true, state: parsed, error: null };
   } catch (err) {
     return {
       file,

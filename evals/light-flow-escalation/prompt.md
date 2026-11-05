@@ -20,7 +20,7 @@ graders:
     match: contains
   - type: regex
     name: does-not-stay-light
-    pattern: '(继续轻量修复|不需要升级|可以继续轻量)'
+    pattern: '(?<!不|未|没|能|应|不是|并非|不能|不应|无法)(建议|应该|应|可以|直接|还是|不妨)(继续|走).{0,4}轻量|(结论|判断)[：:][^。\n]{0,20}(?<!不是|并非|不能|不应|无法)(不需要|无需|不必)升级'
     flags: i
     match: not_contains
 ---

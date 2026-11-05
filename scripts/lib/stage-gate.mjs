@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
 import {
-  bulletValue, checkboxes, meaningful, section, tableDataRows,
+  bulletValue, checkboxes, meaningful, section, tableDataRows, tableRows,
 } from './markdown.mjs';
 import { detectFlow } from './review.mjs';
 
@@ -75,6 +75,22 @@ function checkAcceptanceIds(errors, warnings, acceptance) {
   if (ids.length && missing) warnings.push('部分验收项缺少 AC ID，建议统一写成 AC-1、AC-2');
 }
 
+/**
+ * 模板自带的技术约束取值（`允许 / 需审批 / 不允许`、`例如 ...`、`是 / 否，说明`）
+ * 是候选项而不是用户做出的选择，未替换时该行视为未填写。
+ */
+function isConstraintPlaceholder(value) {
+  const v = String(value || '').trim();
+  if (!v) return true;
+  if (/^(?:例如|如|填写|说明)/.test(v)) return true;
+  const parts = v.split(/\s*[\/／]\s*/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  const candidates = /^(?:允许|需审批|不允许|是|否|可用|不可用|说明)$/;
+  if (!parts.every((part) => candidates.test(part.replace(/[，,].*$/, '')))) return false;
+  // 冒号后补充了真实内容，说明用户已经做出选择。
+  return !/[：:]\s*\S/.test(v);
+}
+
 function checkCommon(errors, warnings, text, { requirements = true } = {}) {
   const goal = requireSection(errors, text, '目标');
   if (goal !== null && !hasContent(goal)) errors.push('「目标」为空');
@@ -90,8 +106,11 @@ function checkCommon(errors, warnings, text, { requirements = true } = {}) {
 
   if (requirements) {
     const constraints = requireSection(errors, text, '技术约束');
-    if (constraints !== null && !hasContent(constraints) && tableDataRows(constraints) === 0) {
-      errors.push('「技术约束」为空');
+    if (constraints !== null) {
+      const filled = tableRows(constraints)
+        .some((row) => row.slice(1).some((cell) => !isConstraintPlaceholder(cell)));
+      const prose = constraints.split(/\r?\n/).filter((line) => !/^\s*\|/.test(line)).join('\n');
+      if (!filled && !hasContent(prose)) errors.push('「技术约束」为空（模板默认取值不算已填写）');
     }
     const impact = requireSection(errors, text, '影响面');
     if (impact !== null && tableDataRows(impact) === 0) {
@@ -161,8 +180,8 @@ export function checkDebug(text) {
     }
   }
 
-  // 小 bug 通常不命中升级条件，模板也只要求命中时填写，因此这里只提示不阻断。
-  checkUpgrade(errors, warnings, text, { required: false });
+  // 升级判断是排障流程的分级依据：即使未命中也要显式写“无”，不能靠省略通过。
+  checkUpgrade(errors, warnings, text, { required: true });
 
   return { ok: errors.length === 0, errors, warnings };
 }
@@ -180,12 +199,15 @@ export function checkStage(root, slug, stage) {
     }
     const file = join(dir, 'req.md');
     if (!existsSync(file)) {
+      const hint = flow === 'light-bug'
+        ? '轻量修复请使用 --stage debug；升级为完整流程时先补 req.md'
+        : '请先创建 req.md';
       return {
         ok: false,
         stage,
         slug,
         flow,
-        errors: ['缺少 req.md（轻量功能请先创建 brief.md）'],
+        errors: [`缺少 req.md（${hint}）`],
         warnings: [],
       };
     }

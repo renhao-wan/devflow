@@ -38,7 +38,8 @@ function projectFileRel(payload) {
   const posix = rel.split('\\').join('/');
   // 跨盘符或指向项目外时不介入。
   if (isAbsolute(rel) || posix.startsWith('../') || posix === '..') return null;
-  return posix;
+  // Windows/macOS 文件系统大小写不敏感，生成物匹配也必须不敏感，否则 .CLAUDE/.hub-manifest.json 可绕过。
+  return process.platform === 'win32' || process.platform === 'darwin' ? posix.toLowerCase() : posix;
 }
 
 function reason(rel) {
@@ -48,6 +49,10 @@ function reason(rel) {
   if (rel === '.claude/.devflow-state.json') {
     return 'devflow 状态文件由钩子与脚本维护。请用 /devflow:test 或 node scripts/devflow-test.mjs 更新；'
       + '确需重置时手动删除该文件。';
+  }
+  if (rel.startsWith('.claude/.hub-bases/')) {
+    return '同步基线快照由 sync 维护，手改会让下次三方合并使用错误基线。'
+      + '请重新运行 /devflow:sync，或删除该快照后重跑以重建基线。';
   }
   if (LEDGERS.has(rel)) {
     return 'devflow 账本由脚本维护，手改会造成投影或同步漂移。'

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 可选 statusline：复用 hub-status 的只读推导，输出一行紧凑进度；失败时静默降级。
 import { writeSync } from 'node:fs';
-import { argValue, hasFlag, isMain, projectRoot } from './lib/common.mjs';
+import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { buildStatus } from './hub-status.mjs';
 
 const MAX_WIDTH = 80;
@@ -31,7 +31,9 @@ function readInput(timeoutMs = 400) {
       done = true;
       clearTimeout(timer);
       try {
-        resolve(data.trim() ? JSON.parse(data) : {});
+        const parsed = data.trim() ? JSON.parse(data) : {};
+        // stdin 来自宿主，可能不是对象；非对象输入按空上下文处理。
+        resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {});
       } catch {
         resolve({});
       }
@@ -49,7 +51,8 @@ function readInput(timeoutMs = 400) {
 
 function rootFrom(input, argv) {
   const explicit = argValue(argv, '--root', null);
-  if (explicit) return explicit;
+  // 与默认路径保持一致：显式 --root 也向上查找 hub.yaml，允许指向子目录。
+  if (explicit) return projectRoot(explicit);
   const candidate = process.env.CLAUDE_PROJECT_DIR
     || input?.workspace?.current_dir
     || input?.cwd
@@ -112,6 +115,7 @@ function compact(report) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--json']);
   try {
     const input = await readInput();
     const { report } = buildStatus(rootFrom(input, argv), { drift: false });

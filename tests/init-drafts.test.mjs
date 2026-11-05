@@ -151,6 +151,26 @@ test('重复 init 与 --force 都不覆盖已填写的草稿', () => {
   }
 });
 
+test('init 不复制模板库草稿，也不写入源文件账本', () => {
+  const root = makeRoot();
+  const library = mkdtempSync(join(tmpdir(), 'devflow-init-library-draft-'));
+  try {
+    const rel = 'templates/stages/plan/references/draft.md';
+    const abs = join(library, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, `${DRAFT_MARKER}\n# 模板草稿\n\n- TODO: 补充。\n`);
+
+    const init = run('hub-init.mjs', ['--root', root, '--personal-library', library], root);
+    assert.equal(init.status, 0, init.stdout + init.stderr);
+    assert.equal(has(root, '.claude/hub/stages/plan/references/draft.md'), false);
+    const sources = JSON.parse(read(root, '.claude/.hub-sources.json'));
+    assert.equal(sources.files['.claude/hub/stages/plan/references/draft.md'], undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(library, { recursive: true, force: true });
+  }
+});
+
 test('--force 不会用模板库同名文件覆盖草稿', () => {
   const root = makeRoot();
   const library = mkdtempSync(join(tmpdir(), 'devflow-init-library-'));
@@ -182,5 +202,23 @@ test('--force 不会用模板库同名文件覆盖草稿', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(library, { recursive: true, force: true });
+  }
+});
+
+test('hub.yaml 损坏时 --force 先备份再重建', () => {
+  const root = makeRoot();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    const broken = 'version: 1\nstages: [req]\nstages: [plan]\n';
+    writeFileSync(hub, broken);
+
+    const forced = run('hub-init.mjs', ['--root', root, '--force'], root);
+    assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+    assert.match(forced.stdout, /已备份/);
+    assert.equal(readFileSync(`${hub}.bak`, 'utf8'), broken);
+    assert.match(read(root, '.claude/hub/hub.yaml'), /^stages:$/m);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 验收追踪：devflow trace [--slug <slug>] [--check] [--json]
 // 默认只读；--check 时存在未覆盖验收项才返回退出码 1。
-import { argValue, hasFlag, isMain, projectRoot } from './lib/common.mjs';
+import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
 import { traceFor } from './lib/trace.mjs';
 
@@ -19,7 +19,8 @@ function evidenceLine(item) {
 
 function render(result, { check }) {
   if (result.skipped) {
-    const marker = check && result.flow === 'unknown' ? 'ERR' : 'WARN';
+    // --check 下无法追踪等同于没有通过校验，不能只给 WARN 却返回成功。
+    const marker = check ? 'ERR' : 'WARN';
     console.log(`[${marker}] ${result.slug}：${result.reason}`);
     return;
   }
@@ -43,6 +44,7 @@ function render(result, { check }) {
 }
 
 export function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--slug', '--json', '--check']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const check = hasFlag(argv, '--check');
@@ -59,8 +61,10 @@ export function main(argv = process.argv.slice(2)) {
   if (json) console.log(JSON.stringify(result, null, 2));
   else render(result, { check });
 
-  if (check && result.flow === 'unknown') process.exitCode = 1;
-  else if (check && !result.skipped && result.totals.gaps > 0) process.exitCode = 1;
+  // 已知流程但无法追踪（缺少验收来源等）同样视为校验失败；只有缺口为 0 才算通过。
+  if (check && (result.flow === 'unknown' || result.skipped || result.totals.gaps > 0)) {
+    process.exitCode = 1;
+  }
   return result;
 }
 

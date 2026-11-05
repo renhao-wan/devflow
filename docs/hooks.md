@@ -22,6 +22,8 @@ devflow 通过 Claude Code hooks 提供尽力而为的安全门禁与状态提�
 
 - `.claude/skills/devflow-*/SKILL.md`（阶段投影，新增/删除规则文件或修改 `hub.yaml` 后运行 `node scripts/devflow-gen.mjs`；只改已有正文不需要）；
 - `.claude/.hub-manifest.json`、`.claude/.hub-sources.json`（生成账本）；
+- `.claude/.hub-bases/`（三方合并用的基线快照，重跑 `sync` 或删除后重建）；
+- `.claude/.devflow-state.json`、`.claude/.ecosystem-state.json`（测试与工具检测状态）；
 - `.devflow.json`（init 写入的工作区元数据）；
 - `scripts/devflow-gen.mjs`、`scripts/devflow-doctor.mjs`、`scripts/devflow-route.mjs`、`scripts/devflow-upstream.mjs`、`scripts/devflow-test.mjs`、`scripts/devflow-triage.mjs`、`scripts/devflow-check.mjs`、`scripts/devflow-trace.mjs`（loader，重跑 `/devflow:init` 刷新）。
 

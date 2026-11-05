@@ -20,6 +20,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
 2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`，按 slug 去重：只有一个候选就采用；多个时用 `AskUserQuestion` 让用户选择，不要自行挑选，也不要用 `latest` 代替；无法提问时列出候选并等待回复。没有候选时提示先运行 `/devflow:status` 或确认 slug。
 3. 运行审查 triage，得到是否必审、风险等级、选中方向与子代理上限：
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug> --write`（未设置 `CLAUDE_PLUGIN_ROOT` 时用项目内 loader `node scripts/devflow-triage.mjs`；旧项目未重建 loader 时先运行 `/devflow:init`）。
+   - 用户在本阶段给出的审查参数必须原样追加到上面的命令：`--focus`、`--agents`、`--no-subagents`、`--focus-only`、`--base`、`--since`。不要只按 slug 运行默认命令，否则用户指定会被静默忽略；`--force-devflow` 只用于工具路由，不传给 triage。
    - 用户指定方向：`--focus security`（可重复或逗号分隔）；指定后只审这些方向，其余方向会让位并留痕。
    - 用户指定数量：`--agents 0-4`；`--no-subagents` 只审不派代理；`--focus-only` 只做基线检查，不能与 `--focus` 同时使用。
    - 分支对比：`--base <ref>`；默认只对比工作区与暂存改动。

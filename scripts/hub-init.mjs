@@ -6,6 +6,7 @@ import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
   isPathInside, isRealPathInside, parseYaml, isDraft,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import {
@@ -128,6 +129,8 @@ await mod.main(process.argv.slice(2));
 function copyTemplates(files, root, force) {
   let copied = 0;
   for (const file of files) {
+    // 模板库草稿不是规则，不复制到项目，也不写入源文件账本。
+    if (isDraft(readText(file.src))) continue;
     const dst = join(root, ...file.destRel.split('/'));
     if (existsSync(dst) && (!force || isDraft(readText(dst)))) continue;
     ensureDir(dirname(dst));
@@ -228,6 +231,10 @@ function writeDrafts(root, drafts) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--force', '--no-draft', '--plugin-root', '--source-root',
+    '--personal-library', '--team-library',
+  ]);
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const force = hasFlag(argv, '--force');
   const noDraft = hasFlag(argv, '--no-draft');
@@ -272,7 +279,19 @@ export async function main(argv = process.argv.slice(2)) {
     ensureDir(join(root, '.claude', 'hub', '_shared'));
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
     ensureDir(join(root, '.claude', 'hub', 'stacks'));
-    const existing = existsSync(hubFile) ? parseYaml(readText(hubFile)) : {};
+    let existing = {};
+    if (existsSync(hubFile)) {
+      try {
+        existing = parseYaml(readText(hubFile));
+      } catch (err) {
+        // --force 是配置损坏后的恢复入口：解析失败时不能直接退出。
+        // 先备份原文件再按空配置重建，避免用户在无提示的情况下丢失配置。
+        const backup = `${hubFile}.bak`;
+        copyFileSync(hubFile, backup);
+        log('warn', `无法解析 .claude/hub/hub.yaml（${err.message}），已备份到 .claude/hub/hub.yaml.bak 并重建`);
+      }
+    }
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) existing = {};
     const previousSubs = existing.subprojects && typeof existing.subprojects === 'object'
       && !Array.isArray(existing.subprojects)
       ? existing.subprojects

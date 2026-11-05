@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  DIRECTIONS, buildReviewPlan, detectFlow, evaluateEscalation, profileChanges, readReviewMarker,
+  DIRECTIONS, buildReviewPlan, collectChanges, detectFlow, evaluateEscalation,
+  profileChanges, readReviewMarker,
 } from '../scripts/lib/review.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -182,6 +183,10 @@ test('readReviewMarker 只读 debug.md 前 10 行', () => {
 
     writeFileSync(join(dir, 'debug.md'), ['# debug', ...Array(12).fill('x'), 'review: required'].join('\n'));
     assert.equal(readReviewMarker(root, 'bug'), null);
+
+    // skipped 不是可用的绕过开关，避免看起来生效但实际被忽略。
+    writeFileSync(join(dir, 'debug.md'), '# debug\nreview: skipped\n');
+    assert.equal(readReviewMarker(root, 'bug'), null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -328,17 +333,24 @@ test('统计规模只计源码，文档与测试不计入 codeFiles', () => {
 });
 
 test('测试与规则定义中的正则文本不放大内容风险', () => {
-  const profile = profileChanges({
-    diffText: [
-      '+++ b/src/app.js',
-      '+const ok = 1;',
-      '+++ b/tests/review-triage.test.mjs',
-      '+const sql = "ALTER TABLE users";',
-      '+++ b/scripts/lib/review.mjs',
-      '+const re = /mutex|transaction/;',
-    ].join('\n'),
-  });
+  const diffText = [
+    '+++ b/src/app.js',
+    '+const ok = 1;',
+    '+++ b/tests/review-triage.test.mjs',
+    '+const sql = "ALTER TABLE users";',
+    '+++ b/scripts/lib/review.mjs',
+    '+const re = /mutex|transaction/;',
+  ].join('\n');
+  // selfPath 由调用方按项目根计算，只有 devflow 自身的规则文件才跳过正文扫描。
+  const profile = profileChanges({ diffText, selfPath: 'scripts/lib/review.mjs' });
   assert.equal(profile.ranked.length, 0);
+
+  // 普通项目里的同名文件是用户代码，必须正常扫描，不能靠硬编码路径跳过。
+  const external = profileChanges({
+    diffText: ['+++ b/scripts/lib/review.mjs', '+const re = /mutex|transaction/;'].join('\n'),
+  });
+  assert.equal(external.ranked.length, 1);
+  assert.equal(external.ranked[0].direction, 'concurrency');
 });
 
 test('CLI 拒绝 --focus-only 与 --focus 同时使用', () => {
@@ -473,6 +485,49 @@ test('CLI --escalate 拒绝与审查参数混用', () => {
     const r = run(['--root', root, '--escalate', '--write']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--escalate/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('collectChanges 解析 rename 目标并统计未跟踪文件行数', () => {
+  const root = initRepo('devflow-changes-stat-');
+  try {
+    mkdirSync(join(root, 'src', 'old'), { recursive: true });
+    writeFileSync(join(root, 'src', 'old', 'a.js'), 'line1\nline2\n');
+    baseline(root);
+    mkdirSync(join(root, 'src', 'new'), { recursive: true });
+    git(root, 'mv', 'src/old/a.js', 'src/new/a.js');
+    writeFileSync(join(root, '中文.js'), '一\n二\n三\n');
+
+    const changes = collectChanges(root);
+    const renamed = changes.files.find((file) => file.path.endsWith('a.js'));
+    // 不能丢掉目录前缀，也不能残留 {old => new} 或路径转义。
+    assert.equal(renamed.path, 'src/new/a.js');
+    const untracked = changes.files.find((file) => file.path === '中文.js');
+    assert.ok(untracked, '未跟踪的中文路径应保持原样');
+    assert.equal(untracked.additions, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI 拒绝空 --focus、缺值 --agents 与非 git 的 --base', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-triage-args-'));
+  try {
+    makeTask(root, 'a', { 'req.md': '# a\n' });
+
+    const emptyFocus = run(['--root', root, '--slug', 'a', '--focus=']);
+    assert.equal(emptyFocus.status, 1);
+    assert.match(emptyFocus.stderr, /--focus/);
+
+    const badAgents = run(['--root', root, '--slug', 'a', '--agents', '-1']);
+    assert.equal(badAgents.status, 1);
+    assert.match(badAgents.stderr, /--agents/);
+
+    const badBase = run(['--root', root, '--slug', 'a', '--base', 'HEAD']);
+    assert.equal(badBase.status, 1);
+    assert.match(badBase.stderr, /--base 需要 git 仓库/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

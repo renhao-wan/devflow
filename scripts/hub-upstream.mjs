@@ -7,6 +7,7 @@ import {
   argValue, hasFlag, log, posix, isMain, projectRoot, readText, writeAtomic,
   resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub,
   isValidStageName, canonicalPath, relPosix, readMeta, contentHash,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { isValidStackName } from './lib/stacks.mjs';
 import {
@@ -116,6 +117,12 @@ function assertResumeTargets(libRoot, journal, force) {
 }
 
 function showDiff(content, target, label) {
+  if (!existsSync(target)) {
+    // git diff --no-index 对不存在的文件可能输出空 diff，不能据此显示“内容一致”。
+    console.log(`\n--- ${label}（新增） ---`);
+    console.log(content || '（空文件）');
+    return;
+  }
   const tmp = join(tmpdir(), `devflow-diff-${process.pid}-${Date.now()}.txt`);
   try {
     writeAtomic(tmp, content);
@@ -204,6 +211,11 @@ async function runRemote(argv, { root, pluginRoot, units, target }) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--stage', '--stack', '--shared', '--all', '--apply', '--json', '--force',
+    '--to', '--pr', '--revert', '--personal-library', '--team-library', '--plugin-root',
+    '--base', '--remote', '--resume', '--pr-repo', '--fork', '--no-pr',
+  ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
   const shared = hasFlag(argv, '--shared');

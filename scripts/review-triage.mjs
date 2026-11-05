@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  argValue, hasFlag, isMain, isPathInside, isRealPathInside, loadHub, projectRoot, readText, writeAtomic,
+  argValue, hasFlag, hasOption, isMain, isPathInside, isRealPathInside, loadHub, projectRoot, readText, writeAtomic,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
@@ -20,6 +21,7 @@ import {
   profileChanges,
   readReviewMarker,
   renderPlan,
+  selfSourcePath,
 } from './lib/review.mjs';
 
 function collectFocus(argv) {
@@ -31,7 +33,9 @@ function collectFocus(argv) {
       if (!value || value.startsWith('-')) throw new Error('--focus 需要方向名');
       out.push(...value.split(','));
     } else if (arg.startsWith('--focus=')) {
-      out.push(...arg.slice('--focus='.length).split(','));
+      const value = arg.slice('--focus='.length).trim();
+      if (!value) throw new Error('--focus 需要方向名');
+      out.push(...value.split(','));
     }
   }
   const focus = [...new Set(out.map((s) => s.trim()).filter(Boolean))];
@@ -94,6 +98,8 @@ function collectGit(root, base, since = null) {
     encoding: 'utf8',
   });
   if (probes.status !== 0 || probes.stdout.trim() !== 'true') {
+    // 用户显式给了基线却读不到仓库时必须报错，不能静默按空改动继续。
+    if (base) throw new Error('--base 需要 git 仓库；当前目录不是 git 仓库，请去掉 --base');
     if (since) throw new Error('--since 需要 git 仓库；当前目录不是 git 仓库，请改用全量审查');
     return {
       changes: {
@@ -138,6 +144,7 @@ export function buildPlanFor(root, slug, {
     noSubagents,
     focusOnly,
     statsAvailable,
+    selfPath: selfSourcePath(root),
   });
   const scope = {
     mode: since ? 'incremental' : 'full',
@@ -150,6 +157,10 @@ export function buildPlanFor(root, slug, {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--json', '--write', '--check', '--escalate', '--no-subagents',
+    '--focus-only', '--focus', '--base', '--since', '--agents', '--slug',
+  ]);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const write = hasFlag(argv, '--write');
@@ -162,7 +173,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (base && since) throw new Error('--base 与 --since 不能同时使用');
   const focus = collectFocus(argv);
   if (focusOnly && focus.length) throw new Error('--focus-only 不能与 --focus 同时使用');
-  const agents = parseAgents(argValue(argv, '--agents', null));
+  const agentsRaw = argValue(argv, '--agents', null);
+  // `--agents -1` 会被 argValue 当成“没传值”，必须显式报错而不是静默忽略。
+  if (hasOption(argv, '--agents') && agentsRaw === null) {
+    throw new Error('--agents 需要 0-4 的整数，例如 --agents 2');
+  }
+  const agents = parseAgents(agentsRaw);
   if (check && (write || focus.length || agents !== null || noSubagents || focusOnly || base || since)) {
     throw new Error('--check 只校验 review.md，不能与 --write/--focus/--agents/--no-subagents/--focus-only/--base/--since 同时使用');
   }
@@ -171,10 +187,21 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (escalate) {
-    const { changes, warnings, statsAvailable } = collectGit(root, base);
-    const profile = profileChanges({ files: changes.files, diffText: changes.diffText });
+    const collected = collectGit(root, base);
+    const { changes, statsAvailable } = collected;
+    const warnings = [...collected.warnings];
+    const profile = profileChanges({
+      files: changes.files,
+      diffText: changes.diffText,
+      selfPath: selfSourcePath(root),
+    });
     let subprojects = {};
-    try { subprojects = loadHub(root).config.subprojects || {}; } catch { subprojects = {}; }
+    try {
+      subprojects = loadHub(root).config.subprojects || {};
+    } catch (err) {
+      // 子项目阈值只是升级判断的一部分；读取失败要显式说明判断不完整，不能静默当作没有子项目。
+      warnings.push(`读取 .claude/hub 失败，子项目阈值未计入：${err.message}`);
+    }
     const verdict = evaluateEscalation(profile, { statsAvailable, files: changes.files, subprojects });
     const result = { ...verdict, warnings: [...warnings, ...verdict.warnings] };
     if (json) {

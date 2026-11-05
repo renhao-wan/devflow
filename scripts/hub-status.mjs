@@ -3,10 +3,11 @@
 // 推导每个任务所处阶段并给出下一步命令；不写入任何状态。
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/common.mjs';
+import { readText, isMain, projectRoot, argValue, hasFlag, posix, warnUnknownArgs } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
+import { isTaskDir } from './lib/slug.mjs';
 import { summarizeTrace, traceFor } from './lib/trace.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
@@ -40,11 +41,30 @@ const GAP = {
 function readState(root) {
   const file = join(root, '.claude', '.devflow-state.json');
   if (!existsSync(file)) return {};
-  try { return JSON.parse(readText(file)); } catch { return {}; }
+  try {
+    const data = JSON.parse(readText(file));
+    // 手改或写入中断可能留下 null / 数组，按空状态处理，避免读取属性时崩溃。
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch {
+    return {};
+  }
 }
 
 function mtimeOf(file) {
   try { return statSync(file).mtimeMs; } catch { return 0; }
+}
+
+/** 去掉标题与空行后是否还有内容；只有标题的空壳产物不算进入该阶段。 */
+function hasSubstance(file) {
+  try {
+    const body = readText(file)
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('');
+    return body.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function scanSlugs(root) {
@@ -54,9 +74,12 @@ function scanSlugs(root) {
   for (const entry of readdirSync(docs, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const dir = join(docs, entry.name);
+    // 与 listCandidates 保持同一口径：只有 test.md/review.md 的目录不是任务。
+    if (!isTaskDir(dir)) continue;
     const files = ARTIFACTS.filter((name) => existsSync(join(dir, name)));
+    const substantive = new Set(files.filter((name) => hasSubstance(join(dir, name))));
     const latest = Math.max(mtimeOf(dir), ...files.map((name) => mtimeOf(join(dir, name))));
-    slugs.push({ slug: entry.name, files, latest });
+    slugs.push({ slug: entry.name, files, substantive, latest });
   }
   return slugs.sort((a, b) => b.latest - a.latest);
 }
@@ -100,8 +123,10 @@ function needsReview(root, slug) {
   }
 }
 
-function stageOf(files, testsPending, reviewRequired = false) {
+function stageOf(files, testsPending, reviewRequired = false, substantive = new Set(files)) {
   const has = (name) => files.includes(name);
+  // 空的 test.md 只是占位，不构成测试证据，不能据此进入 review/done。
+  const testDone = has('test.md') && substantive.has('test.md');
 
   // 完整流程优先：一旦出现 req.md / plan.md，原有四产物推断保持不变。
   if (has('req.md') || has('plan.md')) {
@@ -109,29 +134,25 @@ function stageOf(files, testsPending, reviewRequired = false) {
     if (!has('plan.md')) return 'plan';
     // 代码改动晚于最近一次测试时，即使已有 review.md 也应回到 test。
     if (testsPending) return 'test';
-    // review 不能早于测试证据：缺少 test.md 时先补测试，不因 review.md 直接判完成。
-    if (has('review.md') && !has('test.md')) return 'test';
+    // review 不能早于测试证据：缺少有效 test.md 时先补测试，不因 review.md 直接判完成。
+    if (!testDone) return has('review.md') ? 'test' : 'implement';
     if (has('review.md')) return 'done';
-    if (has('test.md')) return 'review';
-    return 'implement';
+    return 'review';
   }
 
   // 轻量功能：brief 替代 req + plan，review 始终保留。
   if (has('brief.md')) {
     if (testsPending) return 'test';
-    if (has('test.md')) return has('review.md') ? 'done' : 'review';
-    if (has('review.md')) return 'test';
-    return 'implement';
+    if (!testDone) return has('review.md') ? 'test' : 'implement';
+    return has('review.md') ? 'done' : 'review';
   }
 
   // 轻量修复：debug 替代 req + plan + implement。
   if (has('debug.md')) {
     if (testsPending) return 'test';
-    if (has('test.md')) {
-      if (!has('review.md') && reviewRequired) return 'review';
-      return 'done';
-    }
-    return 'test';
+    if (!testDone) return 'test';
+    if (!has('review.md') && reviewRequired) return 'review';
+    return 'done';
   }
 
   return 'req';
@@ -158,19 +179,20 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
   const rows = slugs.map((item) => {
     const pending = testsPending && item.slug === activeSlug;
     const flow = flowOf(item.files);
+    // triage 快照既用于轻量修复的流程判定，也用于完整流程的审查画像核对；只读一次。
+    const triage = triageOf(root, item.slug);
     // reviewRequired 只对轻量修复有意义：轻量功能始终 review，完整流程也会 review。
-    const triage = flow === 'light-bug' ? triageOf(root, item.slug) : null;
     const markerRequired = flow === 'light-bug' ? needsReview(root, item.slug) : false;
     // 显式标记优先于 triage 的跳过结论，避免后续补标记被旧快照覆盖。
     const reviewRequired = flow === 'light-bug'
       ? (markerRequired || (triage ? triage.trigger !== 'skipped' : false))
       : false;
     const triageStale = triage ? triageIsStale(root, item.slug) : false;
-    let stage = stageOf(item.files, pending, reviewRequired);
+    let stage = stageOf(item.files, pending, reviewRequired, item.substantive);
     const fullTrace = traceFor(root, item.slug);
     // review.md 存在时校验内容；有未关闭阻断项或画像缺失时不能判完成。
     const reviewGate = item.files.includes('review.md') && (stage === 'done' || stage === 'review')
-      ? checkReviewReport(root, item.slug, { triage: triageOf(root, item.slug), trace: fullTrace })
+      ? checkReviewReport(root, item.slug, { triage, trace: fullTrace })
       : null;
     if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
@@ -182,7 +204,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       flow,
       reviewRequired,
       trace: trace.skipped ? null : trace,
-      reviewTriage: triage
+      reviewTriage: flow === 'light-bug' && triage
         ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
         : null,
       reviewGate: reviewGate
@@ -203,10 +225,10 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     suggestions.push(`存在 ${slugs.length} 个任务；执行工作流命令时请显式带上 slug，或先运行 /devflow:status --slug <slug>`);
   }
   if (testsPending) {
-    suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>"`);
+    suggestions.push(`有改动尚未验证；运行 /devflow:test ${activeSlug || '<slug>'}，通过后运行 node scripts/devflow-test.mjs --command "<命令>" --exit-code 0`);
   }
   if (state.lastTestStatus === 'failed') {
-    suggestions.push(`上次测试失败（exit ${state.lastTestExitCode ?? '?'}）；修复后重新运行并用 node scripts/devflow-test.mjs 记录结果`);
+    suggestions.push(`上次测试失败（exit ${state.lastTestExitCode ?? '?'}）；修复后重新运行并用 node scripts/devflow-test.mjs --command "<命令>" --exit-code <退出码> 记录结果`);
   }
   for (const row of rows) {
     if (!row.planDrift || row.planDrift.skipped) continue;
@@ -277,6 +299,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--json', '--slug']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const wanted = argValue(argv, '--slug', null);
@@ -312,7 +335,9 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
       if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
-        console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${row.trace.gapIds.join('、')}`);
+        const ids = row.trace.gapIds.slice(0, 3).join('、');
+        const more = row.trace.gapIds.length > 3 ? ' 等' : '';
+        console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
       }
       console.log(`    下一步：${row.next}`);
       if (row.planDrift && !row.planDrift.skipped) {

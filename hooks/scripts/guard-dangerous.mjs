@@ -8,8 +8,9 @@ const DENY = [
   { re: /\bdd\b[^|;]*\bof=\/dev\/(sd|hd|nvme|disk)/, why: '直接写裸设备' },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, why: 'fork 炸弹' },
   { re: /\bchmod\s+-R\s+777\s+\/(\s|$)/, why: '对根目录递归放开权限' },
-  { re: /\bcurl\b[^|;]*\|\s*(sudo\s+)?(sh|bash)\b/, why: '下载内容直接执行' },
-  { re: /\bwget\b[^|;]*\|\s*(sudo\s+)?(sh|bash)\b/, why: '下载内容直接执行' },
+  { re: /\b(curl|wget)\b[^|;\n]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh|fish|pwsh|powershell)\b/, why: '下载内容直接执行' },
+  { re: /\b(bash|sh|zsh|dash|ksh|source|\.)\s+<\(\s*(curl|wget)\b/, why: '把下载内容作为脚本执行' },
+  { re: /\b(sh|bash|zsh|dash|ksh|pwsh|powershell)\b[^|;\n]*\s-(?:[A-Za-z]*c[A-Za-z]*)\s*["']?\s*[\$`]\s*\(\s*(curl|wget)\b/, why: '把下载内容作为脚本执行' },
   { re: />\s*\/dev\/(sd|hd|nvme)/, why: '重定向覆盖裸设备' },
 ];
 
@@ -92,6 +93,36 @@ function tokenize(input) {
       started = true;
       continue;
     }
+    if (mode === 'ansi') {
+      // bash 的 $'...' 会解释转义，$'\x2f' 实际是 /，不能当成普通字面量。
+      if (ch === '\\' && i + 1 < input.length) {
+        const n = input[i + 1];
+        const simple = {
+          n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', f: '\f', v: '\v',
+          '\\': '\\', "'": "'", '"': '"', '?': '?',
+        };
+        if (n === 'x' && /^[0-9a-fA-F]{2}$/.test(input.slice(i + 2, i + 4))) {
+          cur += String.fromCharCode(parseInt(input.slice(i + 2, i + 4), 16));
+          i += 3;
+        } else if (n === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 2, i + 6))) {
+          cur += String.fromCharCode(parseInt(input.slice(i + 2, i + 6), 16));
+          i += 5;
+        } else if (Object.prototype.hasOwnProperty.call(simple, n)) {
+          cur += simple[n];
+          i += 1;
+        } else {
+          cur += `\\${n}`;
+          i += 1;
+        }
+      } else if (ch === "'") {
+        mode = 'plain';
+        quoted = true;
+      } else {
+        cur += ch;
+      }
+      started = true;
+      continue;
+    }
     if (mode === 'double') {
       if (ch === '\\' && i + 1 < input.length && ['"', '\\', '$', '`'].includes(input[i + 1])) {
         cur += input[i + 1];
@@ -105,6 +136,7 @@ function tokenize(input) {
       started = true;
       continue;
     }
+    if (ch === '$' && input[i + 1] === "'") { mode = 'ansi'; i += 1; started = true; quoted = true; continue; }
     if (ch === "'") { mode = 'single'; started = true; quoted = true; continue; }
     if (ch === '"') { mode = 'double'; started = true; quoted = true; continue; }
     // 反斜杠续行：\\\n / \\\r\n 不是命令分隔符，先整体跳过。
@@ -215,6 +247,8 @@ function stripWrappers(tokens) {
 const ROOTISH = /^(?:\/|~|\$HOME|\.{1,2})\/?$/;
 const BROAD_TARGET = /^(?:\/|\.{1,2}\/)?\*+$/;
 const DRIVE_ROOT = /^[a-zA-Z]:\\?\*?$/;
+const WIN_RECURSE_SWITCH = /^\/[a-z/]*s[a-z/]*$/i;
+const RECURSE_PARAM = /^-(?:r[a-z]*|recurse)(?::(?:\$?true))?$/i;
 
 function rmDecision(args) {
   let recursive = false;
@@ -229,8 +263,8 @@ function rmDecision(args) {
       continue;
     }
     if (value.startsWith('-') && value.length > 1) {
-      if (/[rR]/.test(value)) recursive = true;
-      if (value.includes('f')) force = true;
+      if (/[rR]/.test(value) || RECURSE_PARAM.test(value)) recursive = true;
+      if (/[fF]/.test(value) || /^-(?:fo|forc|force)(?::(?:\$?true))?$/i.test(value)) force = true;
       continue;
     }
     targets.push(value);
@@ -247,8 +281,6 @@ function rmDecision(args) {
 }
 
 const WIN_ROOT = /^[a-zA-Z]:\\?\*?$/i;
-const RECURSE_SWITCH = /^\/[a-z/]*s[a-z/]*$/i;
-const RECURSE_PARAM = /^-(?:r[a-z]*|recurse)$/i;
 
 /** Windows 的 rd/del/Remove-Item 递归删除不在全局正则里逐条覆盖，按命令位置判断。 */
 function winDeleteDecision(cmd, args) {
@@ -257,14 +289,16 @@ function winDeleteDecision(cmd, args) {
   const hasSwitch = (re) => values.some((v) => re.test(v));
   const target = values.find((v) => !v.startsWith('/') && !v.startsWith('-'));
   if (name === 'rd' || name === 'rmdir' || name === 'del' || name === 'erase') {
-    // rd /s/q 这类合并开关也要识别
-    if (!hasSwitch(RECURSE_SWITCH)) return [];
+    // cmd 的 /s 与 PowerShell 的 -Recurse 都要识别（del 在 PowerShell 里是 Remove-Item 别名）。
+    const recursive = hasSwitch(WIN_RECURSE_SWITCH) || hasSwitch(RECURSE_PARAM)
+      || hasSwitch(/^--recursive$/i);
+    if (!recursive) return [];
     if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
     return [{ decision: 'ask', why: '递归删除文件或目录，可能丢数据' }];
   }
   if (name === 'remove-item' || name === 'ri') {
-    // PowerShell 允许 -Rec、-Recurse 等前缀缩写
-    if (!hasSwitch(RECURSE_PARAM)) return [];
+    // PowerShell 允许 -Rec、-Recurse 等前缀缩写，也允许 -Recurse:$true。
+    if (!hasSwitch(RECURSE_PARAM) && !hasSwitch(/^--recursive$/i)) return [];
     if (target && WIN_ROOT.test(target)) return [{ decision: 'deny', why: '递归删除盘符根' }];
     return [{ decision: 'ask', why: '递归删除文件或目录，可能丢数据' }];
   }
@@ -305,7 +339,11 @@ const GIT_GLOBAL_VALUE = new Set([
 ]);
 
 function isProtectedRef(value) {
-  const clean = String(value).replace(/^\+/, '').split(':').pop();
+  const clean = String(value)
+    .replace(/^\+/, '')
+    .split(':')
+    .pop()
+    .replace(/^refs\/heads\//, '');
   return /(^|\/)(main|master)$/.test(clean) || /^release\//.test(clean);
 }
 
@@ -315,11 +353,16 @@ function gitPushDecision(args) {
   let mirror = false;
   const refs = [];
   for (const value of args) {
-    if (value === '-f' || value === '--force' || /^--force-with-lease(?:=.*)?$/.test(value)) force = true;
+    if (value === '--force' || /^--force-with-lease(?:=.*)?$/.test(value)) force = true;
     else if (value === '--mirror') mirror = true;
-    else if (value === '--delete' || value === '-d') del = true;
-    else if (value.startsWith('-')) continue;
-    else refs.push(value);
+    else if (value === '--delete') del = true;
+    else if (value.startsWith('--')) continue;
+    else if (value.startsWith('-') && value.length > 1) {
+      // 组合短选项：-uf、-fu、-fd 等任一字母都要生效。
+      const letters = value.slice(1);
+      if (letters.includes('f')) force = true;
+      if (letters.includes('d')) del = true;
+    } else refs.push(value);
   }
   const plus = refs.some((r) => r.startsWith('+'));
   const deleteRefspec = refs.some((r) => r.startsWith(':') && r.length > 1);
@@ -452,10 +495,176 @@ function sqlTexts(command) {
   return texts;
 }
 
+// 从文件或标准输入执行 SQL 时看不到语句内容，不能静默放行。
+// 注意 mysql 的 -f 是 --force，不是文件参数，按客户端区分。
+const SQL_FILE_OPTS = {
+  psql: ['-f', '--file'],
+  sqlcmd: ['-i', '--input'],
+  mysqlsh: ['--file'],
+  'clickhouse-client': ['--queries-file'],
+};
+const SQL_COMMAND_BOUNDARIES = new Set([';', '&&', '||', '|', '&']);
+
+function sqlFileInput(command) {
+  const tokens = tokenize(command);
+  for (const raw of simpleCommands(tokens)) {
+    const group = stripWrappers(raw);
+    if (!group.length) continue;
+    const opts = SQL_FILE_OPTS[normalizeCmd(group[0].value)];
+    if (!opts) continue;
+    for (const token of group.slice(1)) {
+      if (opts.some((opt) => token.value === opt || token.value.startsWith(`${opt}=`))) return true;
+    }
+  }
+  // 重定向在分词中是操作符；simpleCommands 会在 < 处切开，这里按真正的命令边界分组，
+  // 只有当命令组首词（考虑 sudo 等包装）是数据库客户端时才把 < 视为读取 SQL 文件。
+  const groups = [];
+  let cur = [];
+  for (const token of tokens) {
+    if (token.op && SQL_COMMAND_BOUNDARIES.has(token.op)) {
+      if (cur.length) groups.push(cur);
+      cur = [];
+    } else {
+      cur.push(token);
+    }
+  }
+  if (cur.length) groups.push(cur);
+  for (const group of groups) {
+    const cmd = stripWrappers(group.filter((token) => !token.op));
+    if (!cmd.length || !DB_CLIENTS.has(normalizeCmd(cmd[0].value))) continue;
+    for (let k = 0; k < group.length; k += 1) {
+      if (group[k].op !== '<') continue;
+      const target = group[k + 1];
+      // /dev/null 只是丢弃输入；&1 之类是文件描述符复制，不是文件输入。
+      if (target && !target.op && !/^\/dev\/null$/i.test(target.value)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 去掉带引号定界符的 heredoc 正文：`cat <<'EOF'` 里的内容不会展开，
+ * 其中的 $() 只是字面文本，不能被当成要执行的命令。
+ * 不带引号的 heredoc 会展开，保持原文交给后续扫描。
+ */
+function stripQuotedHeredocs(input) {
+  const lines = String(input).split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const m = /<<-?\s*(['"])([^'"]+)\1/.exec(line);
+    // 引号内的 << 属于普通文本；maskQuoted 后只剩引号外的操作符。
+    if (!m || !maskQuoted(line).includes('<<')) {
+      out.push(line);
+      continue;
+    }
+    const marker = m[2];
+    const stripTabs = /<<-/.test(m[0]);
+    let end = i + 1;
+    for (; end < lines.length; end += 1) {
+      const candidate = stripTabs ? lines[end].replace(/^\t+/, '') : lines[end];
+      if (candidate === marker) break;
+    }
+    // 没有找到结束标记时保持原文，避免把后续命令误删。
+    if (end >= lines.length) {
+      out.push(line);
+      continue;
+    }
+    out.push(line);
+    for (let k = i + 1; k <= end; k += 1) out.push('');
+    i = end;
+  }
+  return out.join('\n');
+}
+
+/**
+ * 提取命令替换体：$(...) 与反引号里的内容会被 shell 真正执行，
+ * 必须单独递归检查，否则 echo $(rm -rf /) 这类命令会完全绕过。
+ */
+function commandSubstitutions(input) {
+  const text = stripQuotedHeredocs(input);
+  const out = [];
+  let inDouble = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '\\') { i += 1; continue; }
+    // 双引号内的撇号是普通字符（例如 "don't"），不能当成单引号起点。
+    if (ch === '"') { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble) {
+      // 单引号内不做命令替换；跳到配对引号之后。
+      i += 1;
+      while (i < text.length && text[i] !== "'") i += 1;
+      continue;
+    }
+    if (ch === '`') {
+      let j = i + 1;
+      let buf = '';
+      while (j < text.length && text[j] !== '`') {
+        if (text[j] === '\\' && j + 1 < text.length) { buf += text[j + 1]; j += 2; continue; }
+        buf += text[j];
+        j += 1;
+      }
+      if (buf.trim()) out.push(buf);
+      i = j;
+      continue;
+    }
+    if (ch === '$' && text[i + 1] === '(') {
+      // $((...)) 是算术展开，不执行命令。
+      if (text[i + 2] === '(') { i += 2; continue; }
+      let depth = 1;
+      let j = i + 2;
+      let buf = '';
+      while (j < text.length && depth > 0) {
+        const c = text[j];
+        if (c === '\\' && j + 1 < text.length) { buf += text[j + 1]; j += 2; continue; }
+        if (c === '(') depth += 1;
+        else if (c === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+        buf += c;
+        j += 1;
+      }
+      if (buf.trim()) out.push(buf);
+      i = j;
+    }
+  }
+  return out;
+}
+
+const DOWNLOADERS = new Set(['curl', 'wget', 'iwr', 'invoke-webrequest', 'invoke-restmethod']);
+
+/** 下载命令把内容写到哪个文件（-o/--output）。-O 的文件名由 URL 决定，此处不猜。 */
+function downloadOutput(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const value = args[i].value;
+    if (value === '-o' || value === '--output') return args[i + 1]?.value || null;
+    if (value.startsWith('--output=')) return value.slice('--output='.length) || null;
+    if (/^-[A-Za-z]*o[A-Za-z]*$/.test(value) && value.length > 2) return args[i + 1]?.value || null;
+  }
+  return null;
+}
+
+/** 该命令组是否在执行一个刚下载的文件：bash ./x、sh x、source x、./x。 */
+function normalizeDownloadPath(value) {
+  return String(value).replace(/^['"]|['"]$/g, '').replace(/^\.\/|^\.\\/, '');
+}
+
+function executesDownloaded(group, downloaded) {
+  const cmd = normalizeCmd(group[0].value);
+  const args = group.slice(1).map((t) => normalizeDownloadPath(t.value));
+  if (SHELLS.has(cmd) || cmd === 'source' || cmd === '.') {
+    return args.some((arg) => downloaded.has(arg));
+  }
+  // 只把直接执行下载文件当作命中；cat/less 之类读取文件不算。
+  return downloaded.has(normalizeDownloadPath(group[0].value));
+}
+
 function evaluate(command, depth = 0) {
   const findings = [];
   if (depth > MAX_DEPTH) return findings;
 
+  const downloaded = new Set();
   for (const raw of simpleCommands(tokenize(command))) {
     const group = stripWrappers(raw);
     if (!group.length) continue;
@@ -464,6 +673,12 @@ function evaluate(command, depth = 0) {
       const inner = nestedCommand(sub);
       if (inner) findings.push(...evaluate(inner, depth + 1));
     };
+    if (DOWNLOADERS.has(cmd)) {
+      const out = downloadOutput(group.slice(1));
+      if (out) downloaded.add(normalizeDownloadPath(out));
+    } else if (downloaded.size && executesDownloaded(group, downloaded)) {
+      findings.push({ decision: 'deny', why: '下载后直接执行' });
+    }
     if (HALT_COMMANDS.has(cmd)) findings.push({ decision: 'deny', why: '关机或重启机器' });
     else if (cmd === 'systemctl' && group.slice(1).some((t) => /^(reboot|poweroff|halt)$/i.test(t.value))) {
       findings.push({ decision: 'deny', why: '关机或重启机器' });
@@ -494,6 +709,11 @@ function evaluate(command, depth = 0) {
     if (inner) findings.push(...evaluate(inner, depth + 1));
   }
 
+  // 命令替换体（$(...) 与反引号）会被 shell 真正执行，必须递归检查。
+  for (const sub of commandSubstitutions(command)) {
+    findings.push(...evaluate(sub, depth + 1));
+  }
+
   const masked = maskQuoted(command);
   for (const rule of DENY) if (rule.re.test(masked)) findings.push({ decision: 'deny', why: rule.why });
   for (const rule of ASK) if (rule.re.test(masked)) findings.push({ decision: 'ask', why: rule.why });
@@ -501,6 +721,9 @@ function evaluate(command, depth = 0) {
     const maskedSql = maskQuoted(sql);
     for (const rule of DENY_SQL) if (rule.re.test(maskedSql)) findings.push({ decision: 'deny', why: rule.why });
     for (const rule of ASK_SQL) if (rule.re.test(maskedSql)) findings.push({ decision: 'ask', why: rule.why });
+  }
+  if (sqlFileInput(command)) {
+    findings.push({ decision: 'ask', why: '执行 SQL 文件或标准输入，无法检查语句内容' });
   }
   return findings;
 }
