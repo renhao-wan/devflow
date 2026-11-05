@@ -41,6 +41,8 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ## 快速开始
 
+最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。下面是完整步骤。
+
 ### 1. 初始化工作区
 
 在工作区根目录执行：
@@ -200,6 +202,7 @@ devflow 管**阶段与门禁**（阶段顺序、产物路径、项目真源、�
 
 | 场景 | 文档 |
 | --- | --- |
+| 安装、初始化与第一个任务的最短路径 | [docs/quickstart.md](docs/quickstart.md) |
 | 三层结构、目录职责、AI 读取时机、同步与回灌范围 | [docs/layers.md](docs/layers.md) |
 | 阶段细节、`hub.yaml`、多根工作区、statusline | [docs/usage.md](docs/usage.md) |
 | hooks、危险命令拦截与生成物保护 | [docs/hooks.md](docs/hooks.md) |

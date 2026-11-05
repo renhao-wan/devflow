@@ -1,6 +1,6 @@
 # 使用与配置
 
-面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md)。
+面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md) 和 [quickstart.md](quickstart.md)。
 
 ## 六个阶段
 
