@@ -434,7 +434,7 @@ export function verifySnapshot({ snapshotDir, metaFile, packId, commit }) {
 }
 
 export function materializeSnapshot({
-  repoGit, commit, packId, packPath, cacheRoot,
+  repoGit, commit, packId, packPath, cacheRoot, indexEntry = null,
   offline = false, loaderFiles = null, pluginVersion = null,
 }) {
   const safeCommit = assertCommit(commit);
@@ -447,7 +447,7 @@ export function materializeSnapshot({
     () => {
       if (verifySnapshot({ ...paths, commit: safeCommit, packId: safePackId })) {
         const pack = readPackFromDir(paths.snapshotDir, {
-          packId: safePackId, loaderFiles, pluginVersion,
+          packId: safePackId, indexEntry, loaderFiles, pluginVersion,
         });
         return { snapshotDir: paths.snapshotDir, metaFile: paths.metaFile, pack };
       }
@@ -502,7 +502,7 @@ export function materializeSnapshot({
         }
         // staging 内再做一次完整校验：白名单、哈希与兼容性都在这里定案。
         const pack = readPackFromDir(staging, {
-          packId: safePackId, loaderFiles, pluginVersion,
+          packId: safePackId, indexEntry, loaderFiles, pluginVersion,
         });
         const meta = {
           schemaVersion: SNAPSHOT_SCHEMA,
