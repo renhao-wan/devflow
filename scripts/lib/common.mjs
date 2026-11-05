@@ -512,11 +512,17 @@ export function warnUnknownArgs(argv, known, { stream = process.stderr } = {}) {
 }
 
 /** 日志标签的统一大写形式；JSON 模式下日志写 stderr 时与 log() 保持一致。 */
-export const LOG_TAGS = { ok: 'OK', warn: 'WARN', error: 'ERR' };
+export const LOG_TAGS = { ok: 'OK', warn: 'WARN', error: 'ERR', info: 'INFO' };
+
+const LOG_PREFIX = {
+  ok: '[OK]  ',
+  warn: '[WARN]',
+  error: '[ERR] ',
+  info: '[INFO]',
+};
 
 export function log(status, message) {
-  const tag = status === 'ok' ? '[OK]  ' : status === 'warn' ? '[WARN]' : status === 'error' ? '[ERR] ' : '[..]  ';
-  console.log(`${tag} ${message}`);
+  console.log(`${LOG_PREFIX[status] || '[..]  '} ${message}`);
 }
 
 export function relPosix(from, to) {
