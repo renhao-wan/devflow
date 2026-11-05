@@ -3,10 +3,12 @@ import { existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {
   argValue, hasFlag, isMain, log, projectRoot, posix,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
 
 export function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--print', '--json', '--now']);
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const print = hasFlag(argv, '--print');
   const json = hasFlag(argv, '--json');

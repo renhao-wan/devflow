@@ -489,6 +489,28 @@ export function hasFlag(argv, name) {
   return argv.includes(name);
 }
 
+/** 列出未声明的长参数；`--name=value` 只取参数名，值不参与判断。 */
+export function unknownArgs(argv, known) {
+  const allowed = known instanceof Set ? known : new Set(known);
+  const out = [];
+  for (const arg of argv) {
+    if (!arg.startsWith('--') || arg === '--') continue;
+    const name = arg.split('=')[0];
+    if (!allowed.has(name) && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * 提示未声明的长参数但不改变退出码。
+ * 静默忽略拼错的参数会让脚本按默认行为执行，结果看起来成功；写到 stderr 也不污染 JSON 输出。
+ */
+export function warnUnknownArgs(argv, known, { stream = process.stderr } = {}) {
+  const unknown = unknownArgs(argv, known);
+  for (const name of unknown) stream.write(`[WARN] 未知参数：${name}（已忽略）\n`);
+  return unknown;
+}
+
 export function log(status, message) {
   const tag = status === 'ok' ? '[OK]  ' : status === 'warn' ? '[WARN]' : status === 'error' ? '[ERR] ' : '[..]  ';
   console.log(`${tag} ${message}`);

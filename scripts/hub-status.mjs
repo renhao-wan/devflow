@@ -3,7 +3,7 @@
 // 推导每个任务所处阶段并给出下一步命令；不写入任何状态。
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readText, isMain, projectRoot, argValue, hasFlag, posix } from './lib/common.mjs';
+import { readText, isMain, projectRoot, argValue, hasFlag, posix, warnUnknownArgs } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
@@ -298,6 +298,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--json', '--slug']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const wanted = argValue(argv, '--slug', null);

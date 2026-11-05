@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // 阶段产物门禁：devflow check --stage req|debug [--slug <slug>] [--json]
 // 只校验结构是否完整；未通过时退出码为 1。
-import { argValue, hasFlag, isMain, projectRoot } from './lib/common.mjs';
+import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
 import { checkStage } from './lib/stage-gate.mjs';
 
 export function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--stage', '--slug', '--json']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const stage = argValue(argv, '--stage', null);

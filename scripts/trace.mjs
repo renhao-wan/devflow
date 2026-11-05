@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 验收追踪：devflow trace [--slug <slug>] [--check] [--json]
 // 默认只读；--check 时存在未覆盖验收项才返回退出码 1。
-import { argValue, hasFlag, isMain, projectRoot } from './lib/common.mjs';
+import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
 import { traceFor } from './lib/trace.mjs';
 
@@ -44,6 +44,7 @@ function render(result, { check }) {
 }
 
 export function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--slug', '--json', '--check']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const check = hasFlag(argv, '--check');

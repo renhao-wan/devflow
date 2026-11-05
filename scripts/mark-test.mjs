@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import {
   isMain, projectRoot, argValue, hasFlag, hasOption, updateJson, isPathInside, isRealPathInside,
+  unknownArgs,
 } from './lib/common.mjs';
 import { collectChanges } from './lib/review.mjs';
 
@@ -135,20 +136,11 @@ const KNOWN_FLAGS = new Set([
   '--root', '--base', '--gaps', '--changed', '--json', '--command',
   '--exit-code', '--duration-ms', '--help', '-h',
 ]);
-const VALUE_FLAGS = new Set(['--root', '--base', '--command', '--exit-code', '--duration-ms']);
 
 /** 拒绝未知长参数，避免拼错时静默按默认行为执行（例如 test --help 被当成一次通过）。 */
 function assertKnownArgs(argv) {
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) continue;
-    const name = arg.split('=')[0];
-    if (!KNOWN_FLAGS.has(name)) throw new Error(`未知参数：${arg}`);
-    if (!arg.includes('=') && VALUE_FLAGS.has(name)
-      && argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) {
-      i += 1; // 跳过该参数的值，避免把值误判为参数
-    }
-  }
+  const unknown = unknownArgs(argv, KNOWN_FLAGS);
+  if (unknown.length) throw new Error(`未知参数：${unknown[0]}`);
 }
 
 

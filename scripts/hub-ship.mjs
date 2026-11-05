@@ -6,6 +6,7 @@ import {
   argValue, hasFlag, projectRoot,
   readText, log, posix, isMain, resolveUpstreamRoot, isPluginCache, cacheGuardMessage,
   samePath, isValidStageName, loadHub,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { isValidStackName } from './lib/stacks.mjs';
 import {
@@ -274,6 +275,10 @@ function ghUpsert(worktreeDir, { base, head, headOwner, title, body }) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--stage', '--stack', '--shared', '--all', '--profile', '--base',
+    '--dry-run', '--no-pr', '--resume', '--remote', '--fork', '--plugin-root', '--pr-repo',
+  ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stages = argValues(argv, '--stage');
   const stacks = argValues(argv, '--stack');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 可选 statusline：复用 hub-status 的只读推导，输出一行紧凑进度；失败时静默降级。
 import { writeSync } from 'node:fs';
-import { argValue, hasFlag, isMain, projectRoot } from './lib/common.mjs';
+import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { buildStatus } from './hub-status.mjs';
 
 const MAX_WIDTH = 80;
@@ -115,6 +115,7 @@ function compact(report) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--json']);
   try {
     const input = await readInput();
     const { report } = buildStatus(rootFrom(input, argv), { drift: false });

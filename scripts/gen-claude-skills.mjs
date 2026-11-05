@@ -5,6 +5,7 @@ import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
   readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
   ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside, isDraft,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
@@ -237,6 +238,7 @@ function readManifest(root) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, ['--root', '--check', '--dry-run', '--force', '--json', '--no-plugin']);
   const root = argValue(argv, '--root', projectRoot());
   const check = hasFlag(argv, '--check');
   const dryRun = hasFlag(argv, '--dry-run');

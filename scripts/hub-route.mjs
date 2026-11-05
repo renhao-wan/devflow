@@ -2,6 +2,7 @@
 import {
   argValue, hasFlag, isMain, log, posix, projectRoot, isValidStageName, isKnownStage, isRealPathInside,
   DEVFLOW_STAGES,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import {
   ECOSYSTEM_FILE, STATE_FILE,
@@ -9,8 +10,11 @@ import {
   statePath, summarizeState, validateConfig, writeDetectedState,
 } from './lib/ecosystem.mjs';
 
+// JSON 模式下日志走 stderr，标签与普通输出的 log() 保持同一套大写形式。
+const LOG_TAGS = { ok: 'OK', warn: 'WARN', error: 'ERR' };
+
 function note(json, status, message) {
-  if (json) process.stderr.write(`[${status}] ${message}\n`);
+  if (json) process.stderr.write(`[${LOG_TAGS[status] || status}] ${message}\n`);
   else log(status, message);
 }
 
@@ -75,6 +79,10 @@ function printDecision(decision) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--json', '--detect', '--list', '--stage', '--tool',
+    '--force-devflow', '--no-route', '--home',
+  ]);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const detect = hasFlag(argv, '--detect');

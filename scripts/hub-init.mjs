@@ -6,6 +6,7 @@ import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
   isPathInside, isRealPathInside, parseYaml, isDraft,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import {
@@ -230,6 +231,10 @@ function writeDrafts(root, drafts) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--force', '--no-draft', '--plugin-root', '--source-root',
+    '--personal-library', '--team-library',
+  ]);
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const force = hasFlag(argv, '--force');
   const noDraft = hasFlag(argv, '--no-draft');

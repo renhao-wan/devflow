@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   argValue, hasFlag, hasOption, isMain, isPathInside, isRealPathInside, loadHub, projectRoot, readText, writeAtomic,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
@@ -156,6 +157,10 @@ export function buildPlanFor(root, slug, {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--json', '--write', '--check', '--escalate', '--no-subagents',
+    '--focus-only', '--focus', '--base', '--since', '--agents', '--slug',
+  ]);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const write = hasFlag(argv, '--write');

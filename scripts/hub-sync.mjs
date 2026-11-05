@@ -5,6 +5,7 @@ import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub, satisfies,
   readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir,
   readMeta, isGeneratedArtifact, isRealPathInside, isDraft,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { mergeTexts } from './lib/upstream.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
@@ -72,6 +73,10 @@ function localHashMatches(record, destText, currentHash) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--dry-run', '--force', '--no-gen', '--plugin-root',
+    '--personal-library', '--team-library',
+  ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const dryRun = hasFlag(argv, '--dry-run');
   const force = hasFlag(argv, '--force');

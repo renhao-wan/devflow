@@ -7,6 +7,7 @@ import {
   argValue, hasFlag, log, posix, isMain, projectRoot, readText, writeAtomic,
   resolveUpstreamRoot, isPluginCache, cacheGuardMessage, loadHub,
   isValidStageName, canonicalPath, relPosix, readMeta, contentHash,
+  warnUnknownArgs,
 } from './lib/common.mjs';
 import { isValidStackName } from './lib/stacks.mjs';
 import {
@@ -210,6 +211,11 @@ async function runRemote(argv, { root, pluginRoot, units, target }) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  warnUnknownArgs(argv, [
+    '--root', '--stage', '--stack', '--shared', '--all', '--apply', '--json', '--force',
+    '--to', '--pr', '--revert', '--personal-library', '--team-library', '--plugin-root',
+    '--base', '--remote', '--resume', '--pr-repo', '--fork', '--no-pr',
+  ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
   const shared = hasFlag(argv, '--shared');
