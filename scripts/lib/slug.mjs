@@ -1,6 +1,7 @@
 // 任务 slug 解析：review-triage 与 stage-check 共用，保证同一套候选与歧义规则。
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { isRealPathInside } from './common.mjs';
 
 export const MISSING = Symbol('missing');
 
@@ -22,7 +23,10 @@ export function listCandidates(root) {
 export function resolveSlug(root, wanted) {
   if (wanted) {
     if (!validSlug(wanted)) throw new Error(`非法的 slug：${wanted}`);
-    if (!existsSync(join(root, 'docs', 'devflow', wanted))) return MISSING;
+    const dir = join(root, 'docs', 'devflow', wanted);
+    if (!existsSync(dir)) return MISSING;
+    // slug 目录可能是指向项目外的符号链接/junction，读取产物前必须校验真实路径。
+    if (!isRealPathInside(root, dir)) throw new Error(`slug 目录越界：${wanted}`);
     return wanted;
   }
   const candidates = listCandidates(root);

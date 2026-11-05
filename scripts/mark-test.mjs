@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import {
-  isMain, projectRoot, argValue, hasFlag, updateJson,
+  isMain, projectRoot, argValue, hasFlag, hasOption, updateJson, isPathInside, isRealPathInside,
 } from './lib/common.mjs';
 import { collectChanges } from './lib/review.mjs';
 
@@ -127,7 +127,44 @@ function parseCount(raw, name) {
   return Number(raw);
 }
 
+const KNOWN_FLAGS = new Set([
+  '--root', '--base', '--gaps', '--changed', '--json', '--command',
+  '--exit-code', '--duration-ms', '--help', '-h',
+]);
+const VALUE_FLAGS = new Set(['--root', '--base', '--command', '--exit-code', '--duration-ms']);
+
+/** 拒绝未知长参数，避免拼错时静默按默认行为执行（例如 test --help 被当成一次通过）。 */
+function assertKnownArgs(argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) continue;
+    const name = arg.split('=')[0];
+    if (!KNOWN_FLAGS.has(name)) throw new Error(`未知参数：${arg}`);
+    if (!arg.includes('=') && VALUE_FLAGS.has(name)
+      && argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) {
+      i += 1; // 跳过该参数的值，避免把值误判为参数
+    }
+  }
+}
+
+
 export async function main(argv = process.argv.slice(2)) {
+  if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
+    console.log([
+      '用法：devflow test [选项]',
+      '',
+      '  --gaps                 列出缺少测试痕迹的源码改动',
+      '  --changed              列出可能受影响的测试文件',
+      '  --exit-code <n>        记录测试退出码（非负整数；0 表示通过）',
+      '  --duration-ms <n>      记录耗时（毫秒）',
+      '  --command <cmd>        记录测试命令',
+      '  --json                 输出 JSON',
+      '  --root <dir>           项目根目录',
+      '  --base <ref>           比较基线',
+    ].join('\n'));
+    return null;
+  }
+  assertKnownArgs(argv);
   const root = argValue(argv, '--root', projectRoot());
   const base = argValue(argv, '--base', null);
   const gaps = hasFlag(argv, '--gaps');
@@ -185,13 +222,26 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const command = argValue(argv, '--command', null);
-  const exitCode = parseCount(argValue(argv, '--exit-code', null), '--exit-code') ?? 0;
-  const durationMs = parseCount(argValue(argv, '--duration-ms', null), '--duration-ms');
+  const exitCodeRaw = argValue(argv, '--exit-code', null);
+  // 标志存在但没拿到合法值时必须报错，不能回退成 0 把失败记录为通过。
+  if (hasOption(argv, '--exit-code') && exitCodeRaw === null) {
+    throw new Error('--exit-code 需要非负整数，例如 --exit-code 1 或 --exit-code=1');
+  }
+  const exitCode = exitCodeRaw === null ? 0 : parseCount(exitCodeRaw, '--exit-code');
+  const durationRaw = argValue(argv, '--duration-ms', null);
+  if (hasOption(argv, '--duration-ms') && durationRaw === null) {
+    throw new Error('--duration-ms 需要非负整数');
+  }
+  const durationMs = durationRaw === null ? null : parseCount(durationRaw, '--duration-ms');
   const passed = exitCode === 0;
   const at = new Date().toISOString();
   const file = join(root, '.claude', '.devflow-state.json');
+  // 状态文件与 .claude 目录都可能被 junction/符号链接替换，写入前必须确认仍在项目内。
+  if (!isPathInside(root, file) || !isRealPathInside(root, file)) {
+    throw new Error(`拒绝写入项目外的状态文件：${file}`);
+  }
   const state = updateJson(file, (current) => {
-    const next = current && typeof current === 'object' ? current : {};
+    const next = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
     next.lastTestAt = at;
     next.lastTestExitCode = exitCode;
     next.lastTestStatus = passed ? 'passed' : 'failed';

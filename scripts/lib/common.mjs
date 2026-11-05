@@ -405,18 +405,26 @@ export function satisfies(version, range) {
 }
 
 export function argValue(argv, name, fallback = null) {
-  // 同时支持 --name value 与 --name=value，避免带等号时被静默忽略。
-  const inline = argv.find((arg) => arg.startsWith(`${name}=`));
-  if (inline !== undefined) {
-    const value = inline.slice(name.length + 1);
-    return value || fallback;
+  // 同时支持 --name value 与 --name=value；重复出现时取最后一次，符合常见 CLI 习惯。
+  for (let i = argv.length - 1; i >= 0; i -= 1) {
+    const arg = argv[i];
+    if (arg.startsWith(`${name}=`)) {
+      const value = arg.slice(name.length + 1);
+      return value || fallback;
+    }
+    if (arg === name) {
+      const value = argv[i + 1];
+      // 漏传值时不能把下一个开关当成值，否则会静默吞掉后续参数。
+      if (value === undefined || value.startsWith('-')) return fallback;
+      return value;
+    }
   }
-  const i = argv.indexOf(name);
-  if (i === -1) return fallback;
-  const value = argv[i + 1];
-  // 漏传值时不能把下一个开关当成值，否则会静默吞掉后续参数。
-  if (value === undefined || value.startsWith('-')) return fallback;
-  return value;
+  return fallback;
+}
+
+/** 选项是否出现（包括 --name=value 形式），用于区分“没传”和“传了但缺值”。 */
+export function hasOption(argv, name) {
+  return argv.includes(name) || argv.some((arg) => arg.startsWith(`${name}=`));
 }
 
 export function hasFlag(argv, name) {
@@ -442,14 +450,14 @@ function sleepSync(ms) {
  * 用独占锁文件串行化状态读改写，避免多个进程互相覆盖。
  * 锁超过 staleMs 视为残留；等待超时后降级为无锁执行，不能让维护脚本卡死。
  */
-export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 5000 } = {}) {
+export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 15000 } = {}) {
   const lock = `${file}.lock`;
   const deadline = Date.now() + timeoutMs;
   let acquired = false;
   while (true) {
     try {
       mkdirSync(dirname(lock), { recursive: true });
-      writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      writeFileSync(lock, `${process.pid}\n${Date.now()}`, { flag: 'wx' });
       acquired = true;
       break;
     } catch (err) {
@@ -468,17 +476,26 @@ export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 5000 } = {}
     return fn();
   } finally {
     if (acquired) {
-      try { rmSync(lock, { force: true }); } catch { /* 清理失败不影响结果 */ }
+      try {
+        // 只删除自己持有的锁：stale 抢占后原持有者可能仍在运行。
+        const owner = readText(lock).split('\n')[0].trim();
+        if (owner === String(process.pid)) rmSync(lock, { force: true });
+      } catch { /* 清理失败不影响结果 */ }
     }
   }
 }
 
-/** 在锁内读取-修改-写回 JSON 状态；解析失败按 fallback 处理。 */
+/** 在锁内读取-修改-写回 JSON 状态；解析失败或形状不是普通对象时按 fallback 处理。 */
 export function updateJson(file, update, fallback = {}) {
   return withFileLock(file, () => {
     let value = fallback;
     if (existsSync(file)) {
-      try { value = JSON.parse(readText(file)); } catch { value = fallback; }
+      try {
+        const parsed = JSON.parse(readText(file));
+        // 数组、null、标量都不是合法的状态对象，直接使用会静默丢弃属性。
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) value = parsed;
+        else value = fallback;
+      } catch { value = fallback; }
     }
     const result = update(value) ?? value;
     writeAtomic(file, `${JSON.stringify(result, null, 2)}\n`);

@@ -51,12 +51,15 @@ export function scanEntrypoints(root, dirs = ['.']) {
     if (isAbsolute(rel) || !rel || rel === '.') return;
     const posix = rel.split(sep).join('/');
     if (posix.startsWith('../') || seen.has(posix)) return;
+    // statSync 会跟随符号链接：入口文件也必须真实位于项目内。
+    if (!isRealPathInside(root, abs)) return;
     seen.add(posix);
     out.push(posix);
   };
   for (const relDir of new Set(dirs)) {
+    if (typeof relDir !== 'string') continue;
     const dir = resolve(root, relDir);
-    if (!isPathInside(root, dir)) continue;
+    if (!isPathInside(root, dir) || !isRealPathInside(root, dir)) continue;
     for (const candidate of ENTRY_CANDIDATES) {
       const abs = join(dir, candidate);
       try { if (statSync(abs).isFile()) add(abs); } catch { /* 不存在 */ }
@@ -85,8 +88,10 @@ export function scanFacts(root, { subprojectPaths = [] } = {}) {
   const techStack = [];
   const seen = new Set();
   for (const rel of ['.', ...new Set(subprojectPaths)]) {
+    if (typeof rel !== 'string') continue;
     const dir = resolve(root, rel);
-    if (!isPathInside(root, dir)) continue;
+    // 子项目路径可能是 symlink/junction，真实路径越界时跳过，避免扫描项目外目录。
+    if (!isPathInside(root, dir) || !isRealPathInside(root, dir)) continue;
     for (const { file, label } of detectTechStack(dir)) {
       const tag = rel === '.'
         ? `${label}（${file}）`
@@ -113,13 +118,20 @@ export function readHubFacts(root) {
   const { config } = loadHub(root);
   const raw = config.subprojects;
   const subprojects = raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? Object.entries(raw).map(([name, value]) => ({
-      name,
-      path: value?.path || name,
-      testCommand: value?.testCommand || null,
-    }))
+    ? Object.entries(raw).map(([name, value]) => {
+      const entry = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      return {
+        name,
+        path: typeof entry.path === 'string' && entry.path ? entry.path : name,
+        testCommand: typeof entry.testCommand === 'string' && entry.testCommand ? entry.testCommand : null,
+      };
+    })
     : [];
-  return { subprojects, rootTest: config.defaults?.testCommand || null };
+  const rootTest = config.defaults && typeof config.defaults === 'object'
+    && typeof config.defaults.testCommand === 'string'
+    ? config.defaults.testCommand
+    : null;
+  return { subprojects, rootTest };
 }
 
 export function buildAutoSection({ facts, subprojects, rootTest, now, full, fingerprint }) {
@@ -206,8 +218,9 @@ export function generateOverview(root, { full = true, now = new Date().toISOStri
   const block = buildAutoSection({ facts, subprojects: hub.subprojects, rootTest: hub.rootTest, now, full, fingerprint });
   const hubDir = join(root, '.claude', 'hub');
   const file = join(root, OVERVIEW_FILE);
-  if (write && (!isPathInside(root, hubDir) || !isRealPathInside(root, hubDir)
-    || !isPathInside(root, file) || !isRealPathInside(root, file))) {
+  // 即使 --print 不写入，也要先确认概览文件不是指向项目外的链接，避免把外部内容打印出来。
+  if (!isPathInside(root, hubDir) || !isRealPathInside(root, hubDir)
+    || !isPathInside(root, file) || !isRealPathInside(root, file)) {
     throw new Error(`.claude/hub 越界（可能被 junction/符号链接引到项目外）：${hubDir}`);
   }
   const raw = existsSync(file) ? readText(file) : '';

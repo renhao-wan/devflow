@@ -14,7 +14,12 @@ export function main(argv = process.argv.slice(2)) {
   let isDir = false;
   try { isDir = existsSync(root) && statSync(root).isDirectory(); } catch { isDir = false; }
   if (!isDir) throw new Error(`工作区不存在或不是目录：${posix(root)}`);
-  const now = argValue(argv, '--now', new Date().toISOString());
+  const nowRaw = argValue(argv, '--now', null);
+  // --now 会直接写进自动段注释：只接受单行短字符串，避免注入额外 Markdown。
+  if (nowRaw !== null && !/^[^\r\n]{1,80}$/.test(nowRaw)) {
+    throw new Error('--now 需要单行文本（最多 80 字符）');
+  }
+  const now = nowRaw ?? new Date().toISOString();
   const result = generateOverview(root, { full: true, now, write: !print });
 
   if (print) {

@@ -116,6 +116,12 @@ function assertResumeTargets(libRoot, journal, force) {
 }
 
 function showDiff(content, target, label) {
+  if (!existsSync(target)) {
+    // git diff --no-index 对不存在的文件可能输出空 diff，不能据此显示“内容一致”。
+    console.log(`\n--- ${label}（新增） ---`);
+    console.log(content || '（空文件）');
+    return;
+  }
   const tmp = join(tmpdir(), `devflow-diff-${process.pid}-${Date.now()}.txt`);
   try {
     writeAtomic(tmp, content);
