@@ -125,6 +125,7 @@ export function resolveIndexPack(index, packId, rootDir) {
 
 const ROOT_MD = /^[A-Za-z0-9._-]+\.md$/;
 const REF_MD = /^references\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.md$/;
+const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 const DANGEROUS = [
   { re: /(curl|wget)[^\n|]*\|\s*(sh|bash|zsh|powershell|pwsh)\b/i, message: '包含从网络直接执行的命令' },
   { re: /\brm\s+-rf\s+[^\n]*(\/|~|\$HOME|\*)/i, message: '包含高风险删除命令' },
@@ -136,8 +137,15 @@ export function scanDangerous(text) {
   return DANGEROUS.filter((item) => item.re.test(String(text))).map((item) => item.message);
 }
 
-/** 递归列出包内文件；符号链接与特殊文件一律拒绝，避免读取包目录之外的路径。 */
+/** 递归列出包内文件；符号链接与特殊文件一律拒绝，白名单在枚举时即时校验。 */
 function listPackFiles(dir) {
+  const rootStat = lstatSync(dir);
+  if (rootStat.isSymbolicLink()) {
+    throw new StackPackError(`包内不允许符号链接：${posix(dir)}`, 'STACK_PATH');
+  }
+  if (!rootStat.isDirectory()) {
+    throw new StackPackError(`包目录不是普通目录：${posix(dir)}`, 'STACK_PATH');
+  }
   const out = [];
   const visit = (abs, rel) => {
     for (const entry of readdirSync(abs, { withFileTypes: true })) {
@@ -148,9 +156,23 @@ function listPackFiles(dir) {
         throw new StackPackError(`包内不允许符号链接：${childRel}`, 'STACK_PATH');
       }
       if (st.isDirectory()) {
+        // 根下只允许 references；更深层目录名必须符合路径白名单的字符集。
+        if (!rel) {
+          if (entry.name !== 'references') {
+            throw new StackPackError(`不允许的目录：${childRel}`, 'STACK_PATH');
+          }
+        } else if (!SEGMENT_RE.test(entry.name)) {
+          throw new StackPackError(`包内路径非法：${childRel}`, 'STACK_PATH');
+        }
         visit(childAbs, childRel);
       } else if (st.isFile()) {
+        if (childRel !== 'stack.json' && !ROOT_MD.test(childRel) && !REF_MD.test(childRel)) {
+          throw new StackPackError(`不允许的文件：${childRel}`, 'STACK_PATH');
+        }
         out.push({ abs: childAbs, rel: childRel, size: st.size });
+        if (out.length > PACK_LIMITS.files) {
+          throw new StackPackError(`包内文件超过 ${PACK_LIMITS.files} 个`, 'STACK_SIZE');
+        }
       } else {
         throw new StackPackError(`包内不允许特殊文件：${childRel}`, 'STACK_PATH');
       }
@@ -180,17 +202,11 @@ export function readPackFromDir(dir, {
   const stackFile = join(dir, 'stack.json');
   if (!existsSync(stackFile)) throw new StackPackError(`包目录缺少 stack.json：${posix(dir)}`, 'STACK_PACK');
   const listed = listPackFiles(dir);
-  if (listed.length > PACK_LIMITS.files) {
-    throw new StackPackError(`包内文件超过 ${PACK_LIMITS.files} 个`, 'STACK_SIZE');
-  }
 
   const seen = new Set();
   let total = 0;
   const contents = new Map();
   for (const item of listed) {
-    if (item.rel !== 'stack.json' && !ROOT_MD.test(item.rel) && !REF_MD.test(item.rel)) {
-      throw new StackPackError(`不允许的文件：${item.rel}`, 'STACK_PATH');
-    }
     // 大小写不敏感文件系统上，仅大小写不同的两个路径会互相覆盖。
     const lower = item.rel.toLowerCase();
     if (seen.has(lower)) throw new StackPackError(`仅大小写不同的重复路径：${item.rel}`, 'STACK_PATH');
@@ -240,6 +256,12 @@ export function readPackFromDir(dir, {
   if (!manifest.files || typeof manifest.files !== 'object' || Array.isArray(manifest.files)) {
     throw new StackPackError('stack.json 的 files 必须是对象', 'STACK_JSON');
   }
+  // 清单键先过路径白名单，避免 ../、绝对路径或盘符键进入后续比较。
+  for (const rel of Object.keys(manifest.files)) {
+    if (!ROOT_MD.test(rel) && !REF_MD.test(rel)) {
+      throw new StackPackError(`stack.json 的 files 含非法路径：${rel}`, 'STACK_PATH');
+    }
+  }
 
   // 清单与磁盘文件必须双向一一对应：漏登记和登记了不存在的文件都拒绝。
   const declared = new Set(Object.keys(manifest.files).map((rel) => rel.toLowerCase()));
@@ -255,6 +277,9 @@ export function readPackFromDir(dir, {
   const warnings = [];
   for (const [rel, text] of contents) {
     const hash = contentHash(text);
+    if (!Object.prototype.hasOwnProperty.call(manifest.files, rel)) {
+      throw new StackPackError(`stack.json 的文件名大小写不一致：${rel}`, 'STACK_HASH');
+    }
     if (manifest.files[rel] !== hash) {
       throw new StackPackError(`文件哈希不一致：${rel}`, 'STACK_HASH');
     }

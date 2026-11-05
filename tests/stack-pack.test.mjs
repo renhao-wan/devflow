@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import './support.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contentHash } from '../scripts/lib/common.mjs';
@@ -218,6 +218,176 @@ test('拒绝超过单文件大小与文件数量限制', () => {
       name: 'java-spring', version: '1.0.0', detects: [], files,
     }));
     assert.throws(() => readPackFromDir(many), /500/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+function tryJunction(target, link) {
+  try {
+    symlinkSync(target, link, 'junction');
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') return false;
+    throw err;
+  }
+}
+
+test('拒绝包内符号链接或 junction', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-link-child-'));
+  try {
+    const dir = join(base, 'pack');
+    makePack(dir);
+    const outside = join(base, 'outside');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'secret.md'), '# secret\n');
+    mkdirSync(join(dir, 'references'), { recursive: true });
+    if (!tryJunction(outside, join(dir, 'references', 'outside'))) {
+      t.skip('当前平台不允许创建 junction（EPERM/EACCES）');
+      return;
+    }
+    assert.throws(
+      () => readPackFromDir(dir),
+      (err) => err instanceof StackPackError && err.code === 'STACK_PATH' && /符号链接/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝包根符号链接或 junction', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-link-root-'));
+  try {
+    const real = join(base, 'real');
+    makePack(real);
+    const link = join(base, 'pack-link');
+    if (!tryJunction(real, link)) {
+      t.skip('当前平台不允许创建 junction（EPERM/EACCES）');
+      return;
+    }
+    assert.throws(
+      () => readPackFromDir(link),
+      (err) => err instanceof StackPackError && err.code === 'STACK_PATH' && /符号链接/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝非 UTF-8 文件', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-encoding-'));
+  try {
+    const dir = join(base, 'pack');
+    makePack(dir);
+    writeFileSync(join(dir, 'bad.md'), Buffer.from([0xff, 0xfe]));
+    const manifest = JSON.parse(readFileSync(join(dir, 'stack.json'), 'utf8'));
+    manifest.files['bad.md'] = 'unused';
+    writeFileSync(join(dir, 'stack.json'), JSON.stringify(manifest));
+    assert.throws(
+      () => readPackFromDir(dir),
+      (err) => err instanceof StackPackError && err.code === 'STACK_ENCODING' && /不是 UTF-8/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝 manifest.files 中的越界或绝对路径', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-key-'));
+  try {
+    const dir = join(base, 'pack');
+    for (const badKey of ['../evil.md', '/tmp/evil.md', 'C:/evil.md', 'C:\\evil.md']) {
+      makePack(dir);
+      const manifest = JSON.parse(readFileSync(join(dir, 'stack.json'), 'utf8'));
+      manifest.files[badKey] = 'unused';
+      writeFileSync(join(dir, 'stack.json'), JSON.stringify(manifest));
+      assert.throws(
+        () => readPackFromDir(dir),
+        (err) => err instanceof StackPackError && err.code === 'STACK_PATH' && /非法路径/.test(err.message),
+        badKey,
+      );
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('validatePackAgainstIndex 拒绝 detects 不一致', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-detects-'));
+  try {
+    const dir = join(base, 'pack');
+    makePack(dir);
+    const pack = readPackFromDir(dir);
+    assert.throws(
+      () => validatePackAgainstIndex(pack, { path: 'stacks/java-spring', detects: ['nodejs'] }, 'java-spring'),
+      (err) => err instanceof StackPackError && err.code === 'STACK_INDEX' && /detects 不一致/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝 packId 与 stack.json 的 name 不一致', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-id-'));
+  try {
+    const dir = join(base, 'pack');
+    makePack(dir);
+    assert.throws(
+      () => readPackFromDir(dir, { packId: 'vue3' }),
+      (err) => err instanceof StackPackError && err.code === 'STACK_JSON' && /不一致/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝整包超过 10 MiB', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-total-'));
+  try {
+    const dir = join(base, 'pack');
+    mkdirSync(join(dir, 'references'), { recursive: true });
+    const text = 'a'.repeat(1024 * 1024);
+    const hash = contentHash(text);
+    const files = {};
+    for (let i = 0; i < 11; i += 1) {
+      const rel = `references/f${i}.md`;
+      writeFileSync(join(dir, ...rel.split('/')), text);
+      files[rel] = hash;
+    }
+    writeFileSync(join(dir, 'stack.json'), JSON.stringify({
+      name: 'java-spring', version: '1.0.0', detects: [], files,
+    }));
+    assert.throws(
+      () => readPackFromDir(dir),
+      (err) => err instanceof StackPackError && err.code === 'STACK_SIZE' && /10 MiB/.test(err.message),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝大小写仅不同的重复路径', (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Windows NTFS 默认大小写不敏感，无法构造仅大小写不同的两个文件');
+    return;
+  }
+  const base = mkdtempSync(join(tmpdir(), 'devflow-pack-case-'));
+  try {
+    const dir = join(base, 'pack');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '_shared.md'), '# lower\n');
+    writeFileSync(join(dir, '_SHARED.md'), '# upper\n');
+    writeFileSync(join(dir, 'stack.json'), JSON.stringify({
+      name: 'java-spring', version: '1.0.0', detects: [],
+      files: {
+        '_shared.md': contentHash('# lower\n'),
+        '_SHARED.md': contentHash('# upper\n'),
+      },
+    }));
+    assert.throws(
+      () => readPackFromDir(dir),
+      (err) => err instanceof StackPackError && err.code === 'STACK_PATH' && /大小写/.test(err.message),
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
