@@ -7,9 +7,12 @@ import {
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import {
   ensureRepo, resolveCommit, fetchCommit, refreshRef, gitRun, stackCacheRoot,
+  materializeSnapshot, verifySnapshot,
 } from '../scripts/lib/stack-fetch.mjs';
+import { contentHash } from '../scripts/lib/common.mjs';
 
 // 离线测试环境：不读系统/用户 git 配置，也不允许终端或凭据管理器弹出交互。
 const CONFIG_DIR = mkdtempSync(join(tmpdir(), 'devflow-fetch-config-'));
@@ -292,6 +295,118 @@ test('gitRun 每次调用都读取当前环境', () => {
   } finally {
     if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
     else process.env.GIT_CONFIG_GLOBAL = prev;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('按 commit 物化单个包目录并复用快照', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-snapshot-'));
+  try {
+    const remote = makeGitRepo(base, {
+      'index.json': '{}',
+      'stacks/java-spring/_shared.md': '# shared\n',
+      'stacks/java-spring/stack.json': JSON.stringify({
+        name: 'java-spring', version: '1.2.0', minDevflow: '>=1.7.0',
+        detects: ['java-maven'],
+        files: { '_shared.md': contentHash('# shared\n') },
+      }),
+      'stacks/vue3/_shared.md': '# vue\n',
+    });
+    const { repoGit } = ensureRepo({ url: remote, cacheRoot: join(base, 'cache'), allowFile: true });
+    const commit = resolveCommit({ repoGit, ref: 'main' });
+    const first = materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'), loaderFiles: new Set(), pluginVersion: '1.7.0',
+    });
+    assert.equal(readFileSync(join(first.snapshotDir, '_shared.md'), 'utf8'), '# shared\n');
+    assert.equal(verifySnapshot({ ...first, commit, packId: 'java-spring' }), true);
+    assert.equal(existsSync(join(first.snapshotDir, 'stack.json')), true);
+    // meta 必须在包目录外：包目录内只能有真正的包文件。
+    assert.equal(existsSync(first.metaFile), true);
+    assert.equal(existsSync(join(first.snapshotDir, 'java-spring.meta.json')), false);
+
+    const second = materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'), loaderFiles: new Set(), pluginVersion: '1.7.0',
+    });
+    assert.equal(second.snapshotDir, first.snapshotDir);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('快照被篡改后重新物化', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-snapshot-tamper-'));
+  try {
+    const remote = makeGitRepo(base, {
+      'stacks/java-spring/_shared.md': '# shared\n',
+      'stacks/java-spring/stack.json': JSON.stringify({
+        name: 'java-spring', version: '1.2.0', detects: [],
+        files: { '_shared.md': contentHash('# shared\n') },
+      }),
+    });
+    const { repoGit } = ensureRepo({ url: remote, cacheRoot: join(base, 'cache'), allowFile: true });
+    const commit = resolveCommit({ repoGit, ref: 'main' });
+    const first = materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'),
+    });
+    writeFileSync(join(first.snapshotDir, '_shared.md'), '# hacked\n');
+    const second = materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'),
+    });
+    assert.equal(readFileSync(join(second.snapshotDir, '_shared.md'), 'utf8'), '# shared\n');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('拒绝 ls-tree 中的符号链接模式', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-snapshot-mode-'));
+  try {
+    const remote = makeGitRepo(base, {
+      'stacks/java-spring/_shared.md': '# shared\n',
+      'stacks/java-spring/stack.json': JSON.stringify({
+        name: 'java-spring', version: '1.2.0', detects: [],
+        files: { '_shared.md': contentHash('# shared\n') },
+      }),
+    });
+    // 用 git 索引直接写入 120000 模式，避免依赖操作系统的符号链接权限。
+    const target = join(base, 'link-target.txt');
+    writeFileSync(target, 'target\n');
+    const blob = git(remote, ['hash-object', '-w', '--', target]);
+    git(remote, ['update-index', '--add', '--cacheinfo', `120000,${blob},stacks/java-spring/link.md`]);
+    git(remote, ['commit', '-m', 'link']);
+
+    const { repoGit } = ensureRepo({ url: remote, cacheRoot: join(base, 'cache'), allowFile: true });
+    const commit = resolveCommit({ repoGit, ref: 'main' });
+    assert.throws(() => materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'),
+    }), /符号链接或子模块/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('离线模式下快照缺失直接报错，不落到 git 对象读取', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-snapshot-offline-'));
+  try {
+    const remote = makeGitRepo(base, {
+      'stacks/java-spring/_shared.md': '# shared\n',
+      'stacks/java-spring/stack.json': JSON.stringify({
+        name: 'java-spring', version: '1.2.0', detects: [],
+        files: { '_shared.md': contentHash('# shared\n') },
+      }),
+    });
+    const { repoGit } = ensureRepo({ url: remote, cacheRoot: join(base, 'cache'), allowFile: true });
+    const commit = resolveCommit({ repoGit, ref: 'main' });
+    assert.throws(() => materializeSnapshot({
+      repoGit, commit, packId: 'java-spring', packPath: 'stacks/java-spring',
+      cacheRoot: join(base, 'cache'), offline: true,
+    }), /离线模式下没有可用快照/);
+  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });

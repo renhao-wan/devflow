@@ -1,9 +1,14 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { posix, withFileLock } from './common.mjs';
-import { StackPackError, normalizeRepoUrl, repoCacheId } from './stack-pack.mjs';
+import { ensureDir, posix, withFileLock, writeAtomic } from './common.mjs';
+import {
+  PACK_LIMITS, StackPackError, normalizeRepoUrl, readPackFromDir, repoCacheId,
+} from './stack-pack.mjs';
+import { isValidStackName } from './stacks.mjs';
 
 // clone 与 fetch 共用同一套锁参数：staleMs 必须远大于单次 gitRun 的 120s 超时，
 // 也要覆盖连续多次 fetch 尝试，避免长网络操作被当成残留锁抢占。
@@ -236,4 +241,320 @@ export function resolveCommit({ repoGit, ref = 'main', offline = false, run = gi
   }
   if (!commit) throw new StackPackError(`找不到 ref：${value}`, 'STACK_REF');
   return commit;
+}
+
+// ---------------------------------------------------------------------------
+// 快照：按 commit 物化包目录
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT_SCHEMA = 1;
+const GIT_BUFFER_LIMIT = 64 * 1024 * 1024;
+const META_SUFFIX = '.meta.json';
+
+/** 包名会进入快照目录和锁文件名，必须先过与 index/stack.json 相同的规则。 */
+function assertPackId(packId) {
+  if (!isValidStackName(packId)) throw new StackPackError('非法包名', 'STACK_PATH');
+  return packId;
+}
+
+/** commit 直接拼进路径与 git 参数，只接受 7-40 位十六进制。 */
+function assertCommit(commit) {
+  const value = String(commit ?? '');
+  if (!SHA_RE.test(value)) throw new StackPackError('非法 commit', 'STACK_REF');
+  return value;
+}
+
+/**
+ * 树条目来自仓库内容。Windows 上反斜杠可能被当成路径分隔符，
+ * 冒号可能变成盘符/ADS，空段与 . / .. 会逃出 staging，一律在写盘前拒绝。
+ */
+function safeTreeRel(rel) {
+  const value = String(rel ?? '');
+  if (!value || /[\\:\0\r\n]/.test(value)
+    || value.split('/').some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new StackPackError('非法包内路径', 'STACK_PATH');
+  }
+  return value;
+}
+
+/** `ls-tree -- <path>` 也会接受越界路径，必须在进入 git 前拒绝。 */
+function safePackPath(packPath) {
+  const value = String(packPath ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const segments = value.split('/');
+  if (!value || value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.includes(':')
+    || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
+    throw new StackPackError('非法包路径', 'STACK_PATH');
+  }
+  return value;
+}
+
+/** 二进制安全地读 git 输出：blob 内容不能走 utf8 解码。 */
+function gitRunBuffer(args, { cwd, input, timeout = 120000 } = {}) {
+  const result = spawnSync('git', args, {
+    cwd, input, timeout, env: gitEnv(), maxBuffer: GIT_BUFFER_LIMIT,
+  });
+  if (result.error) throw new StackPackError(`无法执行 git：${result.error.message}`, 'STACK_GIT');
+  if (result.status !== 0) {
+    const detail = result.stderr ? Buffer.from(result.stderr).toString('utf8').trim() : '';
+    throw new StackPackError(`git 对象读取失败${detail ? `：${detail}` : ''}`, 'STACK_GIT');
+  }
+  return result.stdout;
+}
+
+function listTreeEntries(repoGit, commit, packPath) {
+  const out = gitRun(['ls-tree', '-r', '-z', commit, '--', packPath], { cwd: repoGit });
+  const prefix = `${packPath}/`;
+  const entries = [];
+  for (const item of out.split('\0')) {
+    if (!item) continue;
+    const tab = item.indexOf('\t');
+    if (tab < 0) throw new StackPackError('无法解析 git 树条目', 'STACK_GIT');
+    const [mode, type, hash] = item.slice(0, tab).split(/\s+/);
+    const full = item.slice(tab + 1);
+    if (!full.startsWith(prefix)) continue;
+    entries.push({ mode, type, hash, rel: safeTreeRel(full.slice(prefix.length)) });
+  }
+  return entries;
+}
+
+/** 先取大小再做限额检查，避免把超大 blob 整个读进内存。 */
+function blobSizes(repoGit, hashes) {
+  const unique = [...new Set(hashes)];
+  if (!unique.length) return new Map();
+  const out = gitRun(['cat-file', '--batch-check'], {
+    cwd: repoGit,
+    input: `${unique.join('\n')}\n`,
+  });
+  const map = new Map();
+  for (const line of out.split('\n').filter(Boolean)) {
+    const [sha, type, sizeText] = line.split(' ');
+    if (type === 'blob' && Number.isFinite(Number(sizeText))) map.set(sha, Number(sizeText));
+  }
+  return map;
+}
+
+function readBlobs(repoGit, hashes) {
+  const unique = [...new Set(hashes)];
+  if (!unique.length) return new Map();
+  const buf = gitRunBuffer(['cat-file', '--batch'], {
+    cwd: repoGit,
+    input: `${unique.join('\n')}\n`,
+  });
+  const out = new Map();
+  let pos = 0;
+  while (pos < buf.length) {
+    const nl = buf.indexOf(10, pos);
+    if (nl < 0) break;
+    const [sha, type, sizeText] = buf.slice(pos, nl).toString('utf8').split(' ');
+    const size = Number(sizeText);
+    const start = nl + 1;
+    if (type !== 'blob' || !Number.isFinite(size)) {
+      pos = start;
+      continue;
+    }
+    out.set(sha, buf.subarray(start, start + size));
+    pos = start + size + 1;
+  }
+  return out;
+}
+
+/** 读取 commit 中的单个文件（用于 index.json），不检出工作树。 */
+export function readFileAtCommit({ repoGit, commit, file }) {
+  const safeCommit = assertCommit(commit);
+  const value = String(file ?? '').replace(/\\/g, '/');
+  if (!value || value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.includes(':')
+    || /[\0\r\n]/.test(value)
+    || value.split('/').some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new StackPackError('非法文件路径', 'STACK_PATH');
+  }
+  return gitRun(['show', `${safeCommit}:${value}`], { cwd: repoGit });
+}
+
+/**
+ * 设计 §5：快照与锁都在仓库级缓存目录下，repoGit 本身就在该目录里。
+ * 传入的 cacheRoot 不参与路径计算。
+ */
+function snapshotPaths(repoGit, commit, packId) {
+  const safeCommit = assertCommit(commit);
+  const safePackId = assertPackId(packId);
+  const repoRoot = dirname(repoGit);
+  const dir = join(repoRoot, 'snapshots', safeCommit);
+  return {
+    repoRoot,
+    snapshotDir: join(dir, safePackId),
+    metaFile: join(dir, `${safePackId}${META_SUFFIX}`),
+  };
+}
+
+/**
+ * 完整性标记与全部文件哈希都匹配才算可用；任何异常都降级为 false，
+ * 由调用方删除并重新物化。
+ */
+export function verifySnapshot({ snapshotDir, metaFile, packId, commit }) {
+  assertPackId(packId);
+  if (!snapshotDir || !metaFile || !existsSync(metaFile) || !existsSync(snapshotDir)) return false;
+  let meta;
+  try {
+    meta = JSON.parse(readFileSync(metaFile, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.schemaVersion !== SNAPSHOT_SCHEMA || meta.commit !== commit || meta.packId !== packId) {
+    return false;
+  }
+  const files = meta.files;
+  if (!files || typeof files !== 'object' || Array.isArray(files)) return false;
+  try {
+    const pack = readPackFromDir(snapshotDir, { packId });
+    if (pack.files.length !== Object.keys(files).length) return false;
+    return pack.files.every((item) => Object.prototype.hasOwnProperty.call(files, item.rel)
+      && files[item.rel] === item.hash);
+  } catch {
+    return false;
+  }
+}
+
+export function materializeSnapshot({
+  repoGit, commit, packId, packPath, cacheRoot,
+  offline = false, loaderFiles = null, pluginVersion = null,
+}) {
+  const safeCommit = assertCommit(commit);
+  const safePackId = assertPackId(packId);
+  const safePath = safePackPath(packPath);
+  const paths = snapshotPaths(repoGit, safeCommit, safePackId);
+  ensureDir(dirname(paths.snapshotDir));
+  return withFileLockOrStack(
+    join(paths.repoRoot, 'locks', `snapshot-${safeCommit}-${safePackId}`),
+    () => {
+      if (verifySnapshot({ ...paths, commit: safeCommit, packId: safePackId })) {
+        const pack = readPackFromDir(paths.snapshotDir, {
+          packId: safePackId, loaderFiles, pluginVersion,
+        });
+        return { snapshotDir: paths.snapshotDir, metaFile: paths.metaFile, pack };
+      }
+      // 设计 §5.3：offline 只读已验证快照。部分克隆缺 blob 时
+      // cat-file 会隐式联网，因此这里绝不能落到任何 git 命令。
+      if (offline) {
+        throw new StackPackError(
+          `离线模式下没有可用快照：${safeCommit.slice(0, 8)}/${safePackId}`,
+          'STACK_OFFLINE',
+        );
+      }
+      const staging = join(dirname(paths.snapshotDir), `${safePackId}.staging-${process.pid}`);
+      rmSync(staging, { recursive: true, force: true });
+      try {
+        const entries = listTreeEntries(repoGit, safeCommit, safePath);
+        if (!entries.length) throw new StackPackError('commit 中没有包路径', 'STACK_PACK');
+        if (entries.length > PACK_LIMITS.files) {
+          throw new StackPackError(`包内文件超过 ${PACK_LIMITS.files} 个`, 'STACK_SIZE');
+        }
+        for (const entry of entries) {
+          if (entry.mode === '120000' || entry.mode === '160000' || entry.type !== 'blob') {
+            throw new StackPackError('包内不允许符号链接或子模块', 'STACK_PATH');
+          }
+        }
+        // 先用 --batch-check 拿大小：超限必须在读取内容之前拒绝。
+        const sizes = blobSizes(repoGit, entries.map((entry) => entry.hash));
+        let total = 0;
+        for (const entry of entries) {
+          const size = sizes.get(entry.hash);
+          if (!Number.isFinite(size)) {
+            throw new StackPackError(`读取 blob 大小失败：${entry.rel}`, 'STACK_GIT');
+          }
+          if (size > PACK_LIMITS.fileBytes) {
+            throw new StackPackError(`单文件超过 1 MiB：${entry.rel}`, 'STACK_SIZE');
+          }
+          total += size;
+          if (total > PACK_LIMITS.packBytes) {
+            throw new StackPackError('整包超过 10 MiB', 'STACK_SIZE');
+          }
+        }
+        const blobs = readBlobs(repoGit, entries.map((entry) => entry.hash));
+        for (const entry of entries) {
+          const data = blobs.get(entry.hash);
+          if (!data) throw new StackPackError(`读取 blob 失败：${entry.rel}`, 'STACK_GIT');
+          const text = data.toString('utf8');
+          if (!Buffer.from(text, 'utf8').equals(data)) {
+            throw new StackPackError(`不是 UTF-8 文本：${entry.rel}`, 'STACK_ENCODING');
+          }
+          const abs = join(staging, ...entry.rel.split('/'));
+          ensureDir(dirname(abs));
+          writeAtomic(abs, text);
+        }
+        // staging 内再做一次完整校验：白名单、哈希与兼容性都在这里定案。
+        const pack = readPackFromDir(staging, {
+          packId: safePackId, loaderFiles, pluginVersion,
+        });
+        const meta = {
+          schemaVersion: SNAPSHOT_SCHEMA,
+          commit: safeCommit,
+          packId: safePackId,
+          files: Object.fromEntries(pack.files.map((item) => [item.rel, item.hash])),
+        };
+        rmSync(paths.snapshotDir, { recursive: true, force: true });
+        // meta 在包目录外，且先于 rename 写：rename 失败时 verify 会发现快照缺失并重建。
+        writeAtomic(paths.metaFile, `${JSON.stringify(meta, null, 2)}\n`);
+        renameSync(staging, paths.snapshotDir);
+        return { snapshotDir: paths.snapshotDir, metaFile: paths.metaFile, pack };
+      } catch (err) {
+        rmSync(staging, { recursive: true, force: true });
+        throw err;
+      }
+    },
+  );
+}
+
+/**
+ * 供调用方传入用户级缓存根（stackCacheRoot()），逐个 <repo-id>/snapshots 收集；
+ * 也兼容直接传入单个仓库级目录。
+ */
+export function listSnapshots(cacheRoot) {
+  const root = resolve(String(cacheRoot ?? ''));
+  const candidates = [];
+  const direct = join(root, 'snapshots');
+  if (existsSync(direct)) {
+    candidates.push(direct);
+  } else if (existsSync(root)) {
+    for (const name of readdirSync(root)) {
+      const nested = join(root, name, 'snapshots');
+      if (existsSync(nested)) candidates.push(nested);
+    }
+  }
+  const out = [];
+  for (const snapshotsDir of candidates) {
+    let commits;
+    try {
+      commits = readdirSync(snapshotsDir);
+    } catch {
+      continue;
+    }
+    for (const commit of commits) {
+      const dir = join(snapshotsDir, commit);
+      try {
+        if (!statSync(dir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      for (const name of readdirSync(dir)) {
+        if (!name.endsWith(META_SUFFIX)) continue;
+        const packId = name.slice(0, -META_SUFFIX.length);
+        if (!isValidStackName(packId)) continue;
+        const snapshotDir = join(dir, packId);
+        const metaFile = join(dir, name);
+        try {
+          if (!statSync(snapshotDir).isDirectory() || !statSync(metaFile).isFile()) continue;
+          out.push({
+            commit, packId, snapshotDir, metaFile, mtimeMs: statSync(metaFile).mtimeMs,
+          });
+        } catch {
+          // 扫描期间被清理的条目直接跳过。
+        }
+      }
+    }
+  }
+  out.sort((a, b) => (a.commit === b.commit
+    ? a.packId.localeCompare(b.packId)
+    : a.commit.localeCompare(b.commit)));
+  return out;
 }
