@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.7.0
+
+### 增强
+
+- 新增审查触发与风险画像：`devflow review-triage` 先做确定性 triage，再按触发来源（用户指定、`review: required`、diff 风险信号）与风险等级（low / medium / high / special）分配审查方向与子代理上限；未入选方向进入 `excluded`，未派单方向进入 `deferred`，不静默漏审
+- review 门禁读取 `review-triage.json`，`--check` 校验结论、未关闭阻断项与画像一致性；支持 `--since <ref>` 增量复审并强制补「增量复审」小节，锚点必须是 HEAD 祖先，rebase 后不可达时直接报错；轻量流程用 `--escalate` 复用同一套风险画像
+- 新增验收追踪：req 的验收项带 AC ID，plan 任务表、test 验收覆盖与 review 验收对照按 ID 关联；`devflow trace --slug <slug>` 合并为矩阵并列出缺口，`--check` 在未覆盖、未映射或阻断时退出 1，`status` 同步展示验收缺口
+- 新增 req / debug 结构门禁 `devflow check --stage req|debug`；test 新增 `--gaps`（改了源码但没有测试痕迹）与 `--changed`（可能受影响的已存在测试）；`mark-test` 记录退出码与耗时，失败保留待测试标记且不覆盖上次通过时间
+- `status` 把计划声明文件与实际 diff 对照，提示计划外改动与计划未改动文件；审查 triage、测试覆盖与验收追踪统一复用这些结果，不额外持久化进度状态
+- 完善第二层规则读取：阶段入口先读项目投影，投影只记录 `_shared/`、`overrides/` 与 `stacks/` 的路径并按需读取正文；新增技术栈数据模型，按 stack 惰性读取并接入 `sync`、`upstream`、`ship`、`doctor` 与 SessionStart 摘要
+- `init` 生成可编辑的规则草稿：`_shared/project-basics.md` 与单一技术栈的 `stacks/<stack>/_shared.md`；单一技术栈自动写入 `hub.yaml` 的 `stack`，多栈不猜；Makefile 作为辅助栈，避免 Node.js 项目被误判为多栈
+- 新增 `devflow-rule-placement` 技能，按影响范围判断规则应落在 `_shared/`、阶段、技术栈还是子项目覆盖；六个阶段入口接入落位提示
+- 草稿标记与生命周期统一：首行 `<!-- devflow:draft -->` 未删除时不进入投影、`sync` 不覆盖、`upstream` 不回灌、`doctor` 以 INFO 提示；`gen` 统计未启用草稿并在 JSON 报告输出 `drafts`
+- `init` 支持 `--draft` 显式触发技能层补全，`--no-draft` 关闭草稿与自动 `stack`，两者互斥；默认只生成占位草稿，可直接进入 `/devflow:req`
+- 回灌扩展为「范围 × 出口」：范围支持 `--stage`、`--stack`、`--shared`、`--all`，出口支持个人库、团队库与上游插件；默认只预览，加 `--apply` 才写入，团队库与上游可加 `--pr` 走临时 worktree 建 PR
+- 回灌写入前备份并记录 journal，支持中断续做、`.devflow/upstream-log.jsonl` / `docs/upstream-log.md` 日志与 `--revert <id>` 回滚；远程提交前重新扫描密钥并校验 `SKILL.md` frontmatter，推送失败保留本地分支，`--resume` 可续推
+- 模板同步支持 `templates.order` 多来源合并（团队 > 个人 > 上游），账本升级为 schema v3，为每个文件记录 `{ base, local, source }`；本地与模板都改过时用 `git merge-file` 三方合并，高优先库删除文件后自动回落
+- `doctor` 新增 `--mode auto|plugin|project`：插件源码仓库自动进入插件模式，校验版本一致性、hooks、CLI 脚本、六阶段模板与技能 frontmatter；新增 INFO 级别，不计入提醒与建议
+- `doctor` 建议按类型排序并合并重复项，`init` 类建议合并为一条；插件模式不再输出项目工作区建议
+- `status` 按未初始化、已初始化无任务、有任务分三态展示首屏，未初始化时只给入口引导；未配置路由合并为一行，JSON 报告新增 `initialized`
+- `init` 先写 loader、投影与账本再生成项目概览，概览精确排除 devflow loader 的 `scripts/`，避免刚初始化就显示过期；loader 清单抽到 `scripts/lib/loaders.mjs`，init、doctor 与 sync 共用
+- CLI 命令表下沉 `scripts/lib/cli-commands.mjs`，`bin/devflow` 与 `doctor` 共用；统一未知参数提示、JSON 模式日志标签与 INFO 大写格式
+- 加固安全与 hooks 边界：修复路径穿越、分支校验与敏感信息剔除；命令守卫补齐 ANSI-C 参数、SQL 重定向、heredoc、嵌套 shell 与 PowerShell 删除等绕过面；生成物保护覆盖新增 loader 与账本
+
+### 修复
+
+- 修复高优先模板库删除同名文件后仍保留旧来源、`--force` 覆盖顺序与草稿来源选择错误的问题
+- 修复模板三库合并时的覆盖、续做校验与路径边界问题；修复 Windows 短名路径导致模板库嵌套校验漏判
+- 修复 `mark-test` 把已删除文件算作测试覆盖证据的问题
+- 修复 YAML 解析器静默误读配置、`stages` 空数组被误判、非法配置提示不明确的问题
+- 修复 slug 推断、工具启用与计划文件路径判定的边界问题
+- 修复 hooks 在 SQL 重定向、heredoc、ANSI-C 参数等场景下的误报与漏报
+- 修复审查 triage 在项目内的调用路径与触发方向判定，避免轻量修复被误判为必审或跳过
+- 修复否定型 eval grader 误伤正确回答的问题
+- 修复 `status` 读取产物与统计改动时对缺失、损坏输入不够健壮的问题
+- 修复文档与实现不一致的描述，对齐技能参数契约与升级自检
+
+### 变更
+
+- `init` 默认只生成占位草稿，不再自动补全；需要智能补全时显式使用 `/devflow:init --draft`，最小上手路径变为 `init → req`
+- 规则草稿待填写从提醒降为 INFO，不阻断 `gen` / `doctor`，也不计入建议
+- `status` 未初始化与未配置路由时的首屏提示收敛，减少初始化前不可用的信息
+- 新增 `docs/quickstart.md`，README 与 `docs/README.md` 增加安装 → 初始化 → 第一个任务的最短路径入口；同步更新 `usage`、`maintenance`、`value-and-limits` 与 `development`
+- 插件版本升至 `1.7.0`；测试补充草稿、status 三态、doctor 模式矩阵、审查 triage、验收追踪、模板兼容与安全边界等回归用例
+
 ## 1.6.0
 
 ### 增强

@@ -160,6 +160,7 @@ function stageOf(files, testsPending, reviewRequired = false, substantive = new 
 
 export function buildStatus(root, { wanted = null, drift = true } = {}) {
   const state = readState(root);
+  const initialized = existsSync(join(root, '.claude', 'hub', 'hub.yaml'));
 
   let slugs = scanSlugs(root);
   if (wanted) {
@@ -283,6 +284,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
 
   const report = {
     root: posix(root),
+    initialized,
     activeSlug,
     inferred: Boolean(activeSlug && !wanted),
     slugs: rows,
@@ -318,6 +320,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   console.log(`devflow 状态（根：${report.root}）`);
+  // 三态首屏：未初始化只给入口引导，不展开路由与建议这类初始化后才有的信息。
+  if (!report.initialized && !report.slugs.length) {
+    console.log('  尚未初始化：运行 /devflow:init 创建工作区（.claude/hub、投影与规则草稿）。');
+    console.log('  新功能：/devflow:req <需求>（小改动加 --light）');
+    console.log('  修复缺陷：/devflow:debug <问题描述>');
+    return report;
+  }
   if (!report.slugs.length) {
     console.log('  未发现 docs/devflow/ 下的任务。');
     console.log('    新功能：/devflow:req <需求>（小改动加 --light）');
@@ -355,17 +364,25 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  未传 --slug 时默认使用：${report.activeSlug}`);
     }
   }
-  const tools = report.routing.availableTools.length
-    ? report.routing.availableTools.join('、')
-    : '无（运行 devflow route --detect 更新）';
-  console.log(`  路由：${report.routing.mode}${report.routing.configured ? '' : '（未配置）'}；可用工具：${tools}`);
+  // 未配置路由时只保留一行入口，避免和下方“提示”重复。
+  if (report.routing.configured) {
+    const tools = report.routing.availableTools.length
+      ? report.routing.availableTools.join('、')
+      : '无（运行 devflow route --detect 更新）';
+    console.log(`  路由：${report.routing.mode}；可用工具：${tools}`);
+  } else {
+    console.log('  路由：未配置（运行 /devflow:init 可启用工具路由）');
+  }
   if (report.state.lastTest) {
     const test = report.state.lastTest;
     console.log(`  最近测试：${test.status}${test.exitCode !== null ? `（exit ${test.exitCode}）` : ''}${test.durationMs !== null ? `，${test.durationMs}ms` : ''}`);
   }
-  const visibleSuggestions = report.slugs.length
-    ? report.suggestions
-    : report.suggestions.filter((s) => !s.startsWith('未发现进行中的任务'));
+  const visibleSuggestions = report.suggestions.filter((s) => {
+    if (!report.slugs.length && s.startsWith('未发现进行中的任务')) return false;
+    // 路由未配置时已由上面一行说明，不再重复提示。
+    if (!report.routing.configured && s.includes('ecosystem.yaml')) return false;
+    return true;
+  });
   for (const item of visibleSuggestions) console.log(`  提示：${item}`);
   return report;
 }

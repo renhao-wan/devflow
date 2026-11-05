@@ -40,13 +40,61 @@ function writeState(root, state) {
   writeFileSync(join(root, '.claude', '.devflow-state.json'), JSON.stringify(state));
 }
 
-test('status 在无任务时提示开始需求阶段', () => {
+function makeHub(root) {
+  const dir = join(root, '.claude', 'hub');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'hub.yaml'), 'version: 1\n');
+}
+
+test('status 在未初始化且无任务时首屏引导 init', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-uninit-'));
+  try {
+    const r = run(['--root', root]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /尚未初始化：运行 \/devflow:init/);
+    assert.match(r.stdout, /\/devflow:req/);
+    assert.match(r.stdout, /\/devflow:debug/);
+    // 未初始化时不展开路由与建议。
+    assert.doesNotMatch(r.stdout, /路由：/);
+    assert.doesNotMatch(r.stdout, /提示：/);
+
+    const json = run(['--root', root, '--json']);
+    assert.equal(json.json.initialized, false);
+    assert.equal(json.json.slugs.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 在已初始化但无任务时提示开始需求阶段', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-empty-'));
   try {
+    makeHub(root);
     const r = run(['--root', root]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /未发现 docs\/devflow\//);
     assert.match(r.stdout, /\/devflow:req/);
+    assert.doesNotMatch(r.stdout, /尚未初始化/);
+
+    const json = run(['--root', root, '--json']);
+    assert.equal(json.json.initialized, true);
+    assert.equal(json.json.slugs.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status 未配置路由时只输出一行入口', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-status-route-unconfigured-'));
+  try {
+    makeHub(root);
+    const dir = makeTask(root, 'one-task');
+    writeFileSync(join(dir, 'req.md'), '# req\n');
+
+    const r = run(['--root', root]);
+    assert.equal(r.status, 0, r.stderr);
+    const lines = r.stdout.split(/\r?\n/).filter((line) => /路由|ecosystem\.yaml/.test(line));
+    assert.deepEqual(lines, ['  路由：未配置（运行 /devflow:init 可启用工具路由）']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -457,6 +505,7 @@ test('status 在多任务下仍分别推断轻量与完整流程', () => {
 test('status 无任务时提示轻量与排障入口', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-status-empty-light-'));
   try {
+    makeHub(root);
     const r = run(['--root', root]);
     assert.match(r.stdout, /--light/);
     assert.match(r.stdout, /\/devflow:debug/);

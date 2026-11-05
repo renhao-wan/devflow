@@ -41,6 +41,8 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ## 快速开始
 
+最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。下面是完整步骤。
+
 ### 1. 初始化工作区
 
 在工作区根目录执行：
@@ -54,11 +56,11 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`），并创建 `_shared/`、`overrides/` 与 `stacks/`。
 2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令；探测到单一技术栈时自动写入顶层 `stack`。
 3. 在 `scripts/` 放八个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage` / `devflow-check` / `devflow-trace`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
-4. 生成规则草稿：`_shared/project-basics.md`，单栈时还有 `stacks/<stack>/_shared.md`。草稿里的 `TODO:` 是占位，不是规则。
+4. 生成规则草稿：`_shared/project-basics.md`，单栈时还有 `stacks/<stack>/_shared.md`。草稿里的 `TODO:` 是占位，不是规则；默认只生成、不补全，需要智能补全时用 `/devflow:init --draft`。
 5. 生成 `.claude/skills/devflow-*` 投影。
 6. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
-初始化后请检查 `.claude/hub/hub.yaml`，尤其是自动探测的测试命令；按提示填写草稿并删除首行 `<!-- devflow:draft -->`，再运行 `node scripts/devflow-gen.mjs`。之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
+初始化后可以直接用 `/devflow:req <需求>` 开始，规则草稿不阻塞流程。需要时再检查 `.claude/hub/hub.yaml`（尤其是自动探测的测试命令），填写草稿并删除首行 `<!-- devflow:draft -->`，然后运行 `node scripts/devflow-gen.mjs`；之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
 
 ### 2. 走一遍流程
 
@@ -98,7 +100,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 
 | 命令 | 作用 |
 | --- | --- |
-| `/devflow:init [--force] [--no-draft] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目、测试命令与单一技术栈，并生成规则草稿；库路径会记录到 `.devflow.json` |
+| `/devflow:init [--force] [--draft] [--no-draft] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目、测试命令与单一技术栈，并生成规则草稿；`--draft` 由技能智能补全草稿，`--no-draft` 跳过草稿；库路径会记录到 `.devflow.json` |
 | `/devflow:req <需求> [--light]` | 需求澄清，产出 `req.md`；`--light` 时合并为 `brief.md` |
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
 | `/devflow:implement <slug>` | 按计划或 `brief.md` 小步实现，测试先行 |
@@ -200,6 +202,7 @@ devflow 管**阶段与门禁**（阶段顺序、产物路径、项目真源、�
 
 | 场景 | 文档 |
 | --- | --- |
+| 安装、初始化与第一个任务的最短路径 | [docs/quickstart.md](docs/quickstart.md) |
 | 三层结构、目录职责、AI 读取时机、同步与回灌范围 | [docs/layers.md](docs/layers.md) |
 | 阶段细节、`hub.yaml`、多根工作区、statusline | [docs/usage.md](docs/usage.md) |
 | hooks、危险命令拦截与生成物保护 | [docs/hooks.md](docs/hooks.md) |

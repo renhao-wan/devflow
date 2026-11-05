@@ -1,6 +1,6 @@
 # 使用与配置
 
-面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md)。
+面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md) 和 [quickstart.md](quickstart.md)。
 
 ## 六个阶段
 
@@ -325,12 +325,15 @@ node scripts/devflow-doctor.mjs
 
 首次 `init` 会在生成投影之前写两类草稿：
 
-- `.claude/hub/_shared/project-basics.md`：所有阶段共用的项目基础规则。`init` 技能会读取项目概览与构建文件，尽量补全能从项目确认的内容，最多再问 3 个问题。
+- `.claude/hub/_shared/project-basics.md`：所有阶段共用的项目基础规则。
 - `.claude/hub/stacks/<stack>/_shared.md`：只在探测到单一技术栈、且 `hub.yaml` 自动声明了 `stack` 时生成。
 
-草稿首行是 `<!-- devflow:draft -->`，里面的 `TODO:` 是占位，不是规则。标记未删除时：`gen` 不把规则草稿纳入投影，`sync` 不覆盖，`upstream` 不回灌，`doctor` 统一提示待填写。草稿适用于 `_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`；阶段入口 `SKILL.md` 本身不能标记为草稿，否则 `gen` 会报错、`doctor` 会单独提示。填完后删除首行标记；新增文件或刚转正的草稿需要运行 `gen` 才会出现在投影的路径清单里，已在清单中的文件只改正文不需要。
+草稿默认只生成占位，不阻塞流程：初始化后可以直接运行 `/devflow:req <需求>`。需要智能补全时显式使用 `/devflow:init --draft`，技能才会读取项目概览与构建文件补全能从项目确认的内容，最多再问 3 个问题；`--draft` 与 `--no-draft` 互斥。
+
+草稿首行是 `<!-- devflow:draft -->`，里面的 `TODO:` 是占位，不是规则。标记未删除时：`gen` 不把规则草稿纳入投影，`sync` 不覆盖，`upstream` 不回灌，`doctor` 以 INFO 提示待填写且不计入提醒。`gen` 会输出未启用草稿的数量与路径（JSON 报告的 `drafts` 字段）。草稿适用于 `_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`；阶段入口 `SKILL.md` 本身不能标记为草稿，否则 `gen` 会报错、`doctor` 会单独提示。填完后删除首行标记；新增文件或刚转正的草稿需要运行 `gen` 才会出现在投影的路径清单里，已在清单中的文件只改正文不需要。
 
 - 重复 `init` 只补缺失的通用草稿，不覆盖已有草稿；`--force` 也不覆盖。
+- `--draft` 触发技能层智能补全；不传时只生成占位，之后仍可再次运行 `/devflow:init --draft`。
 - `--no-draft` 关闭草稿与自动 `stack`，适合已有明确配置或不想让 `init` 代填的项目。
 - 多技术栈不自动声明 `stack`，只生成通用草稿；日志会提示使用落位技能。
 - 不需要的草稿直接删除即可，不进入账本，也没有额外清理步骤。

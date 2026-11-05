@@ -10,7 +10,7 @@ import {
 import { mergeTexts } from './lib/upstream.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
-import { LOADERS } from './hub-init.mjs';
+import { LOADERS } from './lib/loaders.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 
 const HUB_PREFIX = '.claude/hub/';

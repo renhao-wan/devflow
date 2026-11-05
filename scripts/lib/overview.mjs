@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { readText, writeAtomic, ensureDir, loadHub, isPathInside, isRealPathInside, normalizeEol, sha256 } from './common.mjs';
 import { detectTechStack } from './discover.mjs';
+import { LOADERS } from './loaders.mjs';
 
 export const OVERVIEW_FILE = '.claude/hub/project-overview.md';
 export const AUTO_START = '<!-- devflow:auto:start -->';
@@ -9,6 +10,16 @@ export const AUTO_END = '<!-- devflow:auto:end -->';
 const FACTS_RE = /^<!-- devflow:facts:([a-f0-9]{64}) -->$/m;
 
 const SKIP_TOP = new Set(['.git', '.claude', 'node_modules', 'dist', 'build', 'target', 'coverage']);
+
+const LOADER_FILES = new Set(Object.keys(LOADERS));
+
+/** 只装有 devflow 薄 loader（或为空）的 scripts/ 是生成物，不算项目结构。 */
+function isLoaderOnlyDir(root, name) {
+  if (name !== 'scripts') return false;
+  const entries = safeReaddir(join(root, name));
+  // 只看顶层：出现任何非 loader 文件或子目录，就说明这里有真实源码，保留该目录。
+  return entries.every((entry) => entry.isFile() && LOADER_FILES.has(entry.name));
+}
 
 const ENTRY_CANDIDATES = [
   'src/index.js', 'src/main.js', 'src/app.js', 'index.js', 'main.js', 'app.js',
@@ -104,6 +115,7 @@ export function scanFacts(root, { subprojectPaths = [] } = {}) {
   }
   const topDirs = safeReaddir(root)
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_TOP.has(e.name))
+    .filter((e) => !isLoaderOnlyDir(root, e.name))
     .map((e) => e.name)
     .sort();
   const entrypoints = scanEntrypoints(root, ['.', ...subprojectPaths]);

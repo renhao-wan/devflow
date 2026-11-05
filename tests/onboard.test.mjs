@@ -41,6 +41,30 @@ test('scanFacts 识别构建文件、顶层目录与入口', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('scanFacts 不把只含 devflow loader 的 scripts/ 当作项目结构', () => {
+  const root = makeProject();
+  mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts', 'devflow-gen.mjs'), '// loader\n');
+  writeFileSync(join(root, 'scripts', 'devflow-doctor.mjs'), '// loader\n');
+  try {
+    assert.ok(!scanFacts(root).topDirs.includes('scripts'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('scanFacts 保留含真实源码的 scripts/', () => {
+  const root = makeProject();
+  mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts', 'devflow-gen.mjs'), '// loader\n');
+  writeFileSync(join(root, 'scripts', 'release.mjs'), '// 项目自己的脚本\n');
+  try {
+    assert.ok(scanFacts(root).topDirs.includes('scripts'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('技术栈包含子项目构建文件', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-sub-'));
   mkdirSync(join(root, '.claude', 'hub'), { recursive: true });

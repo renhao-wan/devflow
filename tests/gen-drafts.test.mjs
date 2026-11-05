@@ -64,6 +64,33 @@ test('gen 不把 overrides 与阶段资源草稿写进投影', () => {
   }
 });
 
+test('gen 以 INFO 报告未启用草稿，JSON 报告含 drafts', () => {
+  const root = makeRoot();
+  try {
+    init(root);
+    write(root, '.claude/hub/_shared/project-basics.md', `${DRAFT_MARKER}\n# 草稿\n`);
+
+    const gen = run('gen-claude-skills.mjs', ['--root', root], root);
+    assert.equal(gen.status, 0, gen.stdout + gen.stderr);
+    assert.match(gen.stdout, /\[INFO\] 1 个草稿未启用：\.claude\/hub\/_shared\/project-basics\.md/);
+
+    const checked = run('gen-claude-skills.mjs', ['--root', root, '--check'], root);
+    assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    assert.match(checked.stdout, /\[INFO\] 1 个草稿未启用/);
+
+    const json = run('gen-claude-skills.mjs', ['--root', root, '--json'], root);
+    assert.equal(json.status, 0, json.stdout + json.stderr);
+    const report = JSON.parse(json.stdout);
+    assert.deepEqual(report.drafts, {
+      unused: 1,
+      paths: ['.claude/hub/_shared/project-basics.md'],
+    });
+    assert.doesNotMatch(json.stdout, /\[INFO\]/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('阶段入口 SKILL.md 不允许草稿标记', () => {
   const root = makeRoot();
   try {

@@ -8,7 +8,8 @@ import {
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside, isDraft,
   warnUnknownArgs,
 } from './lib/common.mjs';
-import { LOADERS, loaderSource } from './hub-init.mjs';
+import { LOADERS, loaderSource } from './lib/loaders.mjs';
+import { COMMANDS } from './lib/cli-commands.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
 import {
   OVERVIEW_FILE, AUTO_START, AUTO_END, scanFacts, readHubFacts, factsFingerprint, readFactsFingerprint,
@@ -75,6 +76,172 @@ function readJson(file, fallback = null) {
   try { return JSON.parse(readText(file)); } catch { return fallback; }
 }
 
+const PLUGIN_STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
+
+// 建议按“先修工作区、再修配置、最后处理生成物与日常状态”的顺序排列。
+const HINT_RULES = [
+  (hint) => /^\/devflow:init\b/.test(hint),
+  (hint) => /^(修改|删除|把|在|填写|安装)/.test(hint),
+  (hint) => /\/devflow:sync\b/.test(hint),
+  (hint) => /scripts\/devflow-gen\.mjs/.test(hint),
+  (hint) => /\/devflow:onboard\b/.test(hint),
+  (hint) => /\/devflow:test\b/.test(hint),
+  (hint) => /devflow route --detect/.test(hint),
+  (hint) => /\/devflow:upstream\b/.test(hint),
+  (hint) => /claude plugin list/.test(hint),
+];
+
+export function hintPriority(hint) {
+  const index = HINT_RULES.findIndex((rule) => rule(hint));
+  return index === -1 ? HINT_RULES.length : index;
+}
+
+function shortenReason(text, max = 60) {
+  const value = String(text).replace(/\s+/g, ' ').trim();
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/** 按优先级输出建议；init 系列合并成一行，并在合并时保留触发原因。 */
+export function renderHints(hints) {
+  const groups = new Map();
+  for (const [hint, reasons] of hints) {
+    const key = /^\/devflow:init\b/.test(hint) ? '/devflow:init' : hint;
+    if (!groups.has(key)) groups.set(key, { hints: [], reasons: [] });
+    const group = groups.get(key);
+    if (!group.hints.includes(hint)) group.hints.push(hint);
+    group.reasons.push(...reasons);
+  }
+  return [...groups.values()]
+    .map((group) => ({ group, priority: Math.min(...group.hints.map(hintPriority)) }))
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ group }) => {
+      const label = group.hints.join('；或 ');
+      const reasons = [...new Set(group.reasons.map((reason) => shortenReason(reason)))];
+      // 只有一个原因时保持原有的一行建议，避免把提醒正文重复一遍。
+      if (reasons.length <= 1) return `建议：${label}`;
+      const shown = reasons.slice(0, 3);
+      const suffix = reasons.length > shown.length ? ` 等 ${reasons.length} 项` : '';
+      return `建议：${label}（${shown.join('；')}${suffix}）`;
+    });
+}
+
+/** 版本权威只认 plugin.json、package.json 与 marketplace 中 name 匹配的 plugins[].version。 */
+function checkPluginVersions(add, root, info) {
+  const pkg = readJson(join(root, 'package.json'));
+  const market = readJson(join(root, '.claude-plugin', 'marketplace.json'));
+  const entries = Array.isArray(market?.plugins) ? market.plugins : [];
+  const marketEntry = entries.find((entry) => entry?.name === info.name);
+  // marketplace 顶层的 metadata.version 是市场自身版本，不参与插件版本校验。
+  const sources = [
+    ['plugin.json', info.version],
+    ['package.json', pkg?.version],
+    ['marketplace plugins[]', marketEntry?.version],
+  ];
+  const missing = sources.filter(([, version]) => typeof version !== 'string' || !version);
+  if (missing.length) {
+    add('error', `版本来源缺失：${missing.map(([label]) => label).join('、')}`);
+    return;
+  }
+  const detail = sources.map(([label, version]) => `${label} ${version}`).join('，');
+  if (new Set(sources.map(([, version]) => version)).size === 1) {
+    add('ok', `插件版本一致：${detail}`);
+  } else {
+    add('error', `插件版本不一致：${detail}`);
+  }
+}
+
+function checkPluginHooks(add, pluginRoot) {
+  try {
+    const pluginHooks = join(pluginRoot, 'hooks', 'hooks.json');
+    if (existsSync(pluginHooks)) {
+      const h = readJson(pluginHooks, {});
+      const hookMap = h.hooks && typeof h.hooks === 'object' ? h.hooks : {};
+      const count = Object.values(hookMap).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
+      add('ok', `插件 hooks 已注册 ${count} 组`);
+
+      const requiredEvents = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart'];
+      for (const event of requiredEvents) {
+        if (!Array.isArray(hookMap[event]) || !hookMap[event].length) {
+          add('warn', `hooks.json 缺少事件 ${event}`, '确认插件安装完整：claude plugin list');
+        }
+      }
+
+      const commands = [];
+      for (const groups of Object.values(hookMap)) {
+        if (!Array.isArray(groups)) continue;
+        for (const group of groups) {
+          for (const hook of group?.hooks || []) {
+            if (typeof hook?.command === 'string') commands.push(hook.command);
+          }
+        }
+      }
+
+      for (const script of ['guard-dangerous.mjs', 'guard-generated.mjs', 'track-changes.mjs', 'prompt-reminder.mjs', 'subagent-note.mjs', 'check-tests.mjs', 'load-hub.mjs']) {
+        const p = join(pluginRoot, 'hooks', 'scripts', script);
+        if (!existsSync(p)) {
+          add('error', `缺少 hooks 脚本 ${script}`);
+        } else if (!commands.some((command) => command.includes(script))) {
+          add('warn', `hooks.json 未注册 ${script}`, '确认插件安装完整：claude plugin list');
+        }
+      }
+    } else {
+      add('warn', '插件未提供 hooks.json', '确认插件安装完整：claude plugin list');
+    }
+  } catch {
+    add('warn', '无法检查 hooks', '确认插件安装完整：claude plugin list');
+  }
+}
+
+/** 插件源码仓库自身的一致性；不读取任何项目工作区配置。 */
+function checkPluginRepo(add, root, info) {
+  checkPluginVersions(add, root, info);
+  checkPluginHooks(add, root);
+
+  const missingScripts = [...new Set(Object.values(COMMANDS).map(([file]) => file))]
+    .filter((file) => !existsSync(join(root, 'scripts', file)));
+  if (missingScripts.length) {
+    add('error', `CLI 命令脚本缺失：${missingScripts.map((file) => `scripts/${file}`).join('、')}`);
+  } else {
+    add('ok', `CLI 的 ${Object.keys(COMMANDS).length} 个子命令脚本齐全`);
+  }
+
+  const missingStages = PLUGIN_STAGES
+    .filter((stage) => !existsSync(join(root, 'templates', 'stages', stage, 'SKILL.md')));
+  if (missingStages.length) {
+    add('error', `阶段模板缺失：${missingStages.map((stage) => `templates/stages/${stage}/SKILL.md`).join('、')}`);
+  } else {
+    add('ok', `六个阶段模板齐全（${PLUGIN_STAGES.join('、')}）`);
+  }
+
+  const skillsDir = join(root, 'skills');
+  if (!existsSync(skillsDir)) {
+    add('error', '缺少 skills/ 目录');
+    return;
+  }
+  const bad = [];
+  let total = 0;
+  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    total += 1;
+    const file = join(skillsDir, entry.name, 'SKILL.md');
+    if (!existsSync(file)) {
+      bad.push(`${entry.name}（缺少 SKILL.md）`);
+      continue;
+    }
+    const text = readText(file);
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    const nameLine = frontmatter && /^name:\s*(\S+)\s*$/m.exec(frontmatter[1]);
+    if (!frontmatter) bad.push(`${entry.name}（缺少 frontmatter）`);
+    else if (!nameLine) bad.push(`${entry.name}（frontmatter 缺少 name）`);
+    else if (nameLine[1] !== entry.name) bad.push(`${entry.name}（name 为 ${nameLine[1]}）`);
+  }
+  if (bad.length) {
+    add('error', `技能 frontmatter 与目录不一致：${bad.join('、')}`);
+  } else {
+    add('ok', `${total} 个技能的 frontmatter name 与目录一致`);
+  }
+}
+
 /** 账本里的目标路径必须落在 skillsRoot 内，且真实路径不能借符号链接跳出项目。 */
 function safeManifestTarget(root, rel) {
   if (!rel || String(rel).startsWith('/') || String(rel).includes('..')) return null;
@@ -93,15 +260,72 @@ function safeManifestTarget(root, rel) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  warnUnknownArgs(argv, ['--root', '--json']);
+  warnUnknownArgs(argv, ['--root', '--json', '--mode']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
+  const requestedMode = argValue(argv, '--mode', 'auto');
+  if (!['auto', 'plugin', 'project'].includes(requestedMode)) {
+    throw new Error(`--mode 只支持 auto、plugin 或 project，当前为：${requestedMode}`);
+  }
   const rows = [];
-  const hints = new Set();
+  const hints = new Map();
+  const addHint = (hint, reason) => {
+    if (!hints.has(hint)) hints.set(hint, []);
+    if (reason) hints.get(hint).push(reason);
+  };
   const add = (status, message, hint) => {
     rows.push({ status, message });
-    if (hint) hints.add(hint);
+    if (hint) addHint(hint, message);
   };
+
+  let isPluginRepo = false;
+  try {
+    isPluginRepo = isValidPluginRoot(root) && pluginInfo(root).name === 'devflow';
+  } catch {
+    isPluginRepo = false;
+  }
+  const hasHub = existsSync(join(root, '.claude', 'hub', 'hub.yaml'));
+  // hub 工作区优先：插件仓库同时初始化了 devflow 时，按项目检查更有意义。
+  const mode = requestedMode === 'auto'
+    ? (hasHub || !isPluginRepo ? 'project' : 'plugin')
+    : requestedMode;
+  // auto 在双身份目录里只会走项目检查；显式提示另一条路径仍然可用。
+  if (requestedMode === 'auto' && hasHub && isPluginRepo) {
+    add('info', '检测到插件仓库同时是 devflow 项目；插件自检请用 --mode plugin');
+  }
+
+  const finish = () => {
+    if (json) {
+      console.log(JSON.stringify({ root: posix(root), mode, rows }, null, 2));
+    } else {
+      for (const r of rows) log(r.status, r.message);
+      const errors = rows.filter((r) => r.status === 'error').length;
+      const warns = rows.filter((r) => r.status === 'warn').length;
+      const infos = rows.filter((r) => r.status === 'info').length;
+      console.log(`\n${errors} 个错误，${warns} 个提醒，${infos} 条提示。`);
+      if (warns) for (const line of renderHints(hints)) console.log(line);
+    }
+    if (rows.some((r) => r.status === 'error')) process.exitCode = 1;
+    return rows;
+  };
+
+  if (mode === 'plugin') {
+    if (!isPluginRepo) {
+      add('error', `当前目录不是 devflow 插件源码仓库（需要 .claude-plugin/plugin.json 且 name 为 devflow）：${posix(root)}`);
+      return finish();
+    }
+    add('info', '插件源码仓库模式：跳过项目工作区配置检查');
+    let info;
+    try {
+      info = pluginInfo(root);
+      add('ok', `插件 ${info.name}@${info.version}（${posix(root)}）`);
+    } catch (err) {
+      add('error', err.message);
+      return finish();
+    }
+    checkPluginRepo(add, root, info);
+    return finish();
+  }
 
   const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
   let config = null;
@@ -162,8 +386,8 @@ export async function main(argv = process.argv.slice(2)) {
         '删除首行草稿标记后运行 node scripts/devflow-gen.mjs');
     }
     if (drafts.length) {
-      add('warn', `${drafts.length} 个规则草稿待填写：${drafts.join('、')}`,
-        '填写后删除首行的草稿标记；规则草稿不会进入投影、同步与回灌');
+      // 草稿是可选占位：保留 INFO，不再计入提醒与建议。
+      add('info', `${drafts.length} 个规则草稿待填写：${drafts.join('、')}`);
     } else {
       add('ok', '没有待填写的规则草稿');
     }
@@ -278,7 +502,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (libs.order.includes('personal')) {
         add('ok', `个人库：${posix(libs.personal.root)}`);
         if (!libs.personal.exists) {
-          add('warn', `个人库目录尚未创建：${posix(libs.personal.root)}`, '/devflow:upstream --to personal --stage <name> --apply');
+          add('info', `个人库目录尚未创建：${posix(libs.personal.root)}`);
         }
       } else {
         add('ok', '个人库未启用（templates.order 不含 personal）');
@@ -353,7 +577,7 @@ export async function main(argv = process.argv.slice(2)) {
         if (!actual) {
           add('warn', '项目概览缺少事实指纹，运行 /devflow:onboard 重建', '/devflow:onboard');
         } else if (actual !== expected) {
-          add('warn', '项目概览可能过期（项目结构已变化），运行 /devflow:onboard 刷新', '/devflow:onboard');
+          add('warn', '项目概览与当前结构不一致，运行 /devflow:onboard 重建', '/devflow:onboard');
         } else {
           add('ok', '项目概览与当前项目结构一致');
         }
@@ -450,7 +674,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (issues.length) {
       for (const issue of issues) add('warn', issue);
-      hints.add('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本；正文修改不需要重新生成');
+      addHint('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本；正文修改不需要重新生成');
     } else if (manifest.shared.length) {
       add('ok', `共享规则与账本一致（${manifest.shared.length} 个）`);
     }
@@ -500,45 +724,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
-  try {
-    const pluginHooks = join(pluginRoot, 'hooks', 'hooks.json');
-    if (existsSync(pluginHooks)) {
-      const h = readJson(pluginHooks, {});
-      const hookMap = h.hooks && typeof h.hooks === 'object' ? h.hooks : {};
-      const count = Object.values(hookMap).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
-      add('ok', `插件 hooks 已注册 ${count} 组`);
-
-      const requiredEvents = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart'];
-      for (const event of requiredEvents) {
-        if (!Array.isArray(hookMap[event]) || !hookMap[event].length) {
-          add('warn', `hooks.json 缺少事件 ${event}`, '确认插件安装完整：claude plugin list');
-        }
-      }
-
-      const commands = [];
-      for (const groups of Object.values(hookMap)) {
-        if (!Array.isArray(groups)) continue;
-        for (const group of groups) {
-          for (const hook of group?.hooks || []) {
-            if (typeof hook?.command === 'string') commands.push(hook.command);
-          }
-        }
-      }
-
-      for (const script of ['guard-dangerous.mjs', 'guard-generated.mjs', 'track-changes.mjs', 'prompt-reminder.mjs', 'subagent-note.mjs', 'check-tests.mjs', 'load-hub.mjs']) {
-        const p = join(pluginRoot, 'hooks', 'scripts', script);
-        if (!existsSync(p)) {
-          add('error', `缺少 hooks 脚本 ${script}`);
-        } else if (!commands.some((command) => command.includes(script))) {
-          add('warn', `hooks.json 未注册 ${script}`, '确认插件安装完整：claude plugin list');
-        }
-      }
-    } else {
-      add('warn', '插件未提供 hooks.json', '确认插件安装完整：claude plugin list');
-    }
-  } catch {
-    add('warn', '无法检查 hooks', '确认插件安装完整：claude plugin list');
-  }
+  checkPluginHooks(add, pluginRoot);
 
   const stateFile = join(root, '.claude', '.devflow-state.json');
   if (existsSync(stateFile)) {
@@ -556,17 +742,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
-  if (json) {
-    console.log(JSON.stringify({ root: posix(root), rows }, null, 2));
-  } else {
-    for (const r of rows) log(r.status, r.message);
-    const errors = rows.filter((r) => r.status === 'error').length;
-    const warns = rows.filter((r) => r.status === 'warn').length;
-    console.log(`\n${errors} 个错误，${warns} 个提醒。`);
-    if (warns) for (const hint of hints) console.log(`建议：${hint}`);
-  }
-  if (rows.some((r) => r.status === 'error')) process.exitCode = 1;
-  return rows;
+  return finish();
 }
 
 if (isMain(import.meta.url)) {
