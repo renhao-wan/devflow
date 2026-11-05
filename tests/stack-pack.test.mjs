@@ -27,6 +27,20 @@ test('仓库 URL 只接受白名单协议并拒绝凭据', () => {
   }
 });
 
+test('仓库 URL 错误消息不回显凭据', () => {
+  for (const input of [
+    'http://alice:s3cret@host/repo',
+    '-uhttp://alice:s3cret@host/repo',
+    'https://alice:s3cret@host/repo',
+    'ssh://alice:s3cret@host/repo',
+  ]) {
+    assert.throws(
+      () => normalizeRepoUrl(input),
+      (err) => err instanceof StackPackError && !err.message.includes('s3cret'),
+    );
+  }
+});
+
 test('repoCacheId 稳定且不含凭据', () => {
   const a = repoCacheId('https://github.com/org/devflow-stacks.git');
   const b = repoCacheId('https://github.com/org/devflow-stacks.git');

@@ -25,24 +25,24 @@ export function normalizeRepoUrl(input, { allowFile = false } = {}) {
   const raw = String(input ?? '').trim();
   if (!raw) throw new StackPackError('仓库 URL 不能为空', 'STACK_URL');
   if (raw.startsWith('-') || /^(ext|transport)::/i.test(raw)) {
-    throw new StackPackError(`不安全的仓库 URL：${raw}`, 'STACK_URL');
+    throw new StackPackError('不安全的仓库 URL', 'STACK_URL');
   }
   if (allowFile && LOCAL_PATTERN.test(raw)) {
-    if (raw.includes('..')) throw new StackPackError(`仓库路径不能包含 ..：${raw}`, 'STACK_URL');
+    if (raw.includes('..')) throw new StackPackError('仓库路径不能包含 ..', 'STACK_URL');
     return raw.replace(/\\/g, '/');
   }
   if (raw.startsWith('file://')) {
     throw new StackPackError('file:// 只能用于 --from 本地目录，不能作为可提交来源', 'STACK_URL');
   }
   if (!URL_PATTERN.test(raw)) {
-    throw new StackPackError(`仓库 URL 只允许 https://、ssh:// 或 git@host:：${raw}`, 'STACK_URL');
+    throw new StackPackError('仓库 URL 只允许 https://、ssh:// 或 git@host:', 'STACK_URL');
   }
   if (/^https?:\/\//i.test(raw)) {
     let url;
     try {
       url = new URL(raw);
     } catch {
-      throw new StackPackError(`仓库 URL 无法解析：${raw}`, 'STACK_URL');
+      throw new StackPackError('仓库 URL 无法解析', 'STACK_URL');
     }
     if (url.username || url.password) {
       throw new StackPackError('仓库 URL 不能包含用户名或密码', 'STACK_URL');
@@ -54,7 +54,7 @@ export function normalizeRepoUrl(input, { allowFile = false } = {}) {
     try {
       url = new URL(raw);
     } catch {
-      throw new StackPackError(`仓库 URL 无法解析：${raw}`, 'STACK_URL');
+      throw new StackPackError('仓库 URL 无法解析', 'STACK_URL');
     }
     if (url.password) {
       throw new StackPackError('仓库 URL 不能包含密码', 'STACK_URL');
