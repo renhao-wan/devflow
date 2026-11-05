@@ -114,6 +114,21 @@ function sharedRules(root) {
     .sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
+/** 草稿不会进入投影；统一统计，告诉用户哪些规则还没有启用。 */
+function unusedDrafts(root) {
+  const out = [];
+  for (const name of ['_shared', 'stages', 'stacks', 'overrides']) {
+    for (const abs of walk(join(root, '.claude', 'hub', name), '.md')) {
+      if (!isDraft(readText(abs))) continue;
+      const rel = relPosix(root, abs);
+      // 阶段入口草稿会让 buildSkill 报错，不重复计入“未启用草稿”。
+      if (/^\.claude\/hub\/stages\/[^/]+\/SKILL\.md$/.test(rel)) continue;
+      out.push(rel);
+    }
+  }
+  return out.sort();
+}
+
 /** 目标必须落在 .claude/skills/devflow-<stage>/ 内，且真实路径不能跳出项目（防 junction/符号链接）。 */
 function safeSkillTarget(root, rel) {
   if (!rel || rel.startsWith('/') || rel.includes('..')) return null;
@@ -261,6 +276,7 @@ export async function main(argv = process.argv.slice(2)) {
   const stagePlan = resolveStages(config, root);
   const stages = stagePlan.stages;
   const shared = sharedRules(root);
+  const drafts = unusedDrafts(root);
   const stackPlan = planStacks(root, config, stages);
   const results = [];
   const errors = [];
@@ -310,6 +326,7 @@ export async function main(argv = process.argv.slice(2)) {
     errors: errors.map((e) => e.error ?? e.detail ?? String(e)),
     written: [],
     skipped: [],
+    drafts: { unused: drafts.length, paths: drafts },
     check,
     dryRun,
   };
@@ -324,6 +341,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const s of stale) log('warn', `${s.name} 已过期，建议删除`);
       for (const e of errors) log('error', e.error);
       log(drift.length ? 'warn' : 'ok', drift.length ? `发现 ${drift.length} 处漂移` : '投影与 hub 一致');
+      if (drafts.length) log('info', `${drafts.length} 个草稿未启用：${drafts.join('、')}`);
     }
     if (drift.length || errors.length) process.exitCode = 1;
     return report;
@@ -334,6 +352,7 @@ export async function main(argv = process.argv.slice(2)) {
     else {
       for (const r of results) log('..', `将写入 ${r.target}`);
       for (const s of stale) log('..', `将删除 ${s.target || s.name}`);
+      if (drafts.length) log('info', `${drafts.length} 个草稿未启用：${drafts.join('、')}`);
     }
     return report;
   }
@@ -420,6 +439,7 @@ export async function main(argv = process.argv.slice(2)) {
   };
   writeAtomic(join(root, '.claude', '.hub-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   emit('ok', `生成 ${written.length} 个技能 → .claude/skills/`);
+  if (drafts.length) emit('info', `${drafts.length} 个草稿未启用：${drafts.join('、')}`);
   for (const e of errors) emit('error', e.error);
   if (errors.length) process.exitCode = 1;
 

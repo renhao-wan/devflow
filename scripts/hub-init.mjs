@@ -188,12 +188,14 @@ function writeDrafts(root, drafts) {
 
 export async function main(argv = process.argv.slice(2)) {
   warnUnknownArgs(argv, [
-    '--root', '--force', '--no-draft', '--plugin-root', '--source-root',
+    '--root', '--force', '--draft', '--no-draft', '--plugin-root', '--source-root',
     '--personal-library', '--team-library',
   ]);
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const force = hasFlag(argv, '--force');
+  const draft = hasFlag(argv, '--draft');
   const noDraft = hasFlag(argv, '--no-draft');
+  if (draft && noDraft) throw new Error('--draft 与 --no-draft 不能同时使用');
   const pluginRoot = resolve(argValue(argv, '--plugin-root', pluginRootFromScript()));
   const info = pluginInfo(pluginRoot);
   const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
@@ -219,7 +221,12 @@ export async function main(argv = process.argv.slice(2)) {
       const target = join(root, ...rel.split('/'));
       if (!existsSync(target)) {
         const { written } = writeDrafts(root, [{ rel, content: renderProjectBasicsDraft() }]);
-        if (written) log('ok', `补生成规则草稿 ${rel}`);
+        if (written) {
+          log('ok', `补生成规则草稿 ${rel}`);
+          log('info', draft
+            ? '规则草稿已生成；init 技能将按 --draft 补全 TODO'
+            : '草稿已生成；智能补全仅在 /devflow:init --draft 中执行');
+        }
       }
     }
     if (!existsSync(join(root, OVERVIEW_FILE))) {
@@ -291,6 +298,9 @@ export async function main(argv = process.argv.slice(2)) {
       const { written, preserved } = writeDrafts(root, planDrafts({ detected, stackName: stackForYaml }));
       if (written) log('ok', `生成 ${written} 个规则草稿（TODO 是占位，不是规则）`);
       if (preserved) log('ok', `保留已有草稿 ${preserved} 个`);
+      log('info', draft
+        ? '规则草稿已生成；init 技能将按 --draft 补全 TODO'
+        : '草稿已生成；智能补全仅在 /devflow:init --draft 中执行');
       if (autoStack) log('ok', `探测到单一技术栈 ${autoStack}，已写入 hub.yaml 的 stack`);
       else if (!existing.stack && detected.names.length > 1) {
         log('warn', `探测到多个技术栈（${detected.names.join('、')}），未自动声明 stack；可用 devflow-rule-placement 落位`);
@@ -374,11 +384,10 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', '初始化完成');
   }
   console.log('\n下一步：');
-  console.log('  1. 填写 .claude/hub/_shared/project-basics.md 中的 TODO（写完删除首行草稿标记）');
-  console.log('  2. 编辑 .claude/hub/stages/*/SKILL.md（阶段规范）');
-  console.log('  3. 技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
-  console.log('  4. node scripts/devflow-gen.mjs');
-  console.log('  5. node scripts/devflow-doctor.mjs');
+  console.log('  1. 直接开始：/devflow:req <需求>');
+  console.log('  2. （可选）填写 .claude/hub/_shared/project-basics.md 中的 TODO，并删除已填草稿首行的草稿标记');
+  console.log('  3. （可选）技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
+  console.log('  4. （可选）node scripts/devflow-gen.mjs 刷新投影，node scripts/devflow-doctor.mjs 体检');
   if (noDraft) {
     console.log('  （本次使用 --no-draft，没有生成规则草稿；去掉该参数重新运行 init 可生成）');
   }

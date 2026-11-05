@@ -272,6 +272,9 @@ gh auth login --web
 | 草稿里的 TODO 被当成规则 | 首行有 `<!-- devflow:draft -->` 的规则文件只是草稿（适用于 `_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`），`gen` 不会把它列入投影，`sync` 与 `upstream` 也会跳过；填写后删除首行标记，再运行 `gen` |
 | 阶段入口被当成草稿 | `stages/<stage>/SKILL.md` 不支持草稿标记；带标记时 `gen` 报错、`doctor` 单独提示，删除首行标记即可 |
 | 填写了草稿但投影或读取路径里没有它 | 删除首行标记后运行 `node scripts/devflow-gen.mjs`；新增文件或刚转正的草稿需要刷新路径清单，已在清单中的文件只改正文不需要 |
+| `init` 后草稿没有自动补全 | 预期行为：默认只生成占位、不补全，可以直接 `/devflow:req` 开始；需要补全时显式运行 `/devflow:init --draft` |
+| `gen` 报“N 个草稿未启用” | 这是 INFO，不是错误：这些文件仍带首行 `<!-- devflow:draft -->`，不会进入投影；填写后删除标记再运行 `gen`，或用 `--json` 看 `drafts.paths` 定位 |
+| `doctor` 提示待填写草稿但退出码为 0 | 草稿待填写以 INFO 呈现，不计入提醒；需要处理时填写并删除首行标记，不需要时直接删除文件 |
 | `sync` / `upstream` 报“目录只有草稿” | 先把草稿里的 TODO 换成真实规则并删除首行标记；草稿不会被同步覆盖，也不会被回灌 |
 | 重复 `init` 想重新生成草稿 | 已存在的草稿不会被覆盖，`--force` 也不覆盖；确需重置时先删除对应文件再运行 `init`，或删掉后运行 `--no-draft` 跳过 |
 | 自动声明的 `stack` 不对 | 改 `hub.yaml` 的 `stack`，并处理 `.claude/hub/stacks/<name>/` 目录；不需要的草稿直接删除，不进入账本，也没有额外清理步骤 |

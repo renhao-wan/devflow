@@ -52,9 +52,56 @@ test('单栈 init 自动声明 stack 并生成通用与栈草稿', () => {
 
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
-    assert.match(doctor.stdout, /2 个规则草稿待填写/);
+    // 草稿待填写是 INFO：正常展示，但不计入提醒与建议。
+    assert.match(doctor.stdout, /\[INFO\] 2 个规则草稿待填写/);
+    assert.match(doctor.stdout, /0 个错误，0 个提醒，/);
+    assert.doesNotMatch(doctor.stdout, /建议：/);
 
     assert.equal(run('gen-claude-skills.mjs', ['--root', root, '--check'], root).status, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('默认只生成草稿并提示智能补全需要 --draft', () => {
+  const root = makeRoot();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stdout + init.stderr);
+    assert.match(init.stdout, /草稿已生成；智能补全仅在 \/devflow:init --draft 中执行/);
+    assert.match(init.stdout, /1\. 直接开始：\/devflow:req <需求>/);
+    assert.match(init.stdout, /（可选）填写 \.claude\/hub\/_shared\/project-basics\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--draft 输出技能补全文案，已初始化时补草稿同样如此', () => {
+  const root = makeRoot();
+  try {
+    const first = run('hub-init.mjs', ['--root', root, '--draft'], root);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.match(first.stdout, /规则草稿已生成；init 技能将按 --draft 补全 TODO/);
+    assert.doesNotMatch(first.stdout, /智能补全仅在/);
+
+    // 已初始化分支补生成草稿时，也按 --draft 区分文案。
+    rmSync(join(root, '.claude', 'hub', '_shared', 'project-basics.md'), { force: true });
+    const again = run('hub-init.mjs', ['--root', root, '--draft'], root);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.match(again.stdout, /补生成规则草稿 \.claude\/hub\/_shared\/project-basics\.md/);
+    assert.match(again.stdout, /规则草稿已生成；init 技能将按 --draft 补全 TODO/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--draft 与 --no-draft 互斥', () => {
+  const root = makeRoot();
+  try {
+    const result = run('hub-init.mjs', ['--root', root, '--draft', '--no-draft'], root);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /--draft 与 --no-draft 不能同时使用/);
+    assert.equal(has(root, '.claude/hub/hub.yaml'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

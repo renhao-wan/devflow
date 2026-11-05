@@ -382,8 +382,8 @@ export async function main(argv = process.argv.slice(2)) {
         '删除首行草稿标记后运行 node scripts/devflow-gen.mjs');
     }
     if (drafts.length) {
-      add('warn', `${drafts.length} 个规则草稿待填写：${drafts.join('、')}`,
-        '填写后删除首行的草稿标记；规则草稿不会进入投影、同步与回灌');
+      // 草稿是可选占位：保留 INFO，不再计入提醒与建议。
+      add('info', `${drafts.length} 个规则草稿待填写：${drafts.join('、')}`);
     } else {
       add('ok', '没有待填写的规则草稿');
     }
