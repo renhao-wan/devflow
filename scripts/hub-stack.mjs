@@ -44,7 +44,7 @@ function runGen(root) {
   const res = spawnSync(process.execPath, [script, '--root', root], { encoding: 'utf8' });
   if (res.status !== 0) {
     log('warn', `安装已完成，但 gen 失败：${(res.stderr || res.stdout || '').trim()}`);
-    log('warn', '修正 hub.yaml 或栈声明后运行 node scripts/gen-claude-skills.mjs');
+    log('warn', '修正 hub.yaml 或栈声明后运行 node scripts/devflow-gen.mjs');
   }
 }
 
@@ -103,12 +103,14 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (command === 'add') {
     // 本地目录没有 ref，也不存在离线缓存语义；--offline 只对远程来源有意义。
-    const repo = argValue(argv, '--repo', process.env.DEVFLOW_STACK_REPO || null);
+    // 显式 --from 优先于环境变量默认值；只有两者都显式给出才算互斥。
     const from = argValue(argv, '--from', null);
+    const repoArg = argValue(argv, '--repo', null);
     const offline = hasFlag(argv, '--offline');
-    if (repo && from) throw new Error('--repo 与 --from 互斥');
+    if (repoArg && from) throw new Error('--repo 与 --from 互斥');
     if (from && hasOption(argv, '--ref')) throw new Error('--from 与 --ref 互斥');
     if (from && offline) throw new Error('--from 与 --offline 互斥');
+    const repo = from ? null : (repoArg || process.env.DEVFLOW_STACK_REPO || null);
     if (offline && !repo) throw new Error('--offline 只能与 --repo 搭配');
     if (!packId) throw new Error('缺少包名：devflow stack add <packId> --from <dir>');
     if (!from) {
