@@ -179,8 +179,9 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
   const rows = slugs.map((item) => {
     const pending = testsPending && item.slug === activeSlug;
     const flow = flowOf(item.files);
+    // triage 快照既用于轻量修复的流程判定，也用于完整流程的审查画像核对；只读一次。
+    const triage = triageOf(root, item.slug);
     // reviewRequired 只对轻量修复有意义：轻量功能始终 review，完整流程也会 review。
-    const triage = flow === 'light-bug' ? triageOf(root, item.slug) : null;
     const markerRequired = flow === 'light-bug' ? needsReview(root, item.slug) : false;
     // 显式标记优先于 triage 的跳过结论，避免后续补标记被旧快照覆盖。
     const reviewRequired = flow === 'light-bug'
@@ -191,7 +192,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     const fullTrace = traceFor(root, item.slug);
     // review.md 存在时校验内容；有未关闭阻断项或画像缺失时不能判完成。
     const reviewGate = item.files.includes('review.md') && (stage === 'done' || stage === 'review')
-      ? checkReviewReport(root, item.slug, { triage: triageOf(root, item.slug), trace: fullTrace })
+      ? checkReviewReport(root, item.slug, { triage, trace: fullTrace })
       : null;
     if (reviewGate && !reviewGate.ok && stage === 'done') stage = 'review';
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
@@ -203,7 +204,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       flow,
       reviewRequired,
       trace: trace.skipped ? null : trace,
-      reviewTriage: triage
+      reviewTriage: flow === 'light-bug' && triage
         ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
         : null,
       reviewGate: reviewGate
@@ -334,7 +335,9 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
       if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
-        console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${row.trace.gapIds.join('、')}`);
+        const ids = row.trace.gapIds.slice(0, 3).join('、');
+        const more = row.trace.gapIds.length > 3 ? ' 等' : '';
+        console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
       }
       console.log(`    下一步：${row.next}`);
       if (row.planDrift && !row.planDrift.skipped) {

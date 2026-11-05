@@ -42,7 +42,7 @@ function findJavaEntries(dir, maxDepth = 8) {
 }
 
 /** 在根与各子项目内启发式定位入口；输出相对项目根的 POSIX 路径。 */
-export function scanEntrypoints(root, dirs = ['.']) {
+function scanEntrypoints(root, dirs = ['.']) {
   const out = [];
   const seen = new Set();
   const add = (abs) => {
@@ -134,7 +134,7 @@ export function readHubFacts(root) {
   return { subprojects, rootTest };
 }
 
-export function buildAutoSection({ facts, subprojects, rootTest, now, full, fingerprint }) {
+function buildAutoSection({ facts, subprojects, rootTest, now, full, fingerprint }) {
   const lines = [
     AUTO_START,
     `> 本节由 devflow 自动生成（${now}），运行 \`/devflow:onboard\` 重扫会刷新，请勿手改。`,

@@ -12,7 +12,7 @@ export const ECOSYSTEM_FILE = '.claude/hub/ecosystem.yaml';
 export const STATE_FILE = '.claude/.ecosystem-state.json';
 
 /** 阶段对应的执行技法入口；用于把 invoke 模板里的 {capability} 替换成实际技能。 */
-export const STAGE_CAPABILITY = {
+const STAGE_CAPABILITY = {
   plan: 'brainstorming',
   implement: 'test-driven-development',
   test: 'verification-before-completion',
@@ -24,7 +24,7 @@ export const STAGE_CAPABILITY = {
  * 已知工具目录。detectSkills 对应技能目录名，detectPlugins 对应 settings.enabledPlugins 的键。
  * technique 只接管执行技法，workflow 会改变整个流程，因此 auto 模式只自动委派 technique。
  */
-export const CATALOG = {
+const CATALOG = {
   superpowers: {
     label: 'superpowers',
     kind: 'technique',
