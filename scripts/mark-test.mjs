@@ -55,14 +55,13 @@ function testCandidates(file) {
 /** 对每个源码改动文件列出可能受影响的已存在测试；只提示，不执行测试。 */
 export function findChangedTests(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
-  const paths = changes.files
-    .map((file) => String(file.path || '').replace(/\\/g, '/'))
-    // 已删除的文件不在工作区：它既不是需要补测试的改动，也不能当作覆盖证据。
-    .filter((path) => path && existsSync(join(root, path)));
-  const changedTestFiles = paths.filter((path) => TEST_FILE.test(path));
+  const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
+  // 已删除的文件不在工作区：不能作为覆盖证据或待运行测试，但仍计入改动统计。
+  const existing = paths.filter((path) => existsSync(join(root, path)));
+  const changedTestFiles = existing.filter((path) => TEST_FILE.test(path));
   const changedStems = new Set(changedTestFiles.map(subjectStem));
   const tests = new Set(changedTestFiles);
-  const sources = paths.filter(isSourceFile);
+  const sources = existing.filter(isSourceFile);
 
   const unmapped = [];
   for (const file of sources) {
@@ -93,12 +92,11 @@ export function findChangedTests(root, { base = null } = {}) {
 
 export function findTestGaps(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
-  const paths = changes.files
-    .map((file) => String(file.path || '').replace(/\\/g, '/'))
-    // 已删除的文件不在工作区：它既不是需要补测试的改动，也不能当作覆盖证据。
-    .filter((path) => path && existsSync(join(root, path)));
-  const changedTests = new Set(paths.filter((path) => TEST_FILE.test(path)).map(subjectStem));
-  const sources = paths.filter(isSourceFile);
+  const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
+  // 已删除的文件不在工作区：不能当作覆盖证据，但删除本身仍属于改动统计。
+  const existing = paths.filter((path) => existsSync(join(root, path)));
+  const changedTests = new Set(existing.filter((path) => TEST_FILE.test(path)).map(subjectStem));
+  const sources = existing.filter(isSourceFile);
 
   const gaps = [];
   const covered = [];
@@ -120,7 +118,7 @@ export function findTestGaps(root, { base = null } = {}) {
     stats: {
       changedFiles: paths.length,
       sourceFiles: sources.length,
-      changedTestFiles: paths.filter((path) => TEST_FILE.test(path)).length,
+      changedTestFiles: existing.filter((path) => TEST_FILE.test(path)).length,
     },
     warnings: changes.warnings,
     statsAvailable: changes.statsAvailable,

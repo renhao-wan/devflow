@@ -99,6 +99,28 @@ test('顶层目录只写目录名时也能按前缀匹配', () => {
   }
 });
 
+test('同一单元格用空格分隔多个文件时分别匹配', () => {
+  const root = makeRoot('devflow-drift-space-');
+  try {
+    writeFileSync(join(root, 'docs', 'devflow', 'demo', 'plan.md'), `# 计划
+
+## 任务拆分
+
+| # | 任务 | 涉及文件 | 验证方式 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 | 实现 | src/a.js src/b.js | 单测 | 待办 |
+`);
+    const drift = planDriftFor(root, 'demo', {
+      changes: changes(['src/a.js', 'src/b.js']),
+    });
+    assert.deepEqual(drift.planned, ['src/a.js', 'src/b.js']);
+    assert.deepEqual(drift.plannedButUnchanged, []);
+    assert.deepEqual(drift.unplannedChanged, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('轻量功能读取 brief.md 的改动范围表', () => {
   const root = makeRoot('devflow-drift4-');
   try {

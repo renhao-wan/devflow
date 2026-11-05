@@ -46,13 +46,7 @@ function planTable(root, slug) {
 function pathTokens(cell, root) {
   return String(cell || '')
     .split(/[、,，;；]+/)
-    .flatMap((part) => {
-      const whole = normalize(part);
-      if (!whole) return [];
-      // 以扩展名结尾时优先当作单个路径，避免把“my file.js”拆成两段。
-      if (/\.[a-z0-9]{1,8}$/i.test(whole)) return [whole];
-      return whole.split(/\s+/).map(normalize).filter(Boolean);
-    })
+    .flatMap((part) => normalize(part).split(/\s+/).map(normalize).filter(Boolean))
     .filter((token) => token && !IGNORED.test(token))
     // 带 `/`、带扩展名，或确实存在于项目根目录的条目才算路径；
     // 只写 `src` 这样的顶层目录也要能识别，普通说明词仍被排除。

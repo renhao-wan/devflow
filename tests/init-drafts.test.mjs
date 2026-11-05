@@ -204,3 +204,21 @@ test('--force 不会用模板库同名文件覆盖草稿', () => {
     rmSync(library, { recursive: true, force: true });
   }
 });
+
+test('hub.yaml 损坏时 --force 先备份再重建', () => {
+  const root = makeRoot();
+  try {
+    assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
+    const hub = join(root, '.claude', 'hub', 'hub.yaml');
+    const broken = 'version: 1\nstages: [req]\nstages: [plan]\n';
+    writeFileSync(hub, broken);
+
+    const forced = run('hub-init.mjs', ['--root', root, '--force'], root);
+    assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+    assert.match(forced.stdout, /已备份/);
+    assert.equal(readFileSync(`${hub}.bak`, 'utf8'), broken);
+    assert.match(read(root, '.claude/hub/hub.yaml'), /^stages:$/m);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

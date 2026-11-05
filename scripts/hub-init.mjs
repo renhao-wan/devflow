@@ -274,7 +274,19 @@ export async function main(argv = process.argv.slice(2)) {
     ensureDir(join(root, '.claude', 'hub', '_shared'));
     ensureDir(join(root, '.claude', 'hub', 'overrides'));
     ensureDir(join(root, '.claude', 'hub', 'stacks'));
-    const existing = existsSync(hubFile) ? parseYaml(readText(hubFile)) : {};
+    let existing = {};
+    if (existsSync(hubFile)) {
+      try {
+        existing = parseYaml(readText(hubFile));
+      } catch (err) {
+        // --force 是配置损坏后的恢复入口：解析失败时不能直接退出。
+        // 先备份原文件再按空配置重建，避免用户在无提示的情况下丢失配置。
+        const backup = `${hubFile}.bak`;
+        copyFileSync(hubFile, backup);
+        log('warn', `无法解析 .claude/hub/hub.yaml（${err.message}），已备份到 .claude/hub/hub.yaml.bak 并重建`);
+      }
+    }
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) existing = {};
     const previousSubs = existing.subprojects && typeof existing.subprojects === 'object'
       && !Array.isArray(existing.subprojects)
       ? existing.subprojects
