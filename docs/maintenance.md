@@ -151,7 +151,7 @@ templates:
 /devflow:sync
 ```
 
-判定依据是 `.claude/.hub-sources.json`（schema v3）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local, source }`，`source` 标明内容来自 `team`、`personal` 还是 `upstream`。同步按 `hub.yaml` 的 `templates.order` 读取所有启用库，同名文件先到先得、整文件覆盖；项目里的手改仍由基线快照做三方合并保留。旧项目没有 `templates` 块时只读上游，行为不变；v2 账本会在下次 `sync` 自动升级到 v3。同步不会从 `pluginSourceRoot` 拉未发布模板。`stages/`、`_shared/` 与 `stacks/` 都会同步。
+判定依据是 `.claude/.hub-sources.json`（schema v3）与 `.claude/.hub-bases/` 快照：账本为每个文件记录 `{ base, local, source }`，`source` 标明内容来自 `team`、`personal` 还是 `upstream`。同步按 `hub.yaml` 的 `templates.order` 读取所有启用库，同名文件先到先得、整文件覆盖；项目里的手改仍由基线快照做三方合并保留。旧项目没有 `templates` 块时只读上游，行为不变；v2 账本会在下次 `sync` 自动升级到 v3。同步不会从 `pluginSourceRoot` 拉未发布模板。`stages/`、`_shared/` 与 `stacks/` 都会同步。首行带 `<!-- devflow:draft -->` 的项目草稿不参与同步，`--force` 也不覆盖。
 
 | 情况 | 行为 |
 | --- | --- |
@@ -161,6 +161,7 @@ templates:
 | 来源切换但模板内容相同 | 保留本地内容，只把账本的 `source` 更新为高优先库 |
 | 本地与模板都改过，且有基线快照 | `git merge-file` 三方合并：无冲突则写入合并结果并报告「自动合并」 |
 | 三方合并冲突 | 保留本地内容并报告冲突，手工合并后重跑 |
+| 首行带 `<!-- devflow:draft -->` 的项目草稿 | 保留草稿，跳过同步；`--force` 也不覆盖 |
 | `--force` | 跳过合并直接用模板覆盖，覆盖前生成 `.bak-<时间戳>` 备份 |
 | 模板新增的资源文件 | 直接补入 |
 | 高优先库删除同名文件 | 回落到下一来源；所有库都不再提供时才从账本移除，本地文件保留 |
@@ -267,7 +268,15 @@ gh auth login --web
 | 不知道当前做到哪一步 | 运行 `/devflow:status`；它只读推导阶段并给出下一步命令，不修改状态 |
 | 投影漂移 / 手改提示 | 改源文件后运行 `node scripts/devflow-gen.mjs`，不要改投影 |
 | 编辑投影/账本被拒绝 | `guard-generated` 阻止手改生成物；改 `.claude/hub/stages/` 后重新生成，或重跑 `/devflow:init` 刷新 loader |
-| Stop 提示 hub 源改动未生成 | 运行 `node scripts/devflow-gen.mjs` 重新生成投影；之后提醒会自动消失 |
+| Stop 提示 hub 源改动未生成 | 只改已有规则正文时，投影只记录路径，可以只运行 `node scripts/devflow-doctor.mjs` 检查；新增/删除规则文件或修改 `hub.yaml` 后运行 `node scripts/devflow-gen.mjs`，提醒随后消失 |
+| 草稿里的 TODO 被当成规则 | 首行有 `<!-- devflow:draft -->` 的规则文件只是草稿（适用于 `_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`），`gen` 不会把它列入投影，`sync` 与 `upstream` 也会跳过；填写后删除首行标记，再运行 `gen` |
+| 阶段入口被当成草稿 | `stages/<stage>/SKILL.md` 不支持草稿标记；带标记时 `gen` 报错、`doctor` 单独提示，删除首行标记即可 |
+| 填写了草稿但投影或读取路径里没有它 | 删除首行标记后运行 `node scripts/devflow-gen.mjs`；新增文件或刚转正的草稿需要刷新路径清单，已在清单中的文件只改正文不需要 |
+| `sync` / `upstream` 报“目录只有草稿” | 先把草稿里的 TODO 换成真实规则并删除首行标记；草稿不会被同步覆盖，也不会被回灌 |
+| 重复 `init` 想重新生成草稿 | 已存在的草稿不会被覆盖，`--force` 也不覆盖；确需重置时先删除对应文件再运行 `init`，或删掉后运行 `--no-draft` 跳过 |
+| 自动声明的 `stack` 不对 | 改 `hub.yaml` 的 `stack`，并处理 `.claude/hub/stacks/<name>/` 目录；不需要的草稿直接删除，不进入账本，也没有额外清理步骤 |
+| 多技术栈没有自动写 `stack` | 预期行为：`init` 只在探测到单一技术栈时自动声明；手动写入顶层或子项目级 `stack`，不确定规则放哪时用 `devflow-rule-placement` |
+| 有 `Makefile` 的项目没有自动写 `stack` | `Makefile` 作为辅助栈处理，只有它是唯一栈时才按 `make` 判定；确认没有其他构建文件，或手动写 `stack` |
 | 账本中有过期技能 | 运行 `node scripts/devflow-gen.mjs` 自动清理 |
 | doctor 报阶段资源缺失 | 恢复资源文件，或重新生成；必要时从插件模板复制 |
 | doctor 报测试命令依赖缺失 | `testCommand` 用到的工具不在 `PATH`；安装工具或修正命令 |

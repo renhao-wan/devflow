@@ -11,7 +11,7 @@
 
 > **状态说明**
 >
-> `stages/`、`_shared/`、`overrides/`、`stacks/` 均已实现：入口先读项目投影，投影内联 `_shared/`、列出 `overrides/` 与 `stacks/` 映射；`stacks/` 参与同步、回灌与 `doctor` 校验。
+> `stages/`、`_shared/`、`overrides/`、`stacks/` 均已实现：入口先读项目投影，投影只记录 `_shared/`、`overrides/` 与 `stacks/` 的路径，正文在执行阶段惰性读取；`stacks/` 参与同步、回灌与 `doctor` 校验。`init` 可生成规则草稿，探测到单一技术栈时会自动声明 `stack`。
 
 ## 1. 三层是什么
 
@@ -74,7 +74,7 @@
 ### 三层的关系
 
 - 第 1 层是“出厂默认”，第 2 层是“项目定制”，第 3 层是“给 AI 用的出口”。
-- 改规则只改第 2 层，然后重新生成第 3 层。
+- 改规则只改第 2 层。新增/删除规则文件或修改 `hub.yaml` 后重新生成第 3 层；只改已有规则正文不需要重新生成，投影只记录路径。
 - 第 1 层的 `templates/` 只是第 2 层的来源之一；`init` 之后，项目以第 2 层为准。
 - 没有第 2 层时，阶段命令会提示先运行 `/devflow:init`。
 
@@ -99,7 +99,7 @@
 
 这是第二层最核心的目录：每个阶段“做什么、产出什么、过什么门禁”都写在这里。`init` 会从模板库复制六个阶段，通常只需要改 `SKILL.md`；需要展开细则或产出骨架时，再在阶段目录下增删 `references/` 与 `templates/`。
 
-AI 进入阶段时才读 `SKILL.md`；`references/`、`templates/` 不预读，等规则正文或任务需要时再打开。改完源文件后运行 `gen`，投影才会更新。它参与同步（对应库里的 `templates/stages/`），也参与回灌（`--stage <name>` 或 `--all`）。
+AI 进入阶段时才读 `SKILL.md`；`references/`、`templates/` 不预读，等规则正文或任务需要时再打开。新增/删除阶段资源会改变投影的资源清单，需要运行 `gen`；只改已有文件正文不需要，投影只记录相对路径。它参与同步（对应库里的 `templates/stages/`），也参与回灌（`--stage <name>` 或 `--all`）。
 
 注意：不要为了“让 AI 一定看到”把细则全塞进 `SKILL.md`，按需读取的内容放进 `references/` 更省上下文。
 
@@ -110,9 +110,11 @@ AI 进入阶段时才读 `SKILL.md`；`references/`、`templates/` 不预读，�
 
 ### 2.2 `_shared/`
 
-这里放安全底线、提交约定、通用错误处理这类与具体阶段无关的规则。`init` 只创建目录和 `.gitkeep`，内容由你添加。
+这里放安全底线、提交约定、通用错误处理这类与具体阶段无关的规则。`init` 会生成 `project-basics.md` 草稿（首行 `<!-- devflow:draft -->`），填写后删除标记才算规则；也可以直接新增 `<topic>.md`。
 
-它不在会话启动时读取，也不在阶段执行时单独读取；`gen` 会把它**内联**进每个阶段的投影，所以改完必须重新生成。同步对应库里的 `templates/shared/`，回灌用 `--shared` 或 `--all`。
+投影只列出这些文件的路径，不内联正文：改已有文件正文后，下次执行阶段会直接读到新内容，不需要重新生成；新增/删除文件、或把草稿转成正式规则后需要 `gen`（投影清单变化）。`_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/` 中的草稿不会进入投影、同步与回灌；阶段入口 `SKILL.md` 本身不能标记为草稿。同步对应库里的 `templates/shared/`，回灌用 `--shared` 或 `--all`。
+
+不确定一条规则该放哪时，使用 `devflow-rule-placement` 技能判断落位。
 
 ### 2.3 `overrides/`
 
@@ -161,7 +163,7 @@ AI 进入阶段时才读 `SKILL.md`；`references/`、`templates/` 不预读，�
 
 `_shared.md` 对该栈的所有阶段生效，`<stage>.md` 只对该阶段生效，`references/` 放按需引用的细则。
 
-在 `hub.yaml` 里用顶层 `stack` 声明默认栈，用 `subprojects.<name>.stack` 覆盖；子项目省略时继承。投影只记录“子项目 → 栈 → 文件路径”的映射，不内联正文，所以改栈文件**内容**不需要重新生成；新增/删除栈文件或修改映射才需要。
+在 `hub.yaml` 里用顶层 `stack` 声明默认栈，用 `subprojects.<name>.stack` 覆盖；子项目省略时继承。投影只记录“子项目 → 栈 → 文件路径”的映射，不内联正文，所以改栈文件**内容**不需要重新生成；新增/删除栈文件或修改映射才需要。`init` 探测到单一技术栈时会自动写顶层 `stack` 并生成该栈的 `_shared.md` 草稿；草稿不进入投影，填写后删除首行标记再运行 `gen`。
 
 它参与同步（对应 `templates/stacks/`），也参与回灌（`--stack <name>` 或 `--all`）。栈目录缺失、栈名非法、`stack` 不是字符串都会让 `gen` 与 `doctor` 报错，此时 `gen` 仍会写出带「缺失」「名称非法」或「配置无效」标记的投影与账本，但退出码为 1；目录存在但没有任何 `.md` 时只提醒。
 
@@ -216,8 +218,6 @@ templates:
 
 它是派生文档，不是规则真源，以代码和 `hub.yaml` 为准；不参与同步与回灌。
 
-它是派生文档，不是规则真源；以代码和 `hub.yaml` 为准。
-
 ### 2.7 `ecosystem.yaml`
 
 登记 superpowers、BMAD、Spec Kit 等同类工具与路由模式。阶段入口运行 `hub-route.mjs` 时读取；`init` 会生成默认配置，不同项目可以各自调整，因此不参与同步与回灌。
@@ -246,11 +246,12 @@ templates:
 ② 用户进入阶段
    /devflow:plan
      → 加载项目投影 devflow-plan
-     → 投影内联 _shared
+     → 投影列出 _shared 文件路径
      → 投影要求读取 .claude/hub/stages/plan/SKILL.md
      → 投影列出阶段资源与子项目覆盖
 
 ③ 执行阶段
+   先完整读取投影列出的 _shared 文件
    按需读取 references/、templates/
    处理某个子项目时读取 overrides/<sub>/<stage>.md
    再读取 stacks/<stack>/<stage>.md 与 stacks/<stack>/_shared.md
@@ -267,11 +268,11 @@ templates:
 1. **会话启动**：`load-hub.mjs` 注入摘要（阶段、子项目、技术栈、投影漂移），并返回 `reloadSkills: true`；不读取模板正文。
 2. **进入阶段**：加载插件入口 `skills/<stage>/SKILL.md`。
 3. **入口先读项目投影** `.claude/skills/devflow-<stage>/SKILL.md`。
-   - 投影内联 `_shared/`；
+   - 投影列出 `_shared/` 文件路径（不内联正文）；
    - 投影列出 `overrides/<sub>/<stage>.md`；
    - 投影给出“子项目 → 栈 → 本阶段规范/通用规范”映射。
 4. **按投影指令读取 hub 源** `.claude/hub/stages/<stage>/SKILL.md`。
-5. **执行阶段**按需读取该阶段的 `references/`、`templates/`；处理子项目时再惰性读取 `overrides/` 与 `stacks/`。
+5. **执行阶段**先完整读取投影列出的 `_shared/` 文件，再按需读取阶段 `references/`、`templates/`；处理子项目时再惰性读取 `overrides/` 与 `stacks/`。
 
 缺失时的回退：
 
@@ -336,6 +337,8 @@ stages/<stage>/SKILL.md 中非门禁的默认做法（最低）
 | review 必须有测试证据 | `stages/review/SKILL.md`，技术栈不得放宽 |
 | plan 的方案结构 | `stages/plan/SKILL.md`，技术栈不得改产出结构 |
 
+不确定某条规则该放哪、或同一规则已在多处出现时，使用 `devflow-rule-placement` 技能；它按“最小充分范围”判断落位并检查是否需要重新生成。
+
 ## 5. 同步与回灌
 
 ### 5.1 两个方向
@@ -369,7 +372,7 @@ stages/<stage>/SKILL.md 中非门禁的默认做法（最低）
 | `project-overview.md` | 否 | 派生文档 |
 | `ecosystem.yaml` | 否 | 项目级工具索引 |
 
-默认来源顺序是团队 > 个人 > 上游（未启用团队库时个人 > 上游），上游兜底。项目里的手改由基线快照做三方合并保留。
+默认来源顺序是团队 > 个人 > 上游（未启用团队库时个人 > 上游），上游兜底。项目里的手改由基线快照做三方合并保留。首行带 `<!-- devflow:draft -->` 的文件是项目草稿，`sync` 不会覆盖，`--force` 也不覆盖。
 
 ### 5.3 回灌：项目 → 库
 
@@ -386,7 +389,7 @@ stages/<stage>/SKILL.md 中非门禁的默认做法（最低）
 | 目标 | `--to upstream` | 上游插件源码仓库 |
 | 修饰 | `--pr` | 团队库或上游库走分支、提交、推送、PR |
 
-`stacks/` 与阶段、共享规则一样可以回灌；技术栈名同样受 `[a-z0-9][a-z0-9_-]*` 约束，`ship` 会把内容写入 `templates/stacks/<name>/`。
+`stacks/` 与阶段、共享规则一样可以回灌；技术栈名同样受 `[a-z0-9][a-z0-9_-]*` 约束，`ship` 会把内容写入 `templates/stacks/<name>/`。回灌会跳过草稿；目录里只有草稿时直接报错，提示先填写并删除首行标记。
 
 ### 5.4 哪些内容永远不回灌
 
@@ -403,7 +406,7 @@ stages/<stage>/SKILL.md 中非门禁的默认做法（最低）
 1. 在目标项目的 `hub.yaml` 配置 `templates.order`；
 2. 运行 `/devflow:sync`；
 3. 运行 `/devflow:doctor` 确认无漂移；
-4. 重新生成投影后，新规则才会进入 AI 的读取路径。
+4. 如果同步带来的是新增文件，重新生成投影后它才会进入 AI 的读取路径；已有文件的正文不需要重新生成。
 
 回灌只更新库，不会直接修改其他项目的 hub。
 
@@ -450,7 +453,7 @@ node scripts/devflow-doctor.mjs
 
 **hub 创建后是空的吗？**
 
-不是。`init` 会复制六个阶段的完整默认规则，并生成 `hub.yaml` 与项目概览。`_shared/`、`overrides/`、`stacks/` 默认空，按需添加。
+不是。`init` 会复制六个阶段的完整默认规则，并生成 `hub.yaml`、项目概览与规则草稿：`_shared/project-basics.md`，探测到单一技术栈时还有 `stacks/<stack>/_shared.md`。`overrides/` 默认空，按需添加。
 
 **刚安装插件，项目里有什么？**
 
@@ -458,15 +461,15 @@ node scripts/devflow-doctor.mjs
 
 **为什么要有第三层，不能直接读 `.claude/hub/`？**
 
-第三层提供技能发现、`_shared/` 内联、资源清单和漂移检测。它也是 Claude Code 加载技能的入口。
+第三层提供技能发现、规则路径清单、资源清单和漂移检测。它也是 Claude Code 加载技能的入口。
 
 **改规则后要做什么？**
 
-改第 2 层，运行 `devflow-gen`，再运行 `devflow-doctor`。不要手改第 3 层。
+改第 2 层。新增/删除规则文件或修改 `hub.yaml`（阶段、子项目、`stack` 映射）后运行 `devflow-gen`；只改已有规则正文不需要重新生成，但建议运行 `devflow-doctor` 检查漂移、草稿与越界。不要手改第 3 层。
 
-**为什么 `_shared/` 改了但没生效？**
+**`_shared/` 改了但没生效？**
 
-`_shared/` 在 `devflow-gen` 运行时被内联进项目投影。改完要重新运行 `node scripts/devflow-gen.mjs`（或 `devflow sync`）。
+先确认首行是否还有 `<!-- devflow:draft -->`：有标记时它只是草稿，不会进入投影、同步与回灌。删除标记后，如果投影里还没有列出该文件路径（新增文件或刚转正），运行 `node scripts/devflow-gen.mjs` 刷新路径清单；路径已在投影中时，下次进入阶段会直接读取最新正文。
 
 **`overrides/` 为什么没被同步或回灌？**
 
@@ -475,6 +478,6 @@ node scripts/devflow-doctor.mjs
 ## 8. 当前边界
 
 1. **`stacks/` 是机制，不是规范库**：不内置 Java/Vue 等具体栈正文；内容由个人库、团队库或项目自己维护。
-2. **不自动探测技术栈**：`stack` 是项目声明，避免探测结果指向不存在的栈目录。
+2. **技术栈声明不做猜测**：`init` 只在探测到单一技术栈时自动写 `stack`；多栈、未知栈或 `--no-draft` 时保持为空，由项目自行声明。
 3. **不做内容级自动合并**：优先级是确定性读取顺序，生成器与 `doctor` 只校验映射是否有效。
 4. **不回灌项目配置**：`overrides/`、`hub.yaml`、`project-overview.md`、`ecosystem.yaml` 不同步也不回灌。
