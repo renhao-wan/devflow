@@ -38,7 +38,8 @@ function projectFileRel(payload) {
   const posix = rel.split('\\').join('/');
   // 跨盘符或指向项目外时不介入。
   if (isAbsolute(rel) || posix.startsWith('../') || posix === '..') return null;
-  return posix;
+  // Windows/macOS 文件系统大小写不敏感，生成物匹配也必须不敏感，否则 .CLAUDE/.hub-manifest.json 可绕过。
+  return process.platform === 'win32' || process.platform === 'darwin' ? posix.toLowerCase() : posix;
 }
 
 function reason(rel) {
