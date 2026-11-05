@@ -539,7 +539,7 @@ function sleepSync(ms) {
  * 用独占锁文件串行化状态读改写，避免多个进程互相覆盖。
  * 锁超过 staleMs 视为残留；等待超时后降级为无锁执行，不能让维护脚本卡死。
  */
-export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 15000 } = {}) {
+export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 15000, failClosed = false } = {}) {
   const lock = `${file}.lock`;
   const deadline = Date.now() + timeoutMs;
   let acquired = false;
@@ -550,14 +550,21 @@ export function withFileLock(file, fn, { timeoutMs = 2000, staleMs = 15000 } = {
       acquired = true;
       break;
     } catch (err) {
-      if (err.code !== 'EEXIST') break;
+      // 非 EEXIST（权限、磁盘错误等）同样不能静默降级为无锁执行。
+      if (err.code !== 'EEXIST') {
+        if (failClosed) throw err;
+        break;
+      }
       try {
         if (Date.now() - statSync(lock).mtimeMs > staleMs) {
           rmSync(lock, { force: true });
           continue;
         }
       } catch { /* 锁刚被释放，重试 */ }
-      if (Date.now() >= deadline) break;
+      if (Date.now() >= deadline) {
+        if (failClosed) throw new Error(`获取锁超时：${lock}`);
+        break;
+      }
       sleepSync(15);
     }
   }
