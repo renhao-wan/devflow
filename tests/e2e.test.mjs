@@ -529,11 +529,11 @@ test('doctor 对未启用个人库的项目不误报个人库目录', () => {
   try {
     assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
     const hub = join(root, '.claude', 'hub', 'hub.yaml');
-    writeFileSync(hub, `${readFileSync(hub, 'utf8')}\n`
-      + 'templates:\n'
-      + '  order: [upstream]\n'
-      + '  personal:\n'
-      + '    enabled: false\n');
+    // 原地修改已有 templates 块：重复键现在会被解析器拒绝。
+    const yaml = readFileSync(hub, 'utf8')
+      .replace(/^(templates:\n  order: )\[[^\]]*\]/m, '$1[upstream]')
+      .replace(/(^  personal:\n    enabled: )true/m, '$1false');
+    writeFileSync(hub, yaml);
 
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);

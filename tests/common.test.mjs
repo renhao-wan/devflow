@@ -49,6 +49,20 @@ test('parseYaml 拒绝无法解析的行', () => {
   assert.throws(() => parseYaml('version: 1\nthis is not yaml\n'), /无法解析/);
 });
 
+test('parseYaml 拒绝重复键与静默丢弃的剩余行', () => {
+  assert.throws(() => parseYaml('version: 1\nversion: 2\n'), /重复键：version/);
+  // 块标量尚未支持时不能当成普通字符串后丢弃正文。
+  assert.throws(() => parseYaml('note: |\n  第一行\n  第二行\n'), /第 2 行.*不受支持/);
+  assert.throws(() => parseYaml('a: 1\n  b: 2\n'), /第 2 行.*不受支持/);
+});
+
+test('parseYaml 支持与父键同缩进的块列表和带逗号的行内列表', () => {
+  const sameIndent = parseYaml('stages:\n- req\n- plan\n');
+  assert.deepEqual(sameIndent.stages, ['req', 'plan']);
+  const inline = parseYaml('order: ["team,inner", personal]\n');
+  assert.deepEqual(inline.order, ['team,inner', 'personal']);
+});
+
 test('parseFrontmatter 处理普通值与折叠符号', () => {
   const plain = parseFrontmatter('---\nname: devflow-req\ndescription: 一句话描述\n---\nbody');
   assert.equal(plain.name, 'devflow-req');

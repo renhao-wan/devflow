@@ -238,10 +238,17 @@ export function parseYaml(text) {
       if (!m) throw new Error(`YAML 第 ${line} 行无法解析：${text}`);
       const key = unquote(m[1].trim());
       const rest = m[2].trim();
+      // 重复键会静默覆盖前一个值，配置里通常意味着写错了。
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        throw new Error(`YAML 第 ${line} 行重复键：${key}`);
+      }
       i += 1;
       if (rest === '') {
         if (i < lines.length && lines[i].indent > indent) {
           obj[key] = parseBlock(lines[i].indent);
+        } else if (i < lines.length && lines[i].indent === indent && lines[i].text.startsWith('- ')) {
+          // YAML 允许块列表与父键同缩进，按列表处理而不是当成缺失值。
+          obj[key] = parseList(indent);
         } else {
           obj[key] = null;
         }
@@ -268,6 +275,11 @@ export function parseYaml(text) {
   }
 
   const value = parseBlock(lines.length ? lines[0].indent : 0);
+  // 剩余行通常意味着缩进错误或使用了尚未支持的语法（如块标量 |）。
+  // 静默丢弃会让配置看起来生效、实际未生效，这里直接报错。
+  if (i < lines.length) {
+    throw new Error(`YAML 第 ${lines[i].line} 行缩进或语法不受支持：${lines[i].text}`);
+  }
   return value ?? {};
 }
 
@@ -276,6 +288,44 @@ function unquote(v) {
     return v.slice(1, -1);
   }
   return v;
+}
+
+function splitInline(body, sep) {
+  const out = [];
+  let quote = null;
+  let buf = '';
+  for (let k = 0; k < body.length; k += 1) {
+    const ch = body[k];
+    if (quote) {
+      buf += ch;
+      if (ch === quote && body[k - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      buf += ch;
+    } else if (ch === sep) {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  out.push(buf);
+  return out;
+}
+
+function indexOfUnquoted(body, sep) {
+  let quote = null;
+  for (let k = 0; k < body.length; k += 1) {
+    const ch = body[k];
+    if (quote) {
+      if (ch === quote && body[k - 1] !== '\\') quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === sep) {
+      return k;
+    }
+  }
+  return -1;
 }
 
 function parseScalar(v) {
@@ -287,17 +337,18 @@ function parseScalar(v) {
   if (s.startsWith('[') && s.endsWith(']')) {
     const body = s.slice(1, -1).trim();
     if (!body) return [];
-    return body.split(',').map((x) => parseScalar(x.trim()));
+    // 按引号外的逗号切分，避免 ["a,b"] 被拆成两项。
+    return splitInline(body, ',').map((x) => parseScalar(x.trim()));
   }
   if (s === '{}') return {};
   if (s.startsWith('{') && s.endsWith('}')) {
     const body = s.slice(1, -1).trim();
     if (!body) return {};
     const obj = {};
-    for (const pair of body.split(',')) {
-      const idx = pair.indexOf(':');
+    for (const pair of splitInline(body, ',')) {
+      const idx = indexOfUnquoted(pair, ':');
       if (idx < 0) continue;
-      obj[pair.slice(0, idx).trim()] = parseScalar(pair.slice(idx + 1).trim());
+      obj[unquote(pair.slice(0, idx).trim())] = parseScalar(pair.slice(idx + 1).trim());
     }
     return obj;
   }
