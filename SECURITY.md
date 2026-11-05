@@ -4,8 +4,8 @@
 
 | 版本 | 支持 |
 | --- | --- |
-| 1.4.x | 是 |
-| < 1.4 | 否，请先升级 |
+| 1.6.x | 是 |
+| < 1.6 | 否，请先升级 |
 
 ## 报告漏洞
 
@@ -37,7 +37,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 ### 生成物写保护
 
-`PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` 的 `guard-generated` 会拒绝直接修改由脚本维护的文件：`.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.claude/.ecosystem-state.json`、`.devflow.json` 与 `scripts/devflow-*.mjs` loader。它只拦编辑类工具，无法阻止 `Bash` / `PowerShell` 中的脚本或编辑器绕过；目的是一致的单一真源，不是防篡改。
+`PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` 的 `guard-generated` 会拒绝直接修改由脚本维护的文件：`.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.claude/.devflow-state.json`、`.claude/.ecosystem-state.json`、`.devflow.json` 与已生成的 `scripts/devflow-*.mjs` loader。它只拦编辑类工具，无法阻止 `Bash` / `PowerShell` 中的脚本或编辑器绕过；目的是一致的单一真源，不是防篡改。`.claude/.hub-bases/` 基线快照不在保护列表内，改动它会影响下次三方合并的结果。
 
 ### hooks 失败时放行
 
@@ -46,7 +46,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 ### 凭据处理
 
 - `/devflow:ship` 仅在存在 `GITHUB_TOKEN` / `GH_TOKEN` 或已登录的 `gh` 时才创建 PR；token 只用于 GitHub API 请求，不写入仓库、日志或 `.devflow.json`。
-- 回灌分类会把绝对路径、内网 IP、`.corp` / `.internal`、blocklist 关键词、子项目名以及常见密钥/凭据（`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xox*-`、私钥、`Bearer`、URL 凭据、`password=` 等）标为项目专属，命中时**不回显原文**；但这是启发式判断，提交回灌 PR 前仍需人工审阅 diff。
+- 回灌分类会把绝对路径、内网 IP、`.corp` / `.internal`、blocklist 关键词、子项目名以及常见密钥/凭据（`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xox*-`、私钥、`Bearer`、URL 凭据、`password=` 等）标为敏感内容：命中行会被单独剔除、不参与回灌，剔除后没有正文才整体判为项目专属；命中时**不回显原文**。但这是启发式判断，提交回灌 PR 前仍需人工审阅 diff。
 
 ### 外部调研（plan / review / debug）
 

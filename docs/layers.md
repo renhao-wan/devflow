@@ -226,12 +226,14 @@ templates:
 
 这些文件记录“生成了什么、来自哪里、上次测试结果”，不是规则，不要手改：
 
-- `.claude/.hub-manifest.json`：投影哈希、资源清单与技术栈映射，用于漂移检测，通常入库；
-- `.claude/.hub-sources.json`：每个模板文件的来源与基线，schema v3，供 `sync` 判断是否手改，通常入库；
-- `.claude/.hub-bases/`：三方合并用的基线快照，通常入库；
-- `.claude/.devflow-state.json`：最近一次测试结果，通常入库；
+- `.claude/.hub-manifest.json`：投影哈希、资源清单与技术栈映射，用于漂移检测，通常忽略；
+- `.claude/.hub-sources.json`：每个模板文件的来源与基线，schema v3，供 `sync` 判断是否手改，通常忽略；
+- `.claude/.hub-bases/`：三方合并用的基线快照，通常忽略；
+- `.claude/.devflow-state.json`：最近一次测试结果，通常忽略；
 - `.claude/.ecosystem-state.json`：工具检测结果，通常忽略；
 - `.devflow.json`：本机插件路径与个人/团队库路径，通常忽略。
+
+这些文件由 `init` 写入 `.gitignore` 的 devflow 片段统一忽略：它们描述的是本机生成状态，换机器或重跑 `/devflow:init` 会重建。
 
 ## 3. AI 什么时候读取
 

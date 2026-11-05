@@ -4,13 +4,13 @@
 
 ### 增强
 
-- 回灌统一为「范围 × 出口」：范围支持 `--stage <name>`、`--shared`、`--all`，出口支持 `--to local`（默认，直接写插件源码）与 `--to remote`（临时 worktree 建分支、提交、推送、开 PR）；`ship` 复用同一 `plan → apply` 流水线
+- 回灌统一为「范围 × 出口」：范围支持 `--stage <name>`、`--stack <name>`、`--shared`、`--all`；出口支持 `--to personal`、`--to team`、`--to upstream`。默认只预览，加 `--apply` 才写入；团队库与上游可加 `--pr` 走临时 worktree 建分支、提交、推送并创建/更新 PR；`ship` 复用同一 `plan → apply` 流水线
 - 新增共享规则回灌：`.claude/hub/_shared/` ↔ `templates/shared/`；`init`、`sync`、`upstream`、`ship` 均覆盖共享模板
 - 支持显式分区标记 `devflow:reusable` / `devflow:local`；未标记内容改为行级剔敏，命中敏感模式的行单独剔除，其余内容仍可回灌，剔除后无正文才判为项目专属
-- 回灌默认不 bump 版本，只有显式 `--bump patch|minor|major` 才升级三处版本号并写 CHANGELOG，便于多次回灌后统一发版
+- 回灌默认不改版本文件与 CHANGELOG；`--apply` 只写模板与回灌日志，发版由维护者按独立流程处理
 - 写入前备份到 `.devflow/backups/<id>/` 并记录 journal，中断后重跑可续做；新增回灌日志 `.devflow/upstream-log.jsonl` 与 `docs/upstream-log.md`，支持 `--revert <id>` 回滚
-- `ship` 新增 `--remote`、`--pr-repo`、`--fork`、`--resume`；同 head 已有开启中 PR 时更新标题与正文，不再重复创建；提交前重新校验 `SKILL.md` frontmatter 与疑似密钥
-- 插件升级同步升级为三方合并：账本 schema v2 为每个文件记录 `{ base, local }`，`.claude/.hub-bases/` 保存模板基线，通过 `git merge-file` 自动合并；`--force` 覆盖前仍生成 `.bak` 备份
+- `ship` 新增 `--remote`、`--pr-repo`、`--fork`、`--resume`、`--no-pr`；同 head 已有开启中 PR 时更新标题与正文，不再重复创建；提交前重新校验 `SKILL.md` frontmatter 与疑似密钥
+- 插件升级同步升级为三方合并：账本 schema v3 为每个文件记录 `{ base, local, source }`，`.claude/.hub-bases/` 保存模板基线，通过 `git merge-file` 自动合并；`--force` 覆盖前仍生成 `.bak` 备份
 - `ship` 白名单新增 `templates/shared/`、`.devflow/upstream-log.jsonl`、`docs/upstream-log.md`；推送与错误信息对 URL 凭据和查询参数 token 打码
 
 ### 修复
@@ -19,7 +19,7 @@
 - `git status` 未展开未跟踪目录，导致 `.devflow/`、`docs/` 被误报为白名单外文件
 - `--all` 在项目没有 `_shared` 目录时误报缺少共享规则
 - 子项目名与 blocklist 对 ASCII 名称按词边界匹配（`api` 不再命中 `rapid` / `capital`），中文等非 ASCII 名称按包含匹配
-- 预览阶段即校验 `--bump` 取值；备份遇到目录时跳过，避免 `EPERM`
+- 预览阶段即校验目标库与回灌范围；备份遇到目录时跳过，避免 `EPERM`
 
 ## 1.5.0
 
