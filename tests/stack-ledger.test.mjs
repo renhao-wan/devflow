@@ -146,6 +146,33 @@ test('readSources 拒绝非法栈名与不一致记录', () => {
   }
 });
 
+test('readLock 拒绝非法栈名且不回显键名', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-lock-bad-name-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(stackPaths(root).lock, [
+      'version: 1',
+      'packs:',
+      "  '../evil':",
+      '    installedAs: ../evil',
+      '    repo: https://example.com/r.git',
+      '    packId: java-spring',
+      '    path: stacks/java-spring',
+      '    ref: main',
+      `    commit: ${'a'.repeat(40)}`,
+      '    version: 1.2.0',
+      '',
+    ].join('\n'));
+    assert.throws(() => readLock(root), (err) => {
+      assert.match(err.message, /非法栈名/);
+      assert.equal(err.message.includes('../evil'), false, err.message);
+      return true;
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('readLock 遇到损坏 YAML 抛错', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-lock-bad-'));
   try {

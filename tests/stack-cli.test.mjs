@@ -193,6 +193,221 @@ function makeGitStackRepo(base) {
   return repo;
 }
 
+function commitRepo(repo, message) {
+  const g = (args) => {
+    const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+  };
+  g(['add', '.']);
+  g(['commit', '-m', message]);
+}
+
+test('update 推进 ref 并保留本地改动，restore 按 lock 恢复', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-update-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    // 本地新增文件属于本地改动，update 不得静默删除。
+    writeFileSync(join(stackDir, 'local.md'), '# local\n');
+
+    const v2 = '# shared v2\n';
+    writeFileSync(join(repo, 'stacks', 'java-spring', '_shared.md'), v2);
+    const manifestFile = join(repo, 'stacks', 'java-spring', 'stack.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.version = '1.3.0';
+    manifest.files['_shared.md'] = contentHash(v2);
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+    commitRepo(repo, 'v2');
+
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const before = JSON.parse(readFileSync(ledgerFile, 'utf8')).packs['java-spring'].commit;
+    const update = run('hub-stack.mjs', ['update', 'java-spring', '--root', root, '--no-gen'], root, env);
+    assert.equal(update.status, 0, update.stderr + update.stdout);
+    assert.equal(readFileSync(join(stackDir, '_shared.md'), 'utf8'), v2);
+    assert.equal(existsSync(join(stackDir, 'local.md')), true);
+    const after = JSON.parse(readFileSync(ledgerFile, 'utf8')).packs['java-spring'].commit;
+    assert.match(after, /^[0-9a-f]{40}$/);
+    assert.notEqual(after, before);
+    assert.match(readFileSync(join(root, '.claude', 'hub', 'stack-lock.yaml'), 'utf8'), new RegExp(after));
+
+    rmSync(stackDir, { recursive: true, force: true });
+    const restore = run('hub-stack.mjs', ['restore', '--root', root, '--no-gen'], root, env);
+    assert.equal(restore.status, 0, restore.stderr + restore.stdout);
+    assert.equal(readFileSync(join(stackDir, '_shared.md'), 'utf8'), v2);
+    assert.equal(existsSync(join(stackDir, 'local.md')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('restore 对内容不一致的目录保留本地并在 --force 时覆盖', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-restore-modified-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    const edited = '# hand edited\n';
+    writeFileSync(join(stackDir, '_shared.md'), edited);
+
+    const rel = '.claude/hub/stacks/java-spring/_shared.md';
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const basesFile = join(root, '.claude', '.stack-bases', 'java-spring', '_shared.md');
+
+    const kept = run('hub-stack.mjs', ['restore', '--root', root, '--no-gen'], root, env);
+    assert.equal(kept.status, 0, kept.stderr + kept.stdout);
+    assert.match(kept.stdout, /保留本地/);
+    assert.equal(readFileSync(join(stackDir, '_shared.md'), 'utf8'), edited);
+    // bases 与账本 base 必须切到 lock 的包内容，local 记录实际手改内容。
+    assert.equal(readFileSync(basesFile, 'utf8'), '# shared\n');
+    const record = JSON.parse(readFileSync(ledgerFile, 'utf8')).packs['java-spring'];
+    assert.equal(record.files[rel].base, contentHash('# shared\n'));
+    assert.equal(record.files[rel].local, contentHash(edited));
+
+    const forced = run('hub-stack.mjs', ['restore', '--root', root, '--force', '--no-gen'], root, env);
+    assert.equal(forced.status, 0, forced.stderr + forced.stdout);
+    assert.equal(readFileSync(join(stackDir, '_shared.md'), 'utf8'), '# shared\n');
+    const after = JSON.parse(readFileSync(ledgerFile, 'utf8')).packs['java-spring'];
+    assert.equal(after.files[rel].local, contentHash('# shared\n'));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('update --dry-run 输出动作但不落盘', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-update-dry-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const before = readFileSync(ledgerFile, 'utf8');
+    const v2 = '# shared v2\n';
+    writeFileSync(join(repo, 'stacks', 'java-spring', '_shared.md'), v2);
+    const manifestFile = join(repo, 'stacks', 'java-spring', 'stack.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.files['_shared.md'] = contentHash(v2);
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+    commitRepo(repo, 'v2');
+
+    const dry = run(
+      'hub-stack.mjs',
+      ['update', 'java-spring', '--root', root, '--dry-run', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.match(dry.stdout, /_shared\.md/);
+    assert.equal(readFileSync(ledgerFile, 'utf8'), before);
+    assert.equal(
+      readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'),
+      '# shared\n',
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('remove 在被 hub.yaml 引用时拒绝，--force 被拒，--keep 保留目录', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-remove-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
+    writeFileSync(hubFile, readFileSync(hubFile, 'utf8').replace('stages:', 'stack: java-spring\nstages:'));
+
+    const refused = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--no-gen'], root);
+    assert.notEqual(refused.status, 0, refused.stdout);
+    assert.match(refused.stderr, /引用/);
+
+    const forced = run(
+      'hub-stack.mjs',
+      ['remove', 'java-spring', '--root', root, '--force', '--no-gen'],
+      root,
+    );
+    assert.notEqual(forced.status, 0, forced.stdout);
+    assert.match(forced.stderr, /不接受 --force/);
+
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    const kept = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--keep', '--no-gen'], root);
+    assert.equal(kept.status, 0, kept.stderr + kept.stdout);
+    assert.equal(existsSync(stackDir), true);
+    const ledger = JSON.parse(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'));
+    assert.equal(ledger.packs['java-spring'], undefined);
+    assert.equal(existsSync(join(root, '.claude', '.stack-bases', 'java-spring')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('remove --purge 只删除未改文件并保留手改与额外文件', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-purge-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    writeFileSync(join(stackDir, 'plan.md'), '# hand edited\n');
+    writeFileSync(join(stackDir, 'extra.md'), '# extra\n');
+
+    const res = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--purge', '--no-gen'], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.equal(existsSync(join(stackDir, '_shared.md')), false);
+    assert.equal(readFileSync(join(stackDir, 'plan.md'), 'utf8'), '# hand edited\n');
+    assert.equal(readFileSync(join(stackDir, 'extra.md'), 'utf8'), '# extra\n');
+    const ledger = JSON.parse(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'));
+    assert.equal(ledger.packs['java-spring'], undefined);
+    assert.equal(existsSync(join(root, '.claude', '.stack-bases', 'java-spring')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('remove 默认把目录与 bases 移入 trash 并清除账本', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-remove-default-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+
+    const res = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--no-gen'], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stacks', 'java-spring')), false);
+    assert.equal(existsSync(join(root, '.claude', '.stack-bases', 'java-spring')), false);
+    const ledger = JSON.parse(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'));
+    assert.equal(ledger.packs['java-spring'], undefined);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('stack add --repo 写入快照与 lock，list/status 可读', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-git-'));
   try {

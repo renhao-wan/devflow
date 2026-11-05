@@ -518,7 +518,9 @@ export function applyPackUpdate({
  * 采纳内容与包一致的既有目录：补 bases 与账本。
  * 哈希、bases 替换与账本写入都在安装锁内完成，避免与并发安装互相覆盖。
  */
-export function adoptExisting({ root, installedAs, pack, source, onWarn = () => {} }) {
+export function adoptExisting({
+  root, installedAs, pack, source, allowMissing = false, onWarn = () => {},
+}) {
   // 校验必须在任何写入与目录读取之前。
   assertStackName(installedAs);
   const paths = assertInstallPaths(root, installedAs);
@@ -527,9 +529,13 @@ export function adoptExisting({ root, installedAs, pack, source, onWarn = () => 
     assertInstallPaths(root, installedAs);
     const target = paths.stackDir(installedAs);
     const bases = paths.basesDir(installedAs);
+    // restore 的 modified 分支允许文件缺失，但目录本身必须存在。
+    if (!existsSync(target)) {
+      throw new Error('目标目录不存在，不能采纳；请先运行 devflow stack add 或在联网环境恢复');
+    }
     const localHashes = hashTree(target, pack.files.map((file) => file.rel));
     const absent = pack.files.filter((file) => localHashes.get(file.rel) === null);
-    if (absent.length) {
+    if (!allowMissing && absent.length) {
       throw new Error(`目标目录缺少文件，不能采纳：${absent.map((file) => file.rel).join('、')}`);
     }
 

@@ -1,22 +1,28 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  existsSync, readFileSync, readdirSync, renameSync, rmSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  argValue, contentHash, hasFlag, hasOption, isMain, loadHub, log, pluginInfo, projectRoot,
-  warnUnknownArgs,
+  argValue, contentHash, ensureDir, hasFlag, hasOption, isMain, loadHub, log, pluginInfo,
+  projectRoot, warnUnknownArgs, withFileLock,
 } from './lib/common.mjs';
 import { LOADERS } from './lib/loaders.mjs';
 import { isValidStackName } from './lib/stacks.mjs';
 import {
   StackPackError, normalizeRepoUrl, readIndex, readPackFromDir, resolveIndexPack, validateIndex,
 } from './lib/stack-pack.mjs';
-import { readLock, readSources, writeLock } from './lib/stack-ledger.mjs';
+import {
+  readLock, readSources, stackPaths, writeLock, writeSources,
+} from './lib/stack-ledger.mjs';
 import {
   ensureRepo, fetchCommit, listSnapshots, materializeSnapshot, readFileAtCommit,
   refreshRef, resolveCommit, stackCacheRoot,
 } from './lib/stack-fetch.mjs';
-import { applyInstall } from './lib/stack-install.mjs';
+import {
+  adoptExisting, applyInstall, applyPackUpdate, planPackUpdate, targetSnapshot,
+} from './lib/stack-install.mjs';
 
 const VALUE_FLAGS = new Set(['--root', '--repo', '--ref', '--as', '--from', '--keep-days']);
 
@@ -124,6 +130,115 @@ function declaredStacks(root) {
   }
   return names;
 }
+
+/** 账本里的 repo 可能是手工改过的；写入账本/lock 前必须重新归一化。 */
+function ledgerRepoOf(record) {
+  try {
+    return normalizeRepoUrl(record.repo, { allowFile: allowLocalRepo() });
+  } catch {
+    // 不回显原值：它可能带凭据或控制字符。
+    throw new StackPackError('安装账本中的仓库地址缺失或非法', 'STACK_LEDGER');
+  }
+}
+
+function ledgerLocalPathOf(record) {
+  const value = record.localPath;
+  if (typeof value !== 'string' || !value.trim() || /[\0\r\n]/.test(value)) {
+    throw new StackPackError('安装账本中的本地路径缺失或非法', 'STACK_LEDGER');
+  }
+  return resolve(value);
+}
+
+/** 按账本记录重新解析来源：local 重读 localPath，git 刷新 ref 并物化 lock commit。 */
+function loadRecordSource(record, refOverride, offline) {
+  const packId = record.packId;
+  if (record.source === 'local') {
+    if (refOverride) throw new Error(`${record.installedAs} 是本地来源，不支持 --ref`);
+    const fromRoot = ledgerLocalPathOf(record);
+    const index = readIndex(fromRoot);
+    const resolved = resolveIndexPack(index, packId, fromRoot);
+    const pack = readPackFromDir(resolved.packDir, {
+      packId,
+      indexEntry: resolved.entry,
+      loaderFiles: loaderFiles(),
+      pluginVersion: pluginVersionOf(),
+    });
+    return {
+      pack,
+      source: {
+        type: 'local', localPath: fromRoot, packId, path: resolved.entry.path,
+      },
+    };
+  }
+  const repo = ledgerRepoOf(record);
+  const allowFile = allowLocalRepo();
+  const cacheRoot = stackCacheRoot();
+  const info = ensureRepo({
+    url: repo, cacheRoot, offline, allowFile,
+  });
+  const ref = refOverride || record.ref || 'main';
+  // 先刷新 ref 再解析：缓存里的旧 ref 会让 update 原地不动。
+  if (!offline) refreshRef({ repoGit: info.repoGit, ref });
+  const commit = resolveCommit({ repoGit: info.repoGit, ref, offline });
+  fetchCommit({
+    repoGit: info.repoGit, commit, ref, offline,
+  });
+  const index = remoteIndex(info.repoGit, commit, offline);
+  const entry = remoteEntry(index, packId);
+  const snap = materializeSnapshot({
+    repoGit: info.repoGit,
+    commit,
+    packId,
+    packPath: entry.path,
+    indexEntry: entry,
+    cacheRoot,
+    offline,
+    loaderFiles: loaderFiles(),
+    pluginVersion: pluginVersionOf(),
+  });
+  return {
+    pack: snap.pack,
+    source: {
+      type: 'git', repo, packId, path: entry.path, ref, commit,
+    },
+  };
+}
+
+function shortSource(source) {
+  return source.type === 'git' ? source.commit.slice(0, 8) : 'local';
+}
+
+function pruneEmptyDirs(dir) {
+  if (!existsSync(dir)) return;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) pruneEmptyDirs(join(dir, entry.name));
+  }
+  try {
+    if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // 清理空目录失败不影响已提交的账本与 lock。
+  }
+}
+
+/** purge 只允许账本内、目标栈目录下的相对路径；账本被手改时 fail closed。 */
+function ledgerStackFileAbs(root, installedAs, rel) {
+  const prefix = `.claude/hub/stacks/${installedAs}/`;
+  const value = String(rel ?? '');
+  const segments = value.split('/');
+  if (!value.startsWith(prefix)
+    || value.includes('\\') || value.includes(':') || /[\0\r\n]/.test(value)
+    || segments.some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new StackPackError('安装账本包含非法文件路径', 'STACK_LEDGER');
+  }
+  return join(root, ...segments);
+}
+
 
 function lintPath(path) {
   if (existsSync(join(path, 'index.json'))) {
@@ -393,6 +508,280 @@ export async function main(argv = process.argv.slice(2)) {
       log('ok', `已写入 .claude/hub/stack-lock.yaml（${Object.keys(next.packs).length} 个包）`);
     }
     return { packs: next.packs };
+  }
+
+  if (command === 'update') {
+    const all = hasFlag(argv, '--all');
+    if (all && packId) throw new Error('--all 与 <installedAs> 不能同时使用');
+    if (!all && !packId) throw new Error('update 需要 <installedAs> 或 --all');
+    const sources = readSources(root);
+    const names = all ? Object.keys(sources.packs) : [packId];
+    if (!names.length) log('info', '没有已安装的包可更新');
+    const refOverride = argValue(argv, '--ref', null);
+    const offline = hasFlag(argv, '--offline');
+    const dryRun = hasFlag(argv, '--dry-run');
+    const force = hasFlag(argv, '--force');
+    const noGen = hasFlag(argv, '--no-gen');
+    let changed = 0;
+    for (const name of names) {
+      if (!isValidStackName(name)) {
+        throw new Error('栈名不合法：只允许 [a-z0-9][a-z0-9_-]*');
+      }
+      const record = sources.packs[name];
+      if (!record) throw new Error(`未安装：${name}`);
+      const { pack, source } = loadRecordSource(record, refOverride, offline);
+      for (const warning of pack.warnings) log('warn', `${record.packId}：${warning}`);
+      if (dryRun) {
+        // 设计第 9 节：dry-run 输出每个文件的动作，不落盘。
+        if (!existsSync(stackPaths(root).stackDir(name))) {
+          throw new Error('目标目录缺失，不能执行更新；请先运行 devflow stack restore 或重新 add');
+        }
+        const labels = {
+          write: '写入', delete: '删除', keep: '保留', missing: '本地缺失',
+          conflict: '冲突', orphan: '额外文件', same: '不变',
+        };
+        const plan = planPackUpdate({ root, installedAs: name, pack });
+        for (const op of plan.ops) {
+          log('info', `${name} ${op.merged ? '合并写入' : labels[op.type] || op.type} ${op.rel}`);
+        }
+        for (const warning of plan.warnings) log('warn', warning);
+        log('info', `将更新 ${name} → ${shortSource(source)}`);
+        continue;
+      }
+      applyPackUpdate({
+        root,
+        installedAs: name,
+        pack,
+        source,
+        force,
+        noGen,
+        generate: noGen ? null : runGen,
+        onWarn: (message) => log('warn', message),
+      });
+      log('ok', `已更新 ${name} → ${shortSource(source)}`);
+      changed += 1;
+    }
+    if (!dryRun && changed && noGen) log('info', '--no-gen：跳过 gen；运行 node scripts/devflow-gen.mjs 刷新投影');
+    return { updated: dryRun ? [] : names };
+  }
+
+  if (command === 'restore') {
+    const lock = readLock(root);
+    if (!Object.keys(lock.packs).length) {
+      log('info', '没有可恢复的包：stack-lock.yaml 为空或不存在');
+      return { restored: [] };
+    }
+    const offline = hasFlag(argv, '--offline');
+    const force = hasFlag(argv, '--force');
+    const dryRun = hasFlag(argv, '--dry-run');
+    const noGen = hasFlag(argv, '--no-gen');
+    const allowFile = allowLocalRepo();
+    const cacheRoot = stackCacheRoot();
+    const modes = {
+      restore: '恢复', adopt: '采纳一致目录', force: '强制覆盖', modified: '保留本地并标记 modified',
+    };
+    let changed = 0;
+    for (const [installedAs, entry] of Object.entries(lock.packs)) {
+      // lock 里的 repo 必须重新归一化后才能写入账本与 lock。
+      let repo;
+      try {
+        repo = normalizeRepoUrl(entry.repo, { allowFile });
+      } catch {
+        throw new StackPackError('stack-lock.yaml 中的仓库地址缺失或非法', 'STACK_LOCK');
+      }
+      const info = ensureRepo({
+        url: repo, cacheRoot, offline, allowFile,
+      });
+      // restore 只使用 lock 的 commit，不跟随分支移动。
+      fetchCommit({
+        repoGit: info.repoGit, commit: entry.commit, ref: entry.ref, offline,
+      });
+      const snap = materializeSnapshot({
+        repoGit: info.repoGit,
+        commit: entry.commit,
+        packId: entry.packId,
+        packPath: entry.path,
+        cacheRoot,
+        offline,
+        loaderFiles: loaderFiles(),
+        pluginVersion: pluginVersionOf(),
+      });
+      const source = {
+        type: 'git',
+        repo,
+        packId: entry.packId,
+        path: entry.path,
+        ref: entry.ref,
+        commit: entry.commit,
+      };
+      const state = targetSnapshot(root, installedAs, snap.pack);
+      const mode = !state.exists ? 'restore' : (state.matches ? 'adopt' : (force ? 'force' : 'modified'));
+      if (dryRun) {
+        log('info', `将处理 ${installedAs}：${modes[mode]}`);
+        continue;
+      }
+      if (mode === 'restore' || mode === 'force') {
+        applyInstall({
+          root,
+          installedAs,
+          pack: snap.pack,
+          source,
+          sources: readSources(root),
+          force: mode === 'force',
+          noGen,
+          generate: noGen ? null : runGen,
+          onWarn: (message) => log('warn', message),
+        });
+        log('ok', mode === 'force'
+          ? `已强制恢复 ${installedAs}@${entry.version}`
+          : `已恢复 ${installedAs}@${entry.version}`);
+      } else if (mode === 'adopt') {
+        adoptExisting({
+          root, installedAs, pack: snap.pack, source, onWarn: (message) => log('warn', message),
+        });
+        log('ok', `已采纳一致目录 ${installedAs}`);
+      } else {
+        // 保留本地内容，只把 lock 的包内容记为 bases 并更新账本。
+        adoptExisting({
+          root, installedAs, pack: snap.pack, source, allowMissing: true,
+          onWarn: (message) => log('warn', message),
+        });
+        log('warn', `${installedAs} 与 stack-lock.yaml 内容不同：保留本地并标记 modified；确认覆盖请加 --force`);
+      }
+      changed += 1;
+    }
+    const localOnly = Object.keys(readSources(root).packs).filter((name) => !lock.packs[name]);
+    if (localOnly.length) {
+      log('warn', `${localOnly.join('、')} 未在 stack-lock.yaml 中，保留不删除；不能跨机器恢复，运行 devflow stack lock 或重新 add`);
+    }
+    if (!dryRun && changed && noGen) log('info', '--no-gen：跳过 gen；运行 node scripts/devflow-gen.mjs 刷新投影');
+    return { restored: dryRun ? [] : Object.keys(lock.packs) };
+  }
+
+  if (command === 'remove') {
+    const installedAs = packId;
+    if (!installedAs) throw new Error('remove 需要 <installedAs>');
+    if (!isValidStackName(installedAs)) {
+      throw new Error('栈名不合法：只允许 [a-z0-9][a-z0-9_-]*');
+    }
+    // 设计第 11 节：删除不接受 --force，避免绕过引用检查制造 gen 必然报错的状态。
+    if (hasFlag(argv, '--force')) {
+      throw new Error('remove 不接受 --force；被引用时请先解除 hub.yaml 声明，或使用 --keep 保留目录');
+    }
+    const keep = hasFlag(argv, '--keep');
+    const purge = hasFlag(argv, '--purge');
+    if (keep && purge) throw new Error('--keep 与 --purge 不能同时使用');
+    if (!keep && declaredStacks(root).has(installedAs)) {
+      throw new Error(`${installedAs} 仍被 hub.yaml 引用；先手工解除声明，或使用 --keep`);
+    }
+    const sources = readSources(root);
+    const record = sources.packs[installedAs];
+    if (!record) throw new Error(`未安装：${installedAs}`);
+    const paths = stackPaths(root);
+    const target = paths.stackDir(installedAs);
+    const bases = paths.basesDir(installedAs);
+    const dryRun = hasFlag(argv, '--dry-run');
+    const noGen = hasFlag(argv, '--no-gen');
+    if (dryRun) {
+      const mode = keep ? '（保留目录）'
+        : purge ? '（只删除未改文件，保留手改与额外文件）' : '（目录与 bases 移入 trash）';
+      log('info', `将移除 ${installedAs}${mode}`);
+      return { removed: installedAs, keep };
+    }
+
+    // lock 必须在任何写入之前读取：损坏时 fail closed，不能留下半删除状态。
+    const hasLock = existsSync(paths.lock);
+    const lock = hasLock ? readLock(root) : null;
+
+    // purge 只删除“本地未改且本机基线也一致”的文件。
+    const cleanFiles = [];
+    if (purge) {
+      for (const [rel, hashes] of Object.entries(record.files || {})) {
+        if (!hashes || hashes.local === null || hashes.local !== hashes.base) continue;
+        const abs = ledgerStackFileAbs(root, installedAs, rel);
+        if (!existsSync(abs)) continue;
+        if (contentHash(readFileSync(abs, 'utf8')) === hashes.local) cleanFiles.push({ abs, rel });
+      }
+    }
+
+    // 删除与安装共用安装锁；账本写入是提交点，此前失败按逆序从 trash 恢复。
+    const trash = join(paths.trashRoot, `${process.pid}-${Date.now()}`);
+    const moved = [];
+    const move = (from, to) => {
+      if (!existsSync(from)) return;
+      ensureDir(dirname(to));
+      renameSync(from, to);
+      moved.push({ from, to });
+    };
+    const rollbackRemoval = () => {
+      const errors = [];
+      for (let i = moved.length - 1; i >= 0; i -= 1) {
+        const { from, to } = moved[i];
+        try {
+          ensureDir(dirname(from));
+          renameSync(to, from);
+        } catch (err) {
+          errors.push(err.message);
+        }
+      }
+      if (errors.length) {
+        log('warn', `回滚未能完全恢复：${errors.join('；')}；备份保留在 .claude/.stack-trash`);
+        return;
+      }
+      try {
+        rmSync(trash, { recursive: true, force: true });
+      } catch {
+        // 回滚成功但清理失败只影响临时目录。
+      }
+    };
+
+    withFileLock(join(paths.stagingRoot, 'install'), () => {
+      try {
+        if (!keep) {
+          if (purge) {
+            const prefix = `.claude/hub/stacks/${installedAs}/`;
+            for (const { abs, rel } of cleanFiles) {
+              // 保留相对路径，便于失败回滚与手工取证。
+              const relInStack = rel.slice(prefix.length);
+              move(abs, join(trash, installedAs, ...relInStack.split('/')));
+            }
+          } else {
+            move(target, join(trash, installedAs));
+          }
+        }
+        move(bases, join(trash, `${installedAs}-bases`));
+        const latest = readSources(root);
+        const next = { ...latest, packs: { ...latest.packs } };
+        delete next.packs[installedAs];
+        writeSources(root, next);
+      } catch (err) {
+        rollbackRemoval();
+        throw err;
+      }
+    }, { failClosed: true, timeoutMs: 10000 });
+
+    if (purge) pruneEmptyDirs(target);
+
+    // 只有 lock 原本存在时才回写；lock 写失败不回滚已提交的删除。
+    if (hasLock && lock.packs[installedAs]) {
+      delete lock.packs[installedAs];
+      try {
+        writeLock(root, lock);
+      } catch (err) {
+        log('warn', `删除已完成，但写入 stack-lock.yaml 失败：${err.message}；运行 devflow stack lock 重建`);
+      }
+    }
+
+    try {
+      rmSync(trash, { recursive: true, force: true });
+    } catch {
+      log('warn', '删除已完成，但清理临时备份失败；可手动删除 .claude/.stack-trash');
+    }
+
+    if (!noGen) runGen(root);
+    log('ok', `已移除 ${installedAs}${keep ? '（保留目录）' : ''}`);
+    if (keep) log('info', `${installedAs} 已成为普通栈目录，不再受 pack 更新；后续 sync 可能接管`);
+    return { removed: installedAs, keep };
   }
 
   throw new Error(`暂不支持的子命令：${command}`);

@@ -137,6 +137,10 @@ export function readLock(root) {
   else if (plainObject(data.packs)) packs = data.packs;
   else throw badLock(`格式不支持：${posix(file)}`);
   for (const [key, record] of Object.entries(packs)) {
+    // key 会参与目录拼接；非法键直接拒绝，错误消息不回显键名，避免日志注入。
+    if (!isValidStackName(key)) {
+      throw badLock('包含非法栈名');
+    }
     if (!plainObject(record) || record.installedAs !== key) {
       throw badLock(`记录与栈名不一致：${posix(file)}`);
     }
