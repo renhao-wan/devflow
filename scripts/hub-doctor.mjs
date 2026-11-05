@@ -8,7 +8,7 @@ import {
   isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside, isDraft,
   warnUnknownArgs,
 } from './lib/common.mjs';
-import { LOADERS, loaderSource } from './hub-init.mjs';
+import { LOADERS, loaderSource } from './lib/loaders.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
 import {
   OVERVIEW_FILE, AUTO_START, AUTO_END, scanFacts, readHubFacts, factsFingerprint, readFactsFingerprint,
@@ -353,7 +353,7 @@ export async function main(argv = process.argv.slice(2)) {
         if (!actual) {
           add('warn', '项目概览缺少事实指纹，运行 /devflow:onboard 重建', '/devflow:onboard');
         } else if (actual !== expected) {
-          add('warn', '项目概览可能过期（项目结构已变化），运行 /devflow:onboard 刷新', '/devflow:onboard');
+          add('warn', '项目概览与当前结构不一致，运行 /devflow:onboard 重建', '/devflow:onboard');
         } else {
           add('ok', '项目概览与当前项目结构一致');
         }

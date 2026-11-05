@@ -253,6 +253,21 @@ test('doctor 发现项目概览标记块残缺', () => {
   }
 });
 
+test('init 后项目概览与结构一致，不把生成的 scripts/ 当作项目结构', () => {
+  const root = makeSandbox();
+  try {
+    const init = run('hub-init.mjs', ['--root', root], root);
+    assert.equal(init.status, 0, init.stderr);
+    const overview = readFileSync(join(root, '.claude', 'hub', 'project-overview.md'), 'utf8');
+    assert.doesNotMatch(overview, /- `scripts\/`/);
+    const doctor = run('hub-doctor.mjs', ['--root', root], root);
+    assert.doesNotMatch(doctor.stdout, /项目概览与当前结构不一致/);
+    assert.match(doctor.stdout, /项目概览与当前项目结构一致/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('doctor 发现项目概览过期', () => {
   const root = makeSandbox();
   try {
@@ -260,7 +275,7 @@ test('doctor 发现项目概览过期', () => {
     assert.equal(init.status, 0, init.stderr);
     rmSync(join(root, 'package.json'));
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
-    assert.match(doctor.stdout, /项目概览可能过期/);
+    assert.match(doctor.stdout, /项目概览与当前结构不一致/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
