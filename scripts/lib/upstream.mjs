@@ -38,10 +38,15 @@ const SECRET_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
+  /\bglpat-[A-Za-z0-9_-]{20,}\b/,
+  /\bnpm_[A-Za-z0-9]{36}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, // JWT
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\bBearer\s+[A-Za-z0-9._\-]{20,}/,
-  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
+  /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_]*\s*[:=]\s*['"]?[^\s'"]{6,}/i,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, // URL 中 user:pass@
 ];
 

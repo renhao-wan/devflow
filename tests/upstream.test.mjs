@@ -271,6 +271,12 @@ test('回灌把疑似密钥或凭据判为项目专属', () => {
       'AWS_SECRET_ACCESS_KEY=abcdefghijklmnop',
       'MYSQL_ROOT_PASSWORD: rootpass123',
       'CLIENT_SECRET = abcdef123456',
+      'glpat-abcdefghijklmnopqrstuvwx',
+      'AIzaSyA1234567890abcdefghijklmnopqrstuv',
+      // 运行时拼接，避免仓库历史中出现完整的密钥字面量
+      ['sk', 'live', 'abcdefghijklmnopqrstuvwx'].join('_'),
+      'npm_abcdefghijklmnopqrstuvwxyz0123456789',
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart123',
     ];
     for (const line of cases) {
       writeFileSync(join(root, '.claude', 'hub', 'stages', 'review', 'SKILL.md'), [
@@ -284,7 +290,7 @@ test('回灌把疑似密钥或凭据判为项目专属', () => {
       const result = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /(?:\[项目专属\]|\[可回灌\].*剔除 1 行).*疑似密钥或凭据/, line);
-      assert.doesNotMatch(result.stdout, /ghp_|sk-|Bearer |PRIVATE KEY|secret@/, '输出不应回显密钥原文');
+      assert.doesNotMatch(result.stdout, /ghp_|sk-|sk_live|glpat-|AIza|npm_|eyJ|Bearer |PRIVATE KEY|secret@/, '输出不应回显密钥原文');
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
