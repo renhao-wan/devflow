@@ -93,6 +93,36 @@ function tokenize(input) {
       started = true;
       continue;
     }
+    if (mode === 'ansi') {
+      // bash 的 $'...' 会解释转义，$'\x2f' 实际是 /，不能当成普通字面量。
+      if (ch === '\\' && i + 1 < input.length) {
+        const n = input[i + 1];
+        const simple = {
+          n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', f: '\f', v: '\v',
+          '\\': '\\', "'": "'", '"': '"', '?': '?',
+        };
+        if (n === 'x' && /^[0-9a-fA-F]{2}$/.test(input.slice(i + 2, i + 4))) {
+          cur += String.fromCharCode(parseInt(input.slice(i + 2, i + 4), 16));
+          i += 3;
+        } else if (n === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 2, i + 6))) {
+          cur += String.fromCharCode(parseInt(input.slice(i + 2, i + 6), 16));
+          i += 5;
+        } else if (Object.prototype.hasOwnProperty.call(simple, n)) {
+          cur += simple[n];
+          i += 1;
+        } else {
+          cur += `\\${n}`;
+          i += 1;
+        }
+      } else if (ch === "'") {
+        mode = 'plain';
+        quoted = true;
+      } else {
+        cur += ch;
+      }
+      started = true;
+      continue;
+    }
     if (mode === 'double') {
       if (ch === '\\' && i + 1 < input.length && ['"', '\\', '$', '`'].includes(input[i + 1])) {
         cur += input[i + 1];
@@ -106,6 +136,7 @@ function tokenize(input) {
       started = true;
       continue;
     }
+    if (ch === '$' && input[i + 1] === "'") { mode = 'ansi'; i += 1; started = true; quoted = true; continue; }
     if (ch === "'") { mode = 'single'; started = true; quoted = true; continue; }
     if (ch === '"') { mode = 'double'; started = true; quoted = true; continue; }
     // 反斜杠续行：\\\n / \\\r\n 不是命令分隔符，先整体跳过。
@@ -464,6 +495,30 @@ function sqlTexts(command) {
   return texts;
 }
 
+// 从文件或标准输入执行 SQL 时看不到语句内容，不能静默放行。
+// 注意 mysql 的 -f 是 --force，不是文件参数，按客户端区分。
+const SQL_FILE_OPTS = {
+  psql: ['-f', '--file'],
+  sqlcmd: ['-i', '--input'],
+  mysqlsh: ['--file'],
+  'clickhouse-client': ['--queries-file'],
+};
+const SQL_INPUT_REDIRECT = new RegExp(`\\b(?:${[...DB_CLIENTS].join('|')})\\b[^|;\\n]*<`, 'i');
+
+function sqlFileInput(command) {
+  for (const raw of simpleCommands(tokenize(command))) {
+    const group = stripWrappers(raw);
+    if (!group.length) continue;
+    const opts = SQL_FILE_OPTS[normalizeCmd(group[0].value)];
+    if (!opts) continue;
+    for (const token of group.slice(1)) {
+      if (opts.some((opt) => token.value === opt || token.value.startsWith(`${opt}=`))) return true;
+    }
+  }
+  // 重定向在分词中是分隔符，改为在原文判断；引号内的 < 已被屏蔽。
+  return SQL_INPUT_REDIRECT.test(maskQuoted(command));
+}
+
 /**
  * 提取命令替换体：$(...) 与反引号里的内容会被 shell 真正执行，
  * 必须单独递归检查，否则 echo $(rm -rf /) 这类命令会完全绕过。
@@ -604,6 +659,9 @@ function evaluate(command, depth = 0) {
     const maskedSql = maskQuoted(sql);
     for (const rule of DENY_SQL) if (rule.re.test(maskedSql)) findings.push({ decision: 'deny', why: rule.why });
     for (const rule of ASK_SQL) if (rule.re.test(maskedSql)) findings.push({ decision: 'ask', why: rule.why });
+  }
+  if (sqlFileInput(command)) {
+    findings.push({ decision: 'ask', why: '执行 SQL 文件或标准输入，无法检查语句内容' });
   }
   return findings;
 }

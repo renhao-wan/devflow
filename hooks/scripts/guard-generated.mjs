@@ -50,6 +50,10 @@ function reason(rel) {
     return 'devflow 状态文件由钩子与脚本维护。请用 /devflow:test 或 node scripts/devflow-test.mjs 更新；'
       + '确需重置时手动删除该文件。';
   }
+  if (rel.startsWith('.claude/.hub-bases/')) {
+    return '同步基线快照由 sync 维护，手改会让下次三方合并使用错误基线。'
+      + '请重新运行 /devflow:sync，或删除该快照后重跑以重建基线。';
+  }
   if (LEDGERS.has(rel)) {
     return 'devflow 账本由脚本维护，手改会造成投影或同步漂移。'
       + '请运行 node scripts/devflow-gen.mjs（或 node scripts/devflow-doctor.mjs）重建。';

@@ -260,6 +260,31 @@ test('guard 识别 SQL 客户端传入的危险语句', () => {
   }
 });
 
+test('guard 识别 $ 前缀的 ANSI-C 转义参数', () => {
+  for (const command of ["rm -rf $'/'", "rm -rf $'\\x2f'", "rm -r $'..'"]) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+});
+
+test('guard 对从文件或标准输入执行 SQL 要求确认', () => {
+  for (const command of [
+    'psql -f dump.sql',
+    'sqlcmd -i dump.sql',
+    'mysql app < dump.sql',
+    'mysqlsh --file dump.sql',
+  ]) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'ask', command);
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /SQL 文件/, command);
+  }
+  // mysql 的 -f 是 --force，不是文件参数，不应误报。
+  assert.equal(
+    runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command: 'mysql -f -e "SELECT 1"' } }).stdout,
+    '',
+  );
+});
+
 test('guard 识别换行、包装器与 Windows 可执行文件变体', () => {
   const deny = [
     'git status\nrm -rf /',
@@ -812,6 +837,7 @@ test('guard-generated 拒绝手改投影、账本与 loader', () => {
       '.claude/.hub-manifest.json',
       '.claude/.hub-sources.json',
       '.claude/.ecosystem-state.json',
+      '.claude/.hub-bases/stages/req/SKILL.md',
       '.devflow.json',
       'scripts/devflow-gen.mjs',
       'scripts/devflow-route.mjs',

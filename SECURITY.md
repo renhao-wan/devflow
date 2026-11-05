@@ -37,7 +37,7 @@ devflow 是**开发工作流插件**，不是运行时沙箱。理解下面的�
 
 ### 生成物写保护
 
-`PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` 的 `guard-generated` 会拒绝直接修改由脚本维护的文件：`.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.claude/.devflow-state.json`、`.claude/.ecosystem-state.json`、`.devflow.json` 与已生成的 `scripts/devflow-*.mjs` loader。它只拦编辑类工具，无法阻止 `Bash` / `PowerShell` 中的脚本或编辑器绕过；目的是一致的单一真源，不是防篡改。`.claude/.hub-bases/` 基线快照不在保护列表内，改动它会影响下次三方合并的结果。
+`PreToolUse(Edit/Write/MultiEdit/NotebookEdit)` 的 `guard-generated` 会拒绝直接修改由脚本维护的文件：`.claude/skills/devflow-*` 投影、`.claude/.hub-manifest.json`、`.claude/.hub-sources.json`、`.claude/.devflow-state.json`、`.claude/.ecosystem-state.json`、`.claude/.hub-bases/` 基线快照、`.devflow.json` 与已生成的 `scripts/devflow-*.mjs` loader。它只拦编辑类工具，无法阻止 `Bash` / `PowerShell` 中的脚本或编辑器绕过；目的是一致的单一真源，不是防篡改。`.claude/.hub-bases/` 基线快照不在保护列表内，改动它会影响下次三方合并的结果。
 
 ### hooks 失败时放行
 
