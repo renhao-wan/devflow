@@ -41,9 +41,11 @@ export function stackCacheRoot(env = process.env) {
   return resolve(env.DEVFLOW_CACHE_DIR || join(homedir(), '.devflow', 'cache', 'stacks'));
 }
 
-export function gitRun(args, { cwd = process.cwd(), input = undefined, timeout = 120000 } = {}) {
+export function gitRun(args, {
+  cwd = process.cwd(), input = undefined, timeout = 120000, env = {},
+} = {}) {
   const result = spawnSync('git', args, {
-    cwd, input, encoding: 'utf8', timeout, env: gitEnv(),
+    cwd, input, encoding: 'utf8', timeout, env: { ...gitEnv(), ...env },
   });
   if (result.error) throw new StackPackError(`无法执行 git：${result.error.message}`, 'STACK_GIT');
   if (result.status !== 0) {
@@ -365,7 +367,7 @@ function readBlobs(repoGit, hashes) {
 }
 
 /** 读取 commit 中的单个文件（用于 index.json），不检出工作树。 */
-export function readFileAtCommit({ repoGit, commit, file }) {
+export function readFileAtCommit({ repoGit, commit, file, offline = false }) {
   const safeCommit = assertCommit(commit);
   const value = String(file ?? '').replace(/\\/g, '/');
   if (!value || value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.includes(':')
@@ -373,7 +375,17 @@ export function readFileAtCommit({ repoGit, commit, file }) {
     || value.split('/').some((seg) => !seg || seg === '.' || seg === '..')) {
     throw new StackPackError('非法文件路径', 'STACK_PATH');
   }
-  return gitRun(['show', `${safeCommit}:${value}`], { cwd: repoGit });
+  try {
+    // partial clone 读取缺失 blob 会触发 lazy fetch（联网）；离线必须显式禁止。
+    return gitRun(['show', `${safeCommit}:${value}`], {
+      cwd: repoGit,
+      env: offline ? { GIT_NO_LAZY_FETCH: '1' } : {},
+    });
+  } catch (err) {
+    // 不拼接底层 git 错误：它可能包含远端地址或文件片段。
+    if (offline) throw new StackPackError('离线模式下无法读取缓存内容', 'STACK_OFFLINE');
+    throw err;
+  }
 }
 
 /**

@@ -277,3 +277,141 @@ test('init 生成 stack loader，CLI 注册 stack 子命令', () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('stack lock 保留未知顶层字段与 git 条目', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-lock-keep-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--repo', repo, '--no-gen'], root, env);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const lockFile = join(root, '.claude', 'hub', 'stack-lock.yaml');
+    writeFileSync(lockFile, `${readFileSync(lockFile, 'utf8')}futureField: keep-me\n`);
+
+    const res = run('hub-stack.mjs', ['lock', '--root', root], root, env);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    const lock = readFileSync(lockFile, 'utf8');
+    assert.match(lock, /futureField: keep-me/);
+    assert.match(lock, /repo:/);
+    assert.match(lock, /ref:/);
+    assert.match(lock, /commit:/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack add --offline 使用已缓存快照完成安装', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-offline-hit-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--repo', repo, '--no-gen'], root, env);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    // 原仓库不可达后，离线安装必须完全依赖 bare 缓存与已验证快照。
+    rmSync(repo, { recursive: true, force: true });
+    const again = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--offline', '--force', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(again.status, 0, again.stderr + again.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack add --offline 在缓存缺失时失败', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-offline-miss-'));
+  try {
+    const root = makeProject(base);
+    const res = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', 'https://example.com/stacks.git', '--offline', '--no-gen'],
+      root,
+      { DEVFLOW_CACHE_DIR: join(base, 'empty-cache') },
+    );
+    assert.notEqual(res.status, 0, res.stdout);
+    assert.match(res.stderr, /离线/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack list --json 输出纯 JSON', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-list-json-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--repo', repo, '--no-gen'], root, env);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const res = run('hub-stack.mjs', ['list', '--root', root, '--json'], root, env);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.equal(JSON.parse(res.stdout).installed[0].installedAs, 'java-spring');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack add --repo 拒绝 index.json 中的越界包路径', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-bad-path-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const git = (args) => {
+      const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+      assert.equal(res.status, 0, res.stderr + res.stdout);
+    };
+    writeFileSync(join(repo, 'index.json'), JSON.stringify({
+      schemaVersion: 1,
+      packs: { 'java-spring': { path: 'stacks/../evil', detects: ['java-maven'] } },
+    }));
+    git(['add', '.']);
+    git(['commit', '-m', 'bad index']);
+
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const res = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--repo', repo, '--no-gen'], root, env);
+    assert.notEqual(res.status, 0, res.stdout);
+    assert.match(res.stderr, /包路径非法/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack cache gc 拒绝非正整数 --keep-days', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-keep-days-'));
+  try {
+    const res = run(
+      'hub-stack.mjs',
+      ['cache', 'gc', '--root', base, '--keep-days', '-1'],
+      base,
+      { DEVFLOW_CACHE_DIR: join(base, 'empty-cache') },
+    );
+    assert.notEqual(res.status, 0, res.stdout);
+    assert.match(res.stderr, /--keep-days 必须是正整数/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack cache gc 在非 devflow 目录可执行', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-gc-anywhere-'));
+  try {
+    const res = run(
+      'hub-stack.mjs',
+      ['cache', 'gc', '--root', base],
+      base,
+      { DEVFLOW_CACHE_DIR: join(base, 'empty-cache') },
+    );
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

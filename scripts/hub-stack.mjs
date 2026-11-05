@@ -51,8 +51,10 @@ function allowLocalRepo() {
 }
 
 /** 远端 index.json 的解析/校验失败不回显解析器原文，它可能含文件片段。 */
-function remoteIndex(repoGit, commit) {
-  const text = readFileAtCommit({ repoGit, commit, file: 'index.json' });
+function remoteIndex(repoGit, commit, offline = false) {
+  const text = readFileAtCommit({
+    repoGit, commit, file: 'index.json', offline,
+  });
   let data;
   try {
     data = JSON.parse(text);
@@ -64,6 +66,28 @@ function remoteIndex(repoGit, commit) {
   } catch {
     throw new StackPackError('远端 index.json 校验失败', 'STACK_INDEX');
   }
+}
+
+/** 人类可读输出先清洗控制字符并截断；--json 保持原值。 */
+function plainTitle(value, max = 80) {
+  const text = String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** 取值时把下一个 token 也当作值，避免 `--keep-days -1` 被当成缺值。 */
+function optionValue(argv, name, fallback = null) {
+  for (let i = argv.length - 1; i >= 0; i -= 1) {
+    const arg = argv[i];
+    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
+    if (arg === name) {
+      const value = argv[i + 1];
+      return value === undefined ? fallback : value;
+    }
+  }
+  return fallback;
 }
 
 /** index.json 的 path 会进入 git 参数与快照目录，非法路径用固定文案拒绝。 */
@@ -140,6 +164,33 @@ export async function main(argv = process.argv.slice(2)) {
     return { linted: path };
   }
 
+  // cache 是用户级维护命令：不依赖当前目录的 hub.yaml，必须在 loadHub 之前处理。
+  if (command === 'cache') {
+    const [, sub] = positionals(argv);
+    if (sub !== 'gc') throw new Error('未知 cache 子命令');
+    // 显式取值：`--keep-days -1` 不能被 argValue 当成缺值而回退到默认 30。
+    const keepDays = Number(optionValue(argv, '--keep-days', '30'));
+    if (!Number.isInteger(keepDays) || keepDays < 1) throw new Error('--keep-days 必须是正整数');
+    const cacheRoot = stackCacheRoot();
+    const cutoff = Date.now() - keepDays * 86400000;
+    const stale = listSnapshots(cacheRoot).filter((item) => item.mtimeMs < cutoff);
+    const apply = hasFlag(argv, '--apply');
+    if (!stale.length) log('ok', `没有超过 ${keepDays} 天的快照`);
+    for (const item of stale) {
+      log('info', `${apply ? '删除' : '将删除'} ${item.packId}@${item.commit.slice(0, 8)}`);
+    }
+    if (apply) {
+      for (const item of stale) {
+        rmSync(item.snapshotDir, { recursive: true, force: true });
+        rmSync(item.metaFile, { force: true });
+      }
+      log('ok', `已删除 ${stale.length} 个过期快照；其他项目可能需要重新联网拉取`);
+    } else if (stale.length) {
+      log('info', 'dry-run：加 --apply 才会删除；其他项目可能需要重新联网拉取');
+    }
+    return { stale: stale.length };
+  }
+
   loadHub(root);
 
   if (command === 'add') {
@@ -187,13 +238,14 @@ export async function main(argv = process.argv.slice(2)) {
       fetchCommit({
         repoGit: info.repoGit, commit, ref, offline,
       });
-      const index = remoteIndex(info.repoGit, commit);
+      const index = remoteIndex(info.repoGit, commit, offline);
       const entry = remoteEntry(index, packId);
       const snapshot = materializeSnapshot({
         repoGit: info.repoGit,
         commit,
         packId,
         packPath: entry.path,
+        indexEntry: entry,
         cacheRoot,
         offline,
         loaderFiles: loaderFiles(),
@@ -264,7 +316,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const item of installed) {
         log('ok', `${item.installedAs}@${item.version}${item.commit ? ` ${item.commit.slice(0, 8)}` : ' local'}`);
       }
-      for (const item of available) log('info', `可用 ${item.packId}：${item.title}`);
+      for (const item of available) log('info', `可用 ${item.packId}：${plainTitle(item.title)}`);
     }
     return { installed, available };
   }
@@ -317,9 +369,16 @@ export async function main(argv = process.argv.slice(2)) {
         log('warn', `跳过本地来源 ${record.installedAs}：不可跨机器复现`);
         continue;
       }
+      // 账本可能被手工改过；lock 是可提交事实，写前再次拒绝带凭据或非法形态的 URL。
+      let repo;
+      try {
+        repo = normalizeRepoUrl(record.repo, { allowFile: allowLocalRepo() });
+      } catch {
+        throw new StackPackError('栈记录中的仓库地址非法', 'STACK_URL');
+      }
       next.packs[record.installedAs] = {
         installedAs: record.installedAs,
-        repo: record.repo,
+        repo,
         packId: record.packId,
         path: record.path,
         ref: record.ref,
@@ -334,31 +393,6 @@ export async function main(argv = process.argv.slice(2)) {
       log('ok', `已写入 .claude/hub/stack-lock.yaml（${Object.keys(next.packs).length} 个包）`);
     }
     return { packs: next.packs };
-  }
-
-  if (command === 'cache') {
-    const [, sub] = positionals(argv);
-    if (sub !== 'gc') throw new Error('未知 cache 子命令');
-    const keepDays = Number(argValue(argv, '--keep-days', '30'));
-    if (!Number.isInteger(keepDays) || keepDays < 1) throw new Error('--keep-days 必须是正整数');
-    const cacheRoot = stackCacheRoot();
-    const cutoff = Date.now() - keepDays * 86400000;
-    const stale = listSnapshots(cacheRoot).filter((item) => item.mtimeMs < cutoff);
-    const apply = hasFlag(argv, '--apply');
-    if (!stale.length) log('ok', `没有超过 ${keepDays} 天的快照`);
-    for (const item of stale) {
-      log('info', `${apply ? '删除' : '将删除'} ${item.packId}@${item.commit.slice(0, 8)}`);
-    }
-    if (apply) {
-      for (const item of stale) {
-        rmSync(item.snapshotDir, { recursive: true, force: true });
-        rmSync(item.metaFile, { force: true });
-      }
-      log('ok', `已删除 ${stale.length} 个过期快照；其他项目可能需要重新联网拉取`);
-    } else if (stale.length) {
-      log('info', 'dry-run：加 --apply 才会删除；其他项目可能需要重新联网拉取');
-    }
-    return { stale: stale.length };
   }
 
   throw new Error(`暂不支持的子命令：${command}`);
