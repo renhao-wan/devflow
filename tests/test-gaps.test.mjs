@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { findTestGaps } from '../scripts/mark-test.mjs';
+import { findTestGaps, findChangedTests } from '../scripts/mark-test.mjs';
 
 const SCRIPT = join(resolve(import.meta.dirname, '..'), 'scripts', 'mark-test.mjs');
 
@@ -94,6 +94,38 @@ test('测试、文档、生成物与配置文件不进入缺口', () => {
     const report = findTestGaps(root);
     assert.equal(report.gaps.length, 0);
     assert.equal(report.stats.sourceFiles, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('删除测试文件不能作为覆盖证据', () => {
+  const root = initRepo();
+  try {
+    write(root, 'src/e.js', 'export const e = 1;\n');
+    write(root, 'src/e.test.js', 'test("e", () => {});\n');
+    commit(root);
+    write(root, 'src/e.js', 'export const e = 2;\n');
+    rmSync(join(root, 'src', 'e.test.js'));
+    const report = findTestGaps(root);
+    assert.deepEqual(report.gaps.map((g) => g.file), ['src/e.js']);
+    assert.equal(report.stats.changedTestFiles, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('删除的测试文件不会列为待运行测试', () => {
+  const root = initRepo();
+  try {
+    write(root, 'src/f.js', 'export const f = 1;\n');
+    write(root, 'tests/f.test.js', 'test("f", () => {});\n');
+    commit(root);
+    write(root, 'src/f.js', 'export const f = 2;\n');
+    rmSync(join(root, 'tests', 'f.test.js'));
+    const report = findChangedTests(root);
+    assert.equal(report.tests.includes('tests/f.test.js'), false);
+    assert.deepEqual(report.unmapped, ['src/f.js']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

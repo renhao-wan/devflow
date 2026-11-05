@@ -55,7 +55,10 @@ function testCandidates(file) {
 /** 对每个源码改动文件列出可能受影响的已存在测试；只提示，不执行测试。 */
 export function findChangedTests(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
-  const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
+  const paths = changes.files
+    .map((file) => String(file.path || '').replace(/\\/g, '/'))
+    // 已删除的文件不在工作区：它既不是需要补测试的改动，也不能当作覆盖证据。
+    .filter((path) => path && existsSync(join(root, path)));
   const changedTestFiles = paths.filter((path) => TEST_FILE.test(path));
   const changedStems = new Set(changedTestFiles.map(subjectStem));
   const tests = new Set(changedTestFiles);
@@ -90,7 +93,10 @@ export function findChangedTests(root, { base = null } = {}) {
 
 export function findTestGaps(root, { base = null } = {}) {
   const changes = collectChanges(root, { base });
-  const paths = changes.files.map((file) => String(file.path || '').replace(/\\/g, '/')).filter(Boolean);
+  const paths = changes.files
+    .map((file) => String(file.path || '').replace(/\\/g, '/'))
+    // 已删除的文件不在工作区：它既不是需要补测试的改动，也不能当作覆盖证据。
+    .filter((path) => path && existsSync(join(root, path)));
   const changedTests = new Set(paths.filter((path) => TEST_FILE.test(path)).map(subjectStem));
   const sources = paths.filter(isSourceFile);
 
