@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   argValue, hasFlag, isMain, log, posix, projectRoot, isValidStageName, isKnownStage, isRealPathInside,
-  DEVFLOW_STAGES,
+  DEVFLOW_STAGES, LOG_TAGS,
   warnUnknownArgs,
 } from './lib/common.mjs';
 import {
@@ -11,8 +11,6 @@ import {
 } from './lib/ecosystem.mjs';
 
 // JSON 模式下日志走 stderr，标签与普通输出的 log() 保持同一套大写形式。
-const LOG_TAGS = { ok: 'OK', warn: 'WARN', error: 'ERR' };
-
 function note(json, status, message) {
   if (json) process.stderr.write(`[${LOG_TAGS[status] || status}] ${message}\n`);
   else log(status, message);

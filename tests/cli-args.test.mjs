@@ -10,8 +10,8 @@ import { unknownArgs, warnUnknownArgs } from '../scripts/lib/common.mjs';
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
 
-function run(script, args, cwd) {
-  return spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', script), ...args], { cwd, encoding: 'utf8' });
+function run(script, args, cwd, env = process.env) {
+  return spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', script), ...args], { cwd, encoding: 'utf8', env });
 }
 
 function makeRoot() {
@@ -51,6 +51,29 @@ test('脚本对未知参数给出统一 warning，JSON 输出仍可解析', () =
     assert.match(result.stderr, /\[WARN\] 未知参数：--typo（已忽略）/);
     // JSON 模式下的日志标签与普通输出一致，统一大写。
     assert.doesNotMatch(result.stderr, /\[warn\]/);
+    assert.doesNotThrow(() => JSON.parse(result.stdout));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gen 在 JSON 模式下的日志标签同样为大写', () => {
+  const root = makeRoot();
+  try {
+    mkdirSync(join(root, '.claude', 'hub', 'stages', 'req'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'hub', 'stages', 'req', 'SKILL.md'),
+      '---\nname: devflow-req\ndescription: test\n---\n# Req\n',
+    );
+    const result = run(
+      'gen-claude-skills.mjs',
+      ['--root', root, '--json'],
+      root,
+      { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+    );
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /\[OK\] 写入/);
+    assert.doesNotMatch(result.stderr, /\[(ok|warn|error)\]/);
     assert.doesNotThrow(() => JSON.parse(result.stdout));
   } finally {
     rmSync(root, { recursive: true, force: true });
