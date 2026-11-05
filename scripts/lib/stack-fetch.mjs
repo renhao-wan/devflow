@@ -282,6 +282,7 @@ function safePackPath(packPath) {
   const value = String(packPath ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
   const segments = value.split('/');
   if (!value || value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.includes(':')
+    || /[\0\r\n]/.test(value)
     || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
     throw new StackPackError('非法包路径', 'STACK_PATH');
   }
@@ -345,11 +346,16 @@ function readBlobs(repoGit, hashes) {
   while (pos < buf.length) {
     const nl = buf.indexOf(10, pos);
     if (nl < 0) break;
-    const [sha, type, sizeText] = buf.slice(pos, nl).toString('utf8').split(' ');
+    const parts = buf.slice(pos, nl).toString('utf8').split(' ');
+    // header 无法解析时无法定位下一条，按现有方式退出。
+    if (parts.length < 3) break;
+    const [sha, type, sizeText] = parts;
     const size = Number(sizeText);
+    if (!Number.isInteger(size) || size < 0) break;
     const start = nl + 1;
-    if (type !== 'blob' || !Number.isFinite(size)) {
-      pos = start;
+    // 非 blob 仍带 size 字节内容与一个尾部换行，必须一并跳过，否则后续条目错位。
+    if (type !== 'blob') {
+      pos = start + size + 1;
       continue;
     }
     out.set(sha, buf.subarray(start, start + size));
@@ -515,8 +521,15 @@ export function listSnapshots(cacheRoot) {
   const direct = join(root, 'snapshots');
   if (existsSync(direct)) {
     candidates.push(direct);
-  } else if (existsSync(root)) {
-    for (const name of readdirSync(root)) {
+  } else {
+    let names;
+    try {
+      names = readdirSync(root);
+    } catch {
+      // 根目录不存在或不可读：只读列举降级为空结果。
+      return [];
+    }
+    for (const name of names) {
       const nested = join(root, name, 'snapshots');
       if (existsSync(nested)) candidates.push(nested);
     }
@@ -531,21 +544,32 @@ export function listSnapshots(cacheRoot) {
     }
     for (const commit of commits) {
       const dir = join(snapshotsDir, commit);
+      let commitStat;
       try {
-        if (!statSync(dir).isDirectory()) continue;
+        commitStat = statSync(dir);
+      } catch {
+        // 扫描期间被并发删除（ENOENT）或不可读：跳过该条目。
+        continue;
+      }
+      if (!commitStat.isDirectory()) continue;
+      let names;
+      try {
+        names = readdirSync(dir);
       } catch {
         continue;
       }
-      for (const name of readdirSync(dir)) {
+      for (const name of names) {
         if (!name.endsWith(META_SUFFIX)) continue;
         const packId = name.slice(0, -META_SUFFIX.length);
         if (!isValidStackName(packId)) continue;
         const snapshotDir = join(dir, packId);
         const metaFile = join(dir, name);
         try {
-          if (!statSync(snapshotDir).isDirectory() || !statSync(metaFile).isFile()) continue;
+          const snapshotStat = statSync(snapshotDir);
+          const metaStat = statSync(metaFile);
+          if (!snapshotStat.isDirectory() || !metaStat.isFile()) continue;
           out.push({
-            commit, packId, snapshotDir, metaFile, mtimeMs: statSync(metaFile).mtimeMs,
+            commit, packId, snapshotDir, metaFile, mtimeMs: metaStat.mtimeMs,
           });
         } catch {
           // 扫描期间被清理的条目直接跳过。

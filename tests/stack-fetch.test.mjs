@@ -2,12 +2,11 @@ import { test } from 'node:test';
 import './support.mjs';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync,
+  mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync,
 } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import {
   ensureRepo, resolveCommit, fetchCommit, refreshRef, gitRun, stackCacheRoot,
   materializeSnapshot, verifySnapshot,
