@@ -6,7 +6,7 @@
 
 1. [README](../README.md)：定位、安装、快速开始、命令与阶段概览。
 2. [layers.md](layers.md)：三层结构、每个目录的职责、AI 读取时机、冲突优先级、同步与回灌范围。
-3. [usage.md](usage.md)：阶段细节、轻量流程、方案调研、`hub.yaml`、阶段资源、技术栈规范、单一真源、多根工作区与 statusline。
+3. [usage.md](usage.md)：阶段细节、轻量流程、方案调研、`hub.yaml`、阶段资源、技术栈规范、init 草稿与规则落位、单一真源、多根工作区与 statusline。
 4. [hooks.md](hooks.md)：hooks 作用域、生成物写保护、危险命令的 deny/ask 清单与拦截边界。
 5. [tool-routing.md](tool-routing.md)：同类工具登记、检测、路由决策与安全边界。
 6. [native-capabilities.md](native-capabilities.md)：Claude Code 原生能力接入、版本要求与降级。
@@ -17,7 +17,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [usage.md](usage.md) | 六个阶段与轻量流程、方案调研、`hub.yaml`、阶段资源、技术栈规范、投影生成、多根工作区、statusline |
+| [usage.md](usage.md) | 六个阶段与轻量流程、方案调研、`hub.yaml`、阶段资源、技术栈规范、init 草稿与规则落位、投影生成、多根工作区、statusline |
 | [hooks.md](hooks.md) | 安全门禁、hooks 事件表、生成物写保护、deny/ask 清单、fail-open |
 | [tool-routing.md](tool-routing.md) | `ecosystem.yaml`、工具检测、路由决策、命令参考 |
 | [native-capabilities.md](native-capabilities.md) | 子代理、`AskUserQuestion`、`/goal`、plan mode、hooks、statusline 的接入与降级 |

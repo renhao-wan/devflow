@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isValidStackName, planStacks } from '../scripts/lib/stacks.mjs';
+import { DRAFT_MARKER } from '../scripts/lib/common.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
 
@@ -112,6 +113,36 @@ test('技术栈目录没有任何 Markdown 时给提醒', () => {
     const plan = planStacks(root, { stack: 'empty' }, STAGES);
     assert.equal(plan.rows[0].dirExists, true);
     assert.ok(plan.issues.some((issue) => issue.severity === 'warn' && /没有 .md/.test(issue.message)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('草稿不进入技术栈映射，填写并删除标记后才生效', () => {
+  const root = makeRoot();
+  try {
+    writeStack(root, 'java-spring', {
+      '_shared.md': `${DRAFT_MARKER}\n# Java 草稿\n\n- TODO: 补充约定。\n`,
+      'plan.md': `${DRAFT_MARKER}\n# 方案草稿\n`,
+    });
+    const draftPlan = planStacks(root, { stack: 'java-spring' }, STAGES);
+    assert.equal(draftPlan.rows[0].sharedFile, null);
+    assert.equal(draftPlan.rows[0].stageFile.plan, undefined);
+    assert.equal(draftPlan.stacks[0].shared, null);
+    assert.equal(draftPlan.stacks[0].stages.plan, undefined);
+    assert.ok(draftPlan.issues.some((issue) => issue.severity === 'warn' && /_shared\.md 是草稿/.test(issue.message)));
+    assert.ok(draftPlan.issues.some((issue) => issue.severity === 'warn' && /plan\.md 是草稿/.test(issue.message)));
+    // 只有草稿时不应再报“没有任何 Markdown”。
+    assert.ok(!draftPlan.issues.some((issue) => /没有 \.md/.test(issue.message)));
+
+    writeStack(root, 'java-spring', {
+      '_shared.md': '# Java 通用规范\n',
+      'plan.md': '# Java 方案规范\n',
+    });
+    const ready = planStacks(root, { stack: 'java-spring' }, STAGES);
+    assert.equal(ready.rows[0].sharedFile, '.claude/hub/stacks/java-spring/_shared.md');
+    assert.equal(ready.rows[0].stageFile.plan, '.claude/hub/stacks/java-spring/plan.md');
+    assert.ok(!ready.issues.some((issue) => /草稿/.test(issue.message)));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

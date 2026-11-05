@@ -205,10 +205,12 @@ subprojects:
 ```
 
 - 子项目未写 `stack` 时继承顶层 `stack`；没有子项目时用顶层 `stack` 生成“工作区根”映射。
+- `init` 探测到单一技术栈时（工作区根与所有子项目映射后的栈名去重后只剩一个），会自动写入顶层 `stack` 并生成 `stacks/<stack>/_shared.md` 草稿；多栈或未知栈不猜，保持为空由项目声明。`Makefile` 常作为 Node.js/Go 仓库的辅助脚本，只有在它是唯一栈时才按 `make` 处理。
 - 栈名只允许 `[a-z0-9][a-z0-9_-]*`，不允许路径分隔符与 `..`。
 - 生成投影时写入“子项目 → 栈 → 本阶段规范/通用规范”映射；执行阶段只读任务涉及子项目的文件，不预读全部。
 - 优先级：阶段门禁与安全底线 > `overrides/<sub>/<stage>.md` > `stacks/<stack>/<stage>.md` > `stacks/<stack>/_shared.md` > `_shared/` > 阶段默认做法。
-- 改栈文件**内容**不需要重新生成；新增/删除栈文件或修改 `hub.yaml` 后需要重新生成。
+- 改栈文件**内容**不需要重新生成；新增/删除栈文件、把草稿转为正式规则或修改 `hub.yaml` 后需要重新生成。
+- 规则文件（`_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`）的草稿（首行 `<!-- devflow:draft -->`）不会出现在映射里，也不会被同步或回灌覆盖；填写后删除首行标记，再运行 `gen`。
 - 栈目录缺失或栈名非法是配置错误，`gen` 与 `doctor` 会报错；`stack` 声明不是字符串时同样报错，并在投影中标为「配置无效」。报错时 `gen` 仍会写出带「缺失」「名称非法」或「配置无效」标记的投影与账本，但退出码为 1。栈目录存在但没有任何 `.md` 时只给提醒。
 - 子项目省略 `stack` 即继承顶层；当前不支持显式退出继承，个别子项目需要不同规范时给它指定另一个栈。
 - 同步与回灌都覆盖 `stacks/`：对应模板库的 `templates/stacks/`；回灌使用 `devflow upstream --stack <name>`，`--all` 包含所有技术栈。`--all` 会跳过名字非法的栈目录，并提示被跳过的目录。
@@ -223,7 +225,7 @@ subprojects:
                                               .claude/skills/devflow-*（薄壳，勿手改）
 ```
 
-来源按 `templates.order` 先到先得：同名文件由高优先库整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底。项目里已有的手改由 `sync` 的基线快照三方合并保留；`.claude/.hub-sources.json` 的 v3 账本记录每个文件的 `source`。删除高优先库的同名文件后，`sync` 会自动回落到下一来源。
+来源按 `templates.order` 先到先得：同名文件由高优先库整文件覆盖（默认团队 > 个人 > 上游），上游始终兜底。项目里已有的手改由 `sync` 的基线快照三方合并保留；`.claude/.hub-sources.json` 的 v3 账本记录每个文件的 `source`。删除高优先库的同名文件后，`sync` 会自动回落到下一来源。项目草稿（首行 `<!-- devflow:draft -->`）是用户真源，`sync` 会保留它，`--force` 也不覆盖。
 
 三层结构、各目录职责、冲突优先级与回灌范围见 [layers.md](layers.md)。
 
@@ -234,7 +236,7 @@ AI **不直接读取个人库、团队库或上游库**；三个库只在 `init`
 1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
 2. **进入阶段**：加载插件入口 `skills/<stage>/SKILL.md`；入口先读项目投影 `.claude/skills/devflow-<stage>/SKILL.md`，再按投影指令读取 `.claude/hub/stages/<stage>/SKILL.md`。
 3. **执行阶段**：`references/`、`templates/` 按需读取，相对路径以对应 `SKILL.md` 所在目录为基准。
-4. **共享规则与子项目例外**：`_shared/` 在生成投影时内联；`overrides/<sub>/<stage>.md` 的读取指令写在投影里。
+4. **共享规则与子项目例外**：投影只列出 `_shared/` 文件路径，执行阶段按路径读取正文；`overrides/<sub>/<stage>.md` 的读取指令写在投影里。
 5. **技术栈规范**：投影给出“子项目 → 栈 → 规范文件”映射，处理某个子项目时只读对应栈文件。
 
 投影缺失时，入口直接读 hub 源并提示运行 `node scripts/devflow-gen.mjs`；两者都缺失时提示先运行 `/devflow:init`。目录职责、完整读取时序与冲突优先级见 [layers.md](layers.md)。
@@ -243,9 +245,10 @@ AI **不直接读取个人库、团队库或上游库**；三个库只在 `init`
 
 改规则的流程：
 
-1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`（必要时增删 `references/`、`templates/`）；语言/框架规范改 `.claude/hub/stacks/<stack>/`。
-2. 运行 `node scripts/devflow-gen.mjs`。
-3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、无缺失资源。
+1. 不确定一条规则该放 `_shared/`、阶段、技术栈还是子项目覆盖时，先用 `devflow-rule-placement` 判断落位；同一规则只保留一处真源。
+2. 编辑目标文件。阶段规则改 `.claude/hub/stages/<stage>/SKILL.md`（必要时增删 `references/`、`templates/`）；语言/框架规范改 `.claude/hub/stacks/<stack>/`；子项目例外改 `.claude/hub/overrides/<sub>/<stage>.md`。
+3. 新增/删除规则文件、把草稿转成正式规则或修改 `hub.yaml` 后，运行 `node scripts/devflow-gen.mjs`；只改已有规则正文不需要重新生成，投影只记录路径。
+4. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、无缺失资源、没有遗留草稿标记。
 
 生成器会：
 
@@ -278,7 +281,7 @@ AI **不直接读取个人库、团队库或上游库**；三个库只在 `init`
 - **Maven 多模块会展开**：父 `pom.xml` 的 `<modules>` 会逐个成为独立子项目（最多两层），命令形如 `cd service/core && mvn test`；父 pom 不再单独成项，避免一次跑全量。
 - 探测不到测试命令时 init 会警告，请手动补充 `testCommand`。
 
-### init 只生成骨架，`hub.yaml` 需要人工复核
+### init 生成骨架与规则草稿，`hub.yaml` 需要人工复核
 
 `hub.yaml` 是项目真源，init 的探测只是一次初判。以下情况必须手动修改：
 
@@ -317,6 +320,26 @@ node scripts/devflow-doctor.mjs
 ```
 
 `doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与七个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
+
+## init 草稿与规则落位
+
+首次 `init` 会在生成投影之前写两类草稿：
+
+- `.claude/hub/_shared/project-basics.md`：所有阶段共用的项目基础规则。`init` 技能会读取项目概览与构建文件，尽量补全能从项目确认的内容，最多再问 3 个问题。
+- `.claude/hub/stacks/<stack>/_shared.md`：只在探测到单一技术栈、且 `hub.yaml` 自动声明了 `stack` 时生成。
+
+草稿首行是 `<!-- devflow:draft -->`，里面的 `TODO:` 是占位，不是规则。标记未删除时：`gen` 不把规则草稿纳入投影，`sync` 不覆盖，`upstream` 不回灌，`doctor` 统一提示待填写。草稿适用于 `_shared/`、`stacks/`、`overrides/` 与阶段 `references/`、`templates/`；阶段入口 `SKILL.md` 本身不能标记为草稿，否则 `gen` 会报错、`doctor` 会单独提示。填完后删除首行标记；新增文件或刚转正的草稿需要运行 `gen` 才会出现在投影的路径清单里，已在清单中的文件只改正文不需要。
+
+- 重复 `init` 只补缺失的通用草稿，不覆盖已有草稿；`--force` 也不覆盖。
+- `--no-draft` 关闭草稿与自动 `stack`，适合已有明确配置或不想让 `init` 代填的项目。
+- 多技术栈不自动声明 `stack`，只生成通用草稿；日志会提示使用落位技能。
+- 不需要的草稿直接删除即可，不进入账本，也没有额外清理步骤。
+
+### 规则该放哪
+
+按最小充分范围选择：所有阶段都适用 → `_shared/`；只影响某阶段 → `stages/<stage>/SKILL.md`；只影响某语言/框架 → `stacks/<stack>/`；只影响某子项目 → `overrides/<sub>/<stage>.md`；只影响当前任务 → 留在 `docs/devflow/<slug>/`，不落位。
+
+`devflow-rule-placement` 会先复述规则、确认范围、用 `Grep` 检查重复，再写入“条件 + 动作 + 例外”，最后判断是否需要 `gen` 并运行 `doctor`。它不会直接改 `.claude/skills/devflow-*` 投影。
 
 ## 项目概览（onboard）
 

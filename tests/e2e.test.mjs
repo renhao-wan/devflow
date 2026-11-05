@@ -107,8 +107,9 @@ test('技术栈映射进入投影、账本与体检', () => {
 
     const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
     const yaml = readFileSync(hubFile, 'utf8');
-    assert.doesNotMatch(yaml, /^stack:/m);
-    writeFileSync(hubFile, yaml.replace('stages:', 'stack: java-spring\nstages:'));
+    // makeSandbox 根与 services/api 都是 package.json，init 会自动声明单一技术栈。
+    assert.match(yaml, /^stack: "nodejs"$/m);
+    writeFileSync(hubFile, yaml.replace(/^stack: .*$/m, 'stack: java-spring'));
 
     const gen = run('gen-claude-skills.mjs', ['--root', root], root);
     assert.equal(gen.status, 0, gen.stdout + gen.stderr);
@@ -165,7 +166,7 @@ test('未声明 stages 时 doctor 按目录扫描校验技术栈阶段文件', (
     const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
     const yaml = readFileSync(hubFile, 'utf8')
       .replace(/^stages:\n(?:  - .*\n)+/m, '')
-      .replace(/^subprojects:/m, 'stack: java-spring\nsubprojects:');
+      .replace(/^stack: .*$/m, 'stack: java-spring');
     writeFileSync(hubFile, yaml);
 
     // plan.md 是目录而不是文件：只有按目录扫描出的阶段列表才会去检查它。
@@ -217,7 +218,7 @@ test('stack 与 subprojects 类型错误在投影中给出明确提示', () => {
     const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
     const base = readFileSync(hubFile, 'utf8');
 
-    writeFileSync(hubFile, base.replace(/^stages:/m, 'stack: 123\nstages:'));
+    writeFileSync(hubFile, base.replace(/^stack: .*$/m, 'stack: 123'));
     const gen = run('gen-claude-skills.mjs', ['--root', root], root);
     assert.equal(gen.status, 1);
     assert.match(gen.stdout + gen.stderr, /顶层 stack 必须是字符串/);
@@ -680,7 +681,7 @@ test('doctor 提示 testCommand 依赖的工具不在 PATH', () => {
   }
 });
 
-test('_shared 规则注入所有投影，变更后 doctor 提示重新生成', () => {
+test('_shared 规则以路径进入所有投影，正文修改不需要重新生成', () => {
   const root = makeSandbox();
   try {
     assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
@@ -693,9 +694,12 @@ test('_shared 规则注入所有投影，变更后 doctor 提示重新生成', (
     for (const stage of ['req', 'plan', 'implement', 'test', 'review', 'debug']) {
       const projection = readFileSync(join(root, '.claude', 'skills', `devflow-${stage}`, 'SKILL.md'), 'utf8');
       assert.match(projection, /## 共享规则/);
-      assert.match(projection, /不提交密钥/);
+      assert.match(projection, /\.claude\/hub\/_shared\/security\.md/);
+      // 投影只记录路径，不内联正文。
+      assert.doesNotMatch(projection, /不提交密钥/);
     }
     const manifest = JSON.parse(readFileSync(join(root, '.claude', '.hub-manifest.json'), 'utf8'));
+    // init 生成的 project-basics.md 是草稿，不进入账本。
     assert.equal(manifest.shared.length, 1);
     assert.equal(manifest.shared[0].path, '.claude/hub/_shared/security.md');
 
@@ -704,11 +708,12 @@ test('_shared 规则注入所有投影，变更后 doctor 提示重新生成', (
 
     writeFileSync(join(sharedDir, 'security.md'), '# 安全\n\n- 不提交密钥。\n- 不记录个人路径。\n');
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
-    assert.match(doctor.stdout, /共享规则已变更/);
+    assert.doesNotMatch(doctor.stdout, /共享规则已变更/);
+    assert.equal(doctor.status, 0, doctor.stdout);
 
-    assert.equal(run('gen-claude-skills.mjs', ['--root', root], root).status, 0);
-    assert.match(readFileSync(join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md'), 'utf8'), /不记录个人路径/);
-    assert.doesNotMatch(run('hub-doctor.mjs', ['--root', root], root).stdout, /共享规则已变更/);
+    // 正文修改不需要 gen；投影仍不含新增正文。
+    assert.equal(run('gen-claude-skills.mjs', ['--root', root, '--check'], root).status, 0);
+    assert.doesNotMatch(readFileSync(join(root, '.claude', 'skills', 'devflow-req', 'SKILL.md'), 'utf8'), /不记录个人路径/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

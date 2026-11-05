@@ -67,3 +67,4 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - `.claude/.devflow-state.json` 只记录调用方显式传入的结果，不解析测试框架 stdout；退出码判断与失败原因以实际命令输出为准。
 - 环境缺失导致无法运行时，明确报告缺失项，而不是猜测结果。
 - 不把普通小 bug 默认推进 review；轻量修复是否需要 review 由 test 阶段的 triage 按实际 diff 判定，`debug.md` 顶部的 `review: required` 是显式要求并优先于跳过结论。
+- 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。

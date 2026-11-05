@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DRAFT_MARKER } from '../scripts/lib/common.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -65,6 +66,28 @@ function makePluginCopy(base) {
   writeFileSync(market, JSON.stringify(marketData, null, 2));
   return copy;
 }
+
+test('回灌跳过草稿；目录只有草稿时明确报错', () => {
+  const root = makeProject();
+  const pluginCopy = makePluginCopy(root);
+  try {
+    const reviewDir = join(root, '.claude', 'hub', 'stages', 'review');
+    mkdirSync(join(reviewDir, 'references'), { recursive: true });
+    writeFileSync(join(reviewDir, 'references', 'draft.md'), `${DRAFT_MARKER}\n# 草稿\n`);
+    const mixed = run('hub-upstream.mjs', ['--root', root, '--stage', 'review', '--plugin-root', pluginCopy], root);
+    assert.equal(mixed.status, 0, mixed.stderr);
+    assert.doesNotMatch(mixed.stdout, /draft\.md/);
+
+    const draftOnly = join(root, '.claude', 'hub', 'stages', 'draft-only');
+    mkdirSync(draftOnly, { recursive: true });
+    writeFileSync(join(draftOnly, 'SKILL.md'), `${DRAFT_MARKER}\n---\nname: draft-only\ndescription: 草稿\ndesc: x\n---\n\n# 草稿\n`);
+    const empty = run('hub-upstream.mjs', ['--root', root, '--stage', 'draft-only', '--plugin-root', pluginCopy], root);
+    assert.equal(empty.status, 1);
+    assert.match(empty.stderr + empty.stdout, /目录只有草稿/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('回灌预览：逐行剔除项目专属内容且不写插件', () => {
   const root = makeProject();

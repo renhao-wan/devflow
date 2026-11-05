@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { DRAFT_MARKER } from '../scripts/lib/common.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const NODE = process.execPath;
@@ -389,6 +390,54 @@ function writeLibraryFile(root, rel, content) {
   mkdirSync(join(file, '..'), { recursive: true });
   writeFileSync(file, content);
 }
+
+test('sync 保留项目草稿，--force 也不覆盖', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-draft-'));
+  try {
+    const repo = makePlugin(base, {
+      'templates/stages/review/SKILL.md': '---\nname: review\ndescription: 评审\n---\n\n上游 review\n',
+      'templates/stages/review/references/project-note.md': '# 上游参考\n',
+    });
+    const root = makeProject(base, repo);
+    const target = join(root, '.claude', 'hub', 'stages', 'review', 'references', 'project-note.md');
+    const draft = `${DRAFT_MARKER}\n# 评审参考草稿\n\n- TODO: 补充项目约定。\n`;
+    writeFileSync(target, draft);
+
+    const dry = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo, '--dry-run'], root);
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.match(dry.stdout, /保留项目草稿 1/);
+    assert.equal(readFileSync(target, 'utf8'), draft);
+
+    const sync = run('hub-sync.mjs', ['--root', root, '--plugin-root', repo, '--force'], root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /保留项目草稿 1/);
+    assert.equal(readFileSync(target, 'utf8'), draft);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('sync 跳过模板库草稿，不写入项目', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-sync-template-draft-'));
+  try {
+    const repo = makePlugin(base, {});
+    const root = makeProject(base, repo);
+    const personal = join(base, 'personal');
+    writeLibraryFile(personal, 'stages/plan/references/draft.md', `${DRAFT_MARKER}\n# 模板草稿\n\n- TODO: 补充。\n`);
+
+    const args = ['--root', root, '--plugin-root', repo, '--personal-library', personal];
+    const dry = run('hub-sync.mjs', [...args, '--dry-run'], root);
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.match(dry.stdout, /跳过草稿 1（其中模板库草稿 1）/);
+
+    const sync = run('hub-sync.mjs', args, root);
+    assert.equal(sync.status, 0, sync.stderr + sync.stdout);
+    assert.match(sync.stdout, /跳过草稿 1（其中模板库草稿 1）/);
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stages', 'plan', 'references', 'draft.md')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test('sync 优先使用个人库，个人模板移除后回落到上游', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-sync-personal-'));

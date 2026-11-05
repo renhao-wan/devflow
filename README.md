@@ -9,6 +9,7 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 - **六个阶段**：`req → plan → implement → test → review`，测试或实现失败时进入 `debug` 并回到 `test`；每个阶段都有明确产出与硬门禁。
 - **方案前调研**：plan 阶段先查社区、GitHub 与开源项目是否已有实现，按改动级别决定调研深度；搜索失败时显式降级并留痕，不编造来源。
 - **单一真源**：项目规则只维护 `.claude/hub/`；`.claude/skills/devflow-*` 是生成物，不手改。
+- **规则落位与草稿**：`init` 生成待填写的规则草稿；不确定一条规范该放 `_shared/`、阶段、技术栈还是子项目覆盖时，用 `devflow-rule-placement` 按最小充分范围判断。
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **按技术栈复用规范**：在 `.claude/hub/stacks/<stack>/` 维护 Java、Vue 等语言/框架规范，用 `hub.yaml` 的 `stack` 把子项目映射到栈；阶段执行时只读任务涉及子项目的规范，`overrides/` 优先且不得放宽门禁。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
@@ -50,13 +51,14 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 会完成：
 
-1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`），并创建空的 `_shared/`、`overrides/` 与 `stacks/`。
-2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令。
+1. 创建 `.claude/hub/`，复制六个阶段的模板（含 `references/`、`templates/`），并创建 `_shared/`、`overrides/` 与 `stacks/`。
+2. 写入 `hub.yaml`，自动探测子项目、包管理器与测试命令；探测到单一技术栈时自动写入顶层 `stack`。
 3. 在 `scripts/` 放八个薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage` / `devflow-check` / `devflow-trace`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
-4. 生成 `.claude/skills/devflow-*` 投影。
-5. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
+4. 生成规则草稿：`_shared/project-basics.md`，单栈时还有 `stacks/<stack>/_shared.md`。草稿里的 `TODO:` 是占位，不是规则。
+5. 生成 `.claude/skills/devflow-*` 投影。
+6. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
-初始化后请检查 `.claude/hub/hub.yaml`，尤其是自动探测的测试命令。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
+初始化后请检查 `.claude/hub/hub.yaml`，尤其是自动探测的测试命令；按提示填写草稿并删除首行 `<!-- devflow:draft -->`，再运行 `node scripts/devflow-gen.mjs`。之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
 
 ### 2. 走一遍流程
 
@@ -96,7 +98,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 
 | 命令 | 作用 |
 | --- | --- |
-| `/devflow:init [--force] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目与测试命令；库路径会记录到 `.devflow.json` |
+| `/devflow:init [--force] [--no-draft] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目、测试命令与单一技术栈，并生成规则草稿；库路径会记录到 `.devflow.json` |
 | `/devflow:req <需求> [--light]` | 需求澄清，产出 `req.md`；`--light` 时合并为 `brief.md` |
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
 | `/devflow:implement <slug>` | 按计划或 `brief.md` 小步实现，测试先行 |

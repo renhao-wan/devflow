@@ -46,7 +46,7 @@
 
 - 插件级 `skills/`（工程流程、TDD、评审、排障、hub 管理）是**跨项目通用能力**，描述“怎么做”。阶段入口（req…sync）同样是 skills，只是带上了 `disable-model-invocation` 等调用约束，不再是独立的 `commands/`。
 - `templates/stages/` 是**项目级阶段规则**，init 复制为 `.claude/hub/stages/`，描述“本项目每个阶段的具体规范”。
-- `_shared/` 是跨阶段通用规则，生成投影时内联进每个阶段；`overrides/` 是子项目级例外，不参与同步与回灌；`stacks/` 按技术栈复用规范，参与同步与回灌。
+- `_shared/` 是跨阶段通用规则，投影只记录路径、执行时读取正文；`overrides/` 是子项目级例外，不参与同步与回灌；`stacks/` 按技术栈复用规范，参与同步与回灌。`init` 可生成规则草稿，草稿在删除首行标记前不进入投影、同步与回灌。
 - 修改阶段规范只动项目 hub，修改通用方法论才动插件 skills；`overrides/`、`hub.yaml`、`project-overview.md` 不会同步或回灌到模板库。
 
 ## 六阶段与门禁
@@ -177,4 +177,4 @@ devflow 与 superpowers 都覆盖计划、TDD、排障与评审，但分工不�
 - [x] 1.4.0：生成物写保护、PowerShell/Monitor 危险命令拦截、hub 改动与待验证分离、`evals/` 行为评测、`bin/devflow` 统一 CLI、命令迁移为 skills
 - [x] 1.4.1：`/devflow:status` 只读进度视图、阶段入口补充下一步命令与 slug 推断规则、工具生态索引与路由（`devflow route`、`--detect` / `--list` / `--force-devflow` / `--tool`）、轻量功能与小 bug 双通道（`brief.md` / `debug.md`）
 - [x] 1.5.0：`/devflow:onboard` 项目概览；`init` 生成简版，重扫只刷新标记块内自动段；`doctor` 通过事实指纹发现概览过期
-- [x] 第二层完善：阶段入口先读项目投影（内联 `_shared`、提示 `overrides`）、`stacks/` 技术栈映射与惰性读取、同步/回灌/`doctor` 覆盖技术栈
+- [x] 第二层完善：阶段入口先读项目投影（列出 `_shared` 路径、提示 `overrides`）、`stacks/` 技术栈映射与惰性读取、同步/回灌/`doctor` 覆盖技术栈、init 规则草稿与落位技能

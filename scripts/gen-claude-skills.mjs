@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import {
   loadHub, pluginInfo, findPluginRoot, satisfies, argValue, hasFlag,
   readText, writeAtomic, contentHash, normalizeEol, canonicalPath, log, posix, isMain, projectRoot,
-  ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside,
+  ensureDir, walk, relPosix, parseFrontmatter, isValidStageName, isGeneratedArtifact, isRealPathInside, isDraft,
 } from './lib/common.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
@@ -64,6 +64,7 @@ function stackSection(stackPlan, stage) {
     '',
     '规则优先级：阶段门禁与安全底线 > `overrides` > `stacks/<stack>/<stage>.md` > `stacks/<stack>/_shared.md` > `_shared` > 阶段默认做法。',
     '技术栈规范不得放宽门禁或安全底线。',
+    '技术栈目录中的草稿不会列出；填写后删除首行的草稿标记，再运行 gen。',
   ].join('\n');
 }
 
@@ -80,13 +81,19 @@ function overrideList(root, stage) {
   const dir = join(root, '.claude', 'hub', 'overrides');
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, `${stage}.md`)))
+    .filter((d) => d.isDirectory())
+    .filter((d) => {
+      const file = join(dir, d.name, `${stage}.md`);
+      return existsSync(file) && !isDraft(readText(file));
+    })
     .map((d) => d.name);
 }
 
 function stageResources(root, stage) {
   const dir = join(root, '.claude', 'hub', 'stages', stage);
   return walk(dir)
+    // 草稿不是规则：TODO 不能作为参考资料交给阶段执行。
+    .filter((file) => !isDraft(readText(file)))
     .map((file) => relPosix(dir, file))
     .filter((rel) => rel !== 'SKILL.md' && !isGeneratedArtifact(rel))
     .sort();
@@ -102,7 +109,7 @@ function sharedRules(root) {
       content: normalizeEol(readText(abs)).trim(),
       hash: contentHash(readText(abs)),
     }))
-    .filter((s) => s.content && !isGeneratedArtifact(s.rel))
+    .filter((s) => s.content && !isGeneratedArtifact(s.rel) && !isDraft(s.content))
     .sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
@@ -133,6 +140,10 @@ function buildSkill(root, stage, config, shared, stackPlan) {
   if (!existsSync(sourceAbs)) {
     return { stage, error: `缺少源文件 ${source}` };
   }
+  // 阶段入口是流程骨架，不能是草稿；否则整个阶段都会读取到 TODO 占位。
+  if (isDraft(readText(sourceAbs))) {
+    return { stage, error: `${source} 带草稿标记：阶段入口不支持草稿，请删除首行标记后再生成。` };
+  }
   const description = stageDescription(root, stage);
   const overrides = overrideList(root, stage);
   const resources = stageResources(root, stage);
@@ -143,7 +154,7 @@ function buildSkill(root, stage, config, shared, stackPlan) {
     ? overrides.map((s) => `- 处理 \`${s}\` 时，优先读取 \`.claude/hub/overrides/${s}/${stage}.md\`。`).join('\n')
     : '- 当前没有子项目级覆盖。';
   const sharedBlock = shared.length
-    ? shared.map((s) => `### \`${s.rel}\`\n\n${s.content}`).join('\n\n')
+    ? shared.map((s) => `- \`${s.path}\``).join('\n')
     : '- 当前没有共享规则。';
 
   const body = `${MARKER}
@@ -159,12 +170,13 @@ ${description}
 ## 单一真源
 
 执行前必须完整读取 \`${source}\`。
-本项目投影已内联 \`_shared\`；\`overrides\` 与 \`stacks\` 按下方指令惰性读取。
+投影只记录 \`_shared\`、\`overrides\` 与 \`stacks\` 的路径，正文均按下方指令惰性读取，不复制进本文件。
 其中的 \`references/\`、\`templates/\` 等相对引用，以**该文件所在目录**为基准。
 
 ## 共享规则
 
-以下规则来自 \`.claude/hub/_shared/\`，对所有阶段生效；阶段正文可补充，但不得放宽其中的安全与门禁要求。
+以下文件来自 \`.claude/hub/_shared/\`，对所有阶段生效；执行前必须逐个完整读取，不要只凭记忆。
+阶段正文可补充，但不得放宽其中的安全与门禁要求。
 
 ${sharedBlock}
 
@@ -390,7 +402,7 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion: version,
     requiresPlugin: requires,
     source: '.claude/hub',
-    shared: shared.map((s) => ({ path: s.path, hash: s.hash })),
+    shared: shared.map((s) => ({ path: s.path })),
     stacks: stackManifest(stackPlan),
     skills: [
       ...written.map((r) => ({

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import {
   pluginInfo, findPluginRoot, satisfies, readText, contentHash, normalizeEol, log,
   posix, isMain, projectRoot, argValue, hasFlag, parseYaml, canonicalPath, walk,
-  isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside,
+  isPluginCache, isValidPluginRoot, samePath, isValidStageName, isPathInside, isDraft,
 } from './lib/common.mjs';
 import { LOADERS, loaderSource } from './hub-init.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
@@ -131,6 +131,8 @@ export async function main(argv = process.argv.slice(2)) {
     const stages = stagePlan.stages;
     const stackPlan = planStacks(root, config, stages);
     for (const issue of stackPlan.issues) {
+      // 草稿统一在下方统计，避免同一文件被报告两次。
+      if (issue.severity === 'warn' && /草稿/.test(issue.message)) continue;
       const hint = issue.severity === 'error'
         ? '运行 /devflow:sync 补齐技术栈模板，或修正 .claude/hub/hub.yaml 的 stack 声明'
         : '在 .claude/hub/stacks/<stack>/ 添加 _shared.md 或 <stage>.md';
@@ -139,6 +141,29 @@ export async function main(argv = process.argv.slice(2)) {
     if (stackPlan.rows.length && !stackPlan.issues.some((i) => i.severity === 'error')) {
       const names = [...new Set(stackPlan.rows.map((row) => row.stack))];
       add('ok', `技术栈映射有效：${stackPlan.rows.length} 个子项目 → ${names.join('、')}`);
+    }
+
+    const drafts = [];
+    const stageEntryDrafts = [];
+    for (const name of ['_shared', 'stages', 'stacks', 'overrides']) {
+      const dir = join(root, '.claude', 'hub', name);
+      for (const abs of walk(dir, '.md')) {
+        if (!isDraft(readText(abs))) continue;
+        const rel = posix(relative(root, abs));
+        // 阶段入口本身不是规则文件，标记草稿会让整个阶段读取到占位内容。
+        if (/^\.claude\/hub\/stages\/[^/]+\/SKILL\.md$/.test(rel)) stageEntryDrafts.push(rel);
+        else drafts.push(rel);
+      }
+    }
+    if (stageEntryDrafts.length) {
+      add('warn', `阶段入口 SKILL.md 不支持草稿标记：${stageEntryDrafts.join('、')}`,
+        '删除首行草稿标记后运行 node scripts/devflow-gen.mjs');
+    }
+    if (drafts.length) {
+      add('warn', `${drafts.length} 个规则草稿待填写：${drafts.join('、')}`,
+        '填写后删除首行的草稿标记；规则草稿不会进入投影、同步与回灌');
+    } else {
+      add('ok', '没有待填写的规则草稿');
     }
   }
 
@@ -292,8 +317,10 @@ export async function main(argv = process.argv.slice(2)) {
     for (const dir of templateDirs) {
       if (!existsSync(dir)) continue;
       for (const abs of walk(dir, '.md')) {
+        const text = readText(abs);
+        if (isDraft(text)) continue;
         scanned += 1;
-        for (const issue of templateIssues(readText(abs), { loaderFiles, pluginVersion: info.version })) {
+        for (const issue of templateIssues(text, { loaderFiles, pluginVersion: info.version })) {
           issues.push({ severity: issue.severity, message: `${posix(relative(root, abs))}：${issue.message}` });
         }
       }
@@ -417,13 +444,11 @@ export async function main(argv = process.argv.slice(2)) {
         issues.push(`共享规则路径越界：${rel}`);
       } else if (!existsSync(abs)) {
         issues.push(`共享规则缺失：${rel}`);
-      } else if (entry.hash && contentHash(readText(abs)) !== entry.hash) {
-        issues.push(`共享规则已变更：${rel}，请运行 node scripts/devflow-gen.mjs`);
       }
     }
     if (issues.length) {
       for (const issue of issues) add('warn', issue);
-      hints.add('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本');
+      hints.add('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本；正文修改不需要重新生成');
     } else if (manifest.shared.length) {
       add('ok', `共享规则与账本一致（${manifest.shared.length} 个）`);
     }
