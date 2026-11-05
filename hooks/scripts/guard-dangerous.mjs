@@ -503,10 +503,11 @@ const SQL_FILE_OPTS = {
   mysqlsh: ['--file'],
   'clickhouse-client': ['--queries-file'],
 };
-const SQL_INPUT_REDIRECT = new RegExp(`\\b(?:${[...DB_CLIENTS].join('|')})\\b[^|;\\n]*<`, 'i');
+const SQL_COMMAND_BOUNDARIES = new Set([';', '&&', '||', '|', '&']);
 
 function sqlFileInput(command) {
-  for (const raw of simpleCommands(tokenize(command))) {
+  const tokens = tokenize(command);
+  for (const raw of simpleCommands(tokens)) {
     const group = stripWrappers(raw);
     if (!group.length) continue;
     const opts = SQL_FILE_OPTS[normalizeCmd(group[0].value)];
@@ -515,20 +516,81 @@ function sqlFileInput(command) {
       if (opts.some((opt) => token.value === opt || token.value.startsWith(`${opt}=`))) return true;
     }
   }
-  // 重定向在分词中是分隔符，改为在原文判断；引号内的 < 已被屏蔽。
-  return SQL_INPUT_REDIRECT.test(maskQuoted(command));
+  // 重定向在分词中是操作符；simpleCommands 会在 < 处切开，这里按真正的命令边界分组，
+  // 只有当命令组首词（考虑 sudo 等包装）是数据库客户端时才把 < 视为读取 SQL 文件。
+  const groups = [];
+  let cur = [];
+  for (const token of tokens) {
+    if (token.op && SQL_COMMAND_BOUNDARIES.has(token.op)) {
+      if (cur.length) groups.push(cur);
+      cur = [];
+    } else {
+      cur.push(token);
+    }
+  }
+  if (cur.length) groups.push(cur);
+  for (const group of groups) {
+    const cmd = stripWrappers(group.filter((token) => !token.op));
+    if (!cmd.length || !DB_CLIENTS.has(normalizeCmd(cmd[0].value))) continue;
+    for (let k = 0; k < group.length; k += 1) {
+      if (group[k].op !== '<') continue;
+      const target = group[k + 1];
+      // /dev/null 只是丢弃输入；&1 之类是文件描述符复制，不是文件输入。
+      if (target && !target.op && !/^\/dev\/null$/i.test(target.value)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 去掉带引号定界符的 heredoc 正文：`cat <<'EOF'` 里的内容不会展开，
+ * 其中的 $() 只是字面文本，不能被当成要执行的命令。
+ * 不带引号的 heredoc 会展开，保持原文交给后续扫描。
+ */
+function stripQuotedHeredocs(input) {
+  const lines = String(input).split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const m = /<<-?\s*(['"])([^'"]+)\1/.exec(line);
+    // 引号内的 << 属于普通文本；maskQuoted 后只剩引号外的操作符。
+    if (!m || !maskQuoted(line).includes('<<')) {
+      out.push(line);
+      continue;
+    }
+    const marker = m[2];
+    const stripTabs = /<<-/.test(m[0]);
+    let end = i + 1;
+    for (; end < lines.length; end += 1) {
+      const candidate = stripTabs ? lines[end].replace(/^\t+/, '') : lines[end];
+      if (candidate === marker) break;
+    }
+    // 没有找到结束标记时保持原文，避免把后续命令误删。
+    if (end >= lines.length) {
+      out.push(line);
+      continue;
+    }
+    out.push(line);
+    for (let k = i + 1; k <= end; k += 1) out.push('');
+    i = end;
+  }
+  return out.join('\n');
 }
 
 /**
  * 提取命令替换体：$(...) 与反引号里的内容会被 shell 真正执行，
  * 必须单独递归检查，否则 echo $(rm -rf /) 这类命令会完全绕过。
  */
-function commandSubstitutions(text) {
+function commandSubstitutions(input) {
+  const text = stripQuotedHeredocs(input);
   const out = [];
+  let inDouble = false;
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
     if (ch === '\\') { i += 1; continue; }
-    if (ch === "'") {
+    // 双引号内的撇号是普通字符（例如 "don't"），不能当成单引号起点。
+    if (ch === '"') { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble) {
       // 单引号内不做命令替换；跳到配对引号之后。
       i += 1;
       while (i < text.length && text[i] !== "'") i += 1;

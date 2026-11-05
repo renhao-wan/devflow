@@ -285,6 +285,39 @@ test('guard 对从文件或标准输入执行 SQL 要求确认', () => {
   );
 });
 
+test('guard 不把普通重定向当成 SQL 文件输入', () => {
+  for (const command of [
+    'grep mysql < notes.txt',
+    'echo mysql && sort < input.txt',
+    'mysql -e "SELECT 1" < /dev/null',
+  ]) {
+    assert.equal(
+      runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout,
+      '',
+      command,
+    );
+  }
+});
+
+test('guard 递归检查命令替换与反引号', () => {
+  for (const command of [
+    'echo $(rm -rf /)',
+    'echo `rm -rf /`',
+    'bash -c "$(rm -rf /)"',
+    // 双引号内的撇号是普通字符，不能吞掉后面的命令替换。
+    'echo "don\'t" $(rm -rf /)',
+  ]) {
+    const out = JSON.parse(runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command } }).stdout);
+    assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', command);
+  }
+  // 带引号定界符的 heredoc 正文不会展开，其中的命令替换只是字面文本。
+  const heredoc = "cat <<'EOF'\n$(rm -rf /)\nEOF\n";
+  assert.equal(
+    runHook('guard-dangerous.mjs', { tool_name: 'Bash', tool_input: { command: heredoc } }).stdout,
+    '',
+  );
+});
+
 test('guard 识别换行、包装器与 Windows 可执行文件变体', () => {
   const deny = [
     'git status\nrm -rf /',
