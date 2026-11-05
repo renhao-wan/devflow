@@ -17,4 +17,5 @@ export const COMMANDS = {
   triage: ['review-triage.mjs', '判定审查触发、风险方向与子代理上限（--since 增量复审）'],
   check: ['stage-check.mjs', '校验 req / debug 产物结构是否完整'],
   trace: ['trace.mjs', '查看验收项到 plan / test / review 的追踪矩阵（--check 缺失时退出 1）'],
+  stack: ['hub-stack.mjs', '按需安装、更新、恢复与删除技术栈包（--from 本地目录或 --repo 远程仓库）'],
 };
