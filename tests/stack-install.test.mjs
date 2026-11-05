@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contentHash } from '../scripts/lib/common.mjs';
 import { readSources } from '../scripts/lib/stack-ledger.mjs';
-import { applyInstall, classifyInstall, targetSnapshot } from '../scripts/lib/stack-install.mjs';
+import {
+  applyInstall, classifyInstall, targetSnapshot, applyPackUpdate, planPackUpdate, adoptExisting,
+} from '../scripts/lib/stack-install.mjs';
 
 function packOf(files) {
   return {
@@ -310,6 +312,68 @@ test('生成技能失败不回滚，只警告', () => {
     assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
     assert.equal(readSources(root).packs['java-spring'].installedAs, 'java-spring');
     assert.ok(warnings.some((message) => message.includes('生成技能失败')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('更新合并本地改动、保留未改文件并删除包删除的干净文件', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    const v1 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nc\n', 'old.md': '# old\n' });
+    applyInstall({ root, installedAs: 'java-spring', pack: v1, source, sources: { schemaVersion: 1, packs: {} }, noGen: true });
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'a\nLOCAL\nc\n');
+
+    const v2 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nC2\n' });
+    const plan = planPackUpdate({ root, installedAs: 'java-spring', pack: v2, sources: readSources(root) });
+    assert.ok(plan.ops.some((op) => op.rel === 'old.md' && op.type === 'delete'));
+    assert.ok(plan.ops.some((op) => op.rel === 'plan.md' && op.type === 'write'));
+
+    applyPackUpdate({ root, installedAs: 'java-spring', pack: v2, source, sources: readSources(root), noGen: true });
+    const merged = readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'utf8');
+    assert.match(merged, /LOCAL/);
+    assert.match(merged, /C2/);
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'old.md')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('包删除本地改过的文件时保留并给警告', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-keep-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    applyInstall({
+      root, installedAs: 'java-spring', source, noGen: true,
+      pack: packOf({ '_shared.md': '# shared\n', 'old.md': '# old\n' }),
+      sources: { schemaVersion: 1, packs: {} },
+    });
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'old.md'), '# local edit\n');
+    const plan = planPackUpdate({
+      root, installedAs: 'java-spring', pack: packOf({ '_shared.md': '# shared\n' }), sources: readSources(root),
+    });
+    assert.ok(plan.ops.some((op) => op.rel === 'old.md' && op.type === 'keep'));
+    assert.match(plan.warnings.join('\n'), /本地改过/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('adoptExisting 为内容一致目录补账本与 bases', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-adopt-'));
+  try {
+    const pack = packOf({ '_shared.md': '# shared\n' });
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '_shared.md'), '# shared\n');
+    adoptExisting({
+      root, installedAs: 'java-spring', pack,
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+    });
+    assert.equal(readSources(root).packs['java-spring'].files['.claude/hub/stacks/java-spring/_shared.md'].base, contentHash('# shared\n'));
+    assert.equal(readFileSync(join(root, '.claude', '.stack-bases', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

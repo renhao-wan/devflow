@@ -1,6 +1,6 @@
 // scripts/lib/stack-install.mjs
 import {
-  existsSync, readdirSync, lstatSync, readFileSync, mkdirSync, renameSync, rmSync,
+  cpSync, existsSync, readdirSync, lstatSync, readFileSync, mkdirSync, renameSync, rmSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
@@ -8,9 +8,10 @@ import {
   contentHash, ensureDir, isPathInside, isRealPathInside, loadHub, posix, withFileLock, writeAtomic,
 } from './common.mjs';
 import {
-  dropHubOwnership, readLock, readSources, stackPaths, writeLock,
+  dropHubOwnership, readLock, readSources, stackPaths, writeLock, writeSources,
 } from './stack-ledger.mjs';
 import { isValidStackName } from './stacks.mjs';
+import { mergeTexts } from './upstream.mjs';
 
 const DEFAULT_OPS = { renameSync, rmSync };
 
@@ -359,4 +360,227 @@ export function applyInstall({
     }
   }
   return { action };
+}
+
+function readTreeTexts(dir) {
+  const map = new Map();
+  for (const file of listTree(dir)) map.set(file.rel, readFileSync(file.abs, 'utf8'));
+  return map;
+}
+
+/**
+ * git merge-file 会把相邻行的改动视为冲突；行数一致时再做一次逐行合并。
+ * 只接受“各自改动的行互不重叠”的情况，其余仍按冲突处理。
+ */
+function mergeAlignedLines(baseText, localText, theirsText) {
+  const base = baseText.split('\n');
+  const local = localText.split('\n');
+  const theirs = theirsText.split('\n');
+  if (local.length !== base.length || theirs.length !== base.length) return null;
+  const out = [];
+  for (let i = 0; i < base.length; i += 1) {
+    const localChanged = local[i] !== base[i];
+    const theirsChanged = theirs[i] !== base[i];
+    if (localChanged && theirsChanged && local[i] !== theirs[i]) return null;
+    out.push(localChanged ? local[i] : theirs[i]);
+  }
+  return out.join('\n');
+}
+
+/**
+ * 以 bases 为 base、当前目录为 local、新包为 theirs 计算更新动作，不落盘。
+ * 只读取项目内路径；栈名先过校验，避免拼接未经检查的目录。
+ */
+export function planPackUpdate({ root, installedAs, pack }) {
+  assertStackName(installedAs);
+  const paths = stackPaths(root);
+  const current = readTreeTexts(paths.stackDir(installedAs));
+  const base = readTreeTexts(paths.basesDir(installedAs));
+  const theirs = new Map(pack.files.map((file) => [file.rel, file.text]));
+  const rels = [...new Set([...current.keys(), ...base.keys(), ...theirs.keys()])].sort();
+  const ops = [];
+  const warnings = [];
+  for (const rel of rels) {
+    const b = base.get(rel);
+    const l = current.get(rel);
+    const t = theirs.get(rel);
+    if (t !== undefined && l === undefined && b === undefined) {
+      ops.push({ type: 'write', rel, text: t });
+    } else if (t !== undefined && l === undefined) {
+      // 本地删除的文件不自动恢复；账本会记为缺失，交由 doctor 报告。
+      ops.push({ type: 'missing', rel });
+    } else if (t !== undefined && b === undefined) {
+      ops.push(l === t ? { type: 'same', rel } : { type: 'conflict', rel, reason: '本地已有同名文件' });
+    } else if (t !== undefined) {
+      if (l === b) ops.push({ type: 'write', rel, text: t });
+      else if (l === t) ops.push({ type: 'same', rel });
+      else {
+        const merged = mergeTexts(b, l, t);
+        // 不拼接 mergeTexts 的原始错误：可能包含临时路径或文本片段。
+        if (merged.ok) ops.push({ type: 'write', rel, text: merged.content, merged: true });
+        else {
+          // 相邻行改动在 git merge-file 中会冲突，但不重叠时仍可安全合并。
+          const aligned = merged.conflicts ? mergeAlignedLines(b, l, t) : null;
+          if (aligned !== null) ops.push({ type: 'write', rel, text: aligned, merged: true });
+          else ops.push({ type: 'conflict', rel, reason: merged.conflicts ? '三方合并冲突' : '合并失败' });
+        }
+      }
+    } else if (b !== undefined) {
+      if (l === undefined) ops.push({ type: 'missing', rel });
+      else if (l === b) ops.push({ type: 'delete', rel });
+      else {
+        ops.push({ type: 'keep', rel });
+        warnings.push(`${rel}：包已删除但本地改过，保留本地文件`);
+      }
+    } else {
+      ops.push({ type: 'orphan', rel });
+    }
+  }
+  return { ops, warnings };
+}
+
+/** 把当前目录复制进 staging，并按计划落盘；冲突文件保留本地内容并写同名 .bak。 */
+function stageCurrentTree(root, installedAs, staged, ops) {
+  const current = stackPaths(root).stackDir(installedAs);
+  ensureDir(dirname(staged));
+  if (existsSync(current)) {
+    cpSync(current, staged, { recursive: true });
+  } else {
+    ensureDir(staged);
+  }
+  for (const op of ops) {
+    const abs = join(staged, ...op.rel.split('/'));
+    if (op.type === 'write') {
+      ensureDir(dirname(abs));
+      writeAtomic(abs, op.text);
+    } else if (op.type === 'delete') {
+      rmSync(abs, { force: true });
+    } else if (op.type === 'conflict' && existsSync(abs)) {
+      cpSync(abs, `${abs}.bak`);
+    }
+  }
+}
+
+/**
+ * 计划在锁外基于快照计算，写入由 commitStagedTree 在安装锁内重新裁决；
+ * 这里不能自己再套安装锁，否则会与 commitStagedTree 嵌套死锁。
+ */
+export function applyPackUpdate({
+  root, installedAs, pack, source, force = false,
+  noGen = false, generate = null, onWarn = () => {},
+}) {
+  assertStackName(installedAs);
+  const paths = assertInstallPaths(root, installedAs);
+  const plan = planPackUpdate({ root, installedAs, pack });
+  for (const warning of plan.warnings) onWarn(warning);
+  for (const op of plan.ops) {
+    if (op.type === 'conflict') {
+      onWarn(`${op.rel}：${op.reason}；已保留本地内容并写入 ${op.rel}.bak`);
+    }
+  }
+  const stageRoot = join(paths.stagingRoot, tag());
+  const stagedTarget = join(stageRoot, 'target');
+  const stagedBases = join(stageRoot, 'bases');
+  try {
+    stageCurrentTree(root, installedAs, stagedTarget, plan.ops);
+    writePackTree(stagedBases, pack);
+    // local 必须取 staging 的实际内容：冲突与缺失文件不能用包内哈希冒充干净写入。
+    // base 始终用新包哈希，把本次上游内容记为下一次更新的基线。
+    const localHashes = hashTree(stagedTarget, pack.files.map((file) => file.rel));
+    const record = ledgerRecord({ installedAs, pack, source, localHashes });
+    commitStagedTree({
+      root, installedAs, source, pack, record, stagedTarget, stagedBases, force, onWarn,
+    });
+  } finally {
+    rmSync(stageRoot, { recursive: true, force: true });
+  }
+  if (!noGen && generate) {
+    try {
+      generate(root);
+    } catch {
+      onWarn('更新已完成，但生成技能失败；修正 hub.yaml 或栈声明后运行 node scripts/devflow-gen.mjs');
+    }
+  }
+  return { ops: plan.ops };
+}
+
+/**
+ * 采纳内容与包一致的既有目录：补 bases 与账本。
+ * 哈希、bases 替换与账本写入都在安装锁内完成，避免与并发安装互相覆盖。
+ */
+export function adoptExisting({ root, installedAs, pack, source, onWarn = () => {} }) {
+  // 校验必须在任何写入与目录读取之前。
+  assertStackName(installedAs);
+  const paths = assertInstallPaths(root, installedAs);
+  withFileLock(join(paths.stagingRoot, 'install'), () => {
+    // 入口与加锁之间目录可能被替换成 junction，锁内移动前重新校验。
+    assertInstallPaths(root, installedAs);
+    const target = paths.stackDir(installedAs);
+    const bases = paths.basesDir(installedAs);
+    const localHashes = hashTree(target, pack.files.map((file) => file.rel));
+    const absent = pack.files.filter((file) => localHashes.get(file.rel) === null);
+    if (absent.length) {
+      throw new Error(`目标目录缺少文件，不能采纳：${absent.map((file) => file.rel).join('、')}`);
+    }
+
+    const stageRoot = join(paths.stagingRoot, tag());
+    const stagedBases = join(stageRoot, 'bases');
+    const trash = join(paths.trashRoot, tag(), `${installedAs}-bases`);
+    writePackTree(stagedBases, pack);
+    const tx = { movedOld: false, placedNew: false };
+    try {
+      if (existsSync(bases)) {
+        ensureDir(dirname(trash));
+        renameSync(bases, trash);
+        tx.movedOld = true;
+      }
+      ensureDir(dirname(bases));
+      renameSync(stagedBases, bases);
+      tx.placedNew = true;
+      // 账本是提交点：锁内重新读取，避免覆盖并发写入的其他栈记录。
+      const latest = readSources(root);
+      writeSources(root, {
+        ...latest,
+        schemaVersion: 1,
+        packs: { ...latest.packs, [installedAs]: ledgerRecord({ installedAs, pack, source, localHashes }) },
+      });
+    } catch (err) {
+      if (tx.placedNew) rmSync(bases, { recursive: true, force: true });
+      if (tx.movedOld) {
+        ensureDir(dirname(bases));
+        renameSync(trash, bases);
+      }
+      throw err;
+    } finally {
+      rmSync(stageRoot, { recursive: true, force: true });
+    }
+    // 账本已提交；清理备份失败不能让采纳报失败。
+    if (tx.movedOld) {
+      try {
+        rmSync(dirname(trash), { recursive: true, force: true });
+      } catch {
+        onWarn('采纳已完成，但清理临时备份失败；可手动删除 .claude/.stack-trash');
+      }
+    }
+  }, { failClosed: true, timeoutMs: 10000 });
+
+  // dropHubOwnership 只返回 warning，不抛出；逐条交给 onWarn。
+  for (const message of dropHubOwnership(root, installedAs)) onWarn(message);
+
+  try {
+    if (source.type === 'git') {
+      const lock = readLock(root);
+      lock.packs[installedAs] = lockEntryFor({ installedAs, source, pack });
+      writeLock(root, lock);
+    } else if (existsSync(paths.lock)) {
+      // local 来源不得凭空创建 lock；只在已有该条目时移除。
+      const lock = readLock(root);
+      if (lock.packs[installedAs]) {
+        delete lock.packs[installedAs];
+        writeLock(root, lock);
+      }
+    }
+  } catch (err) {
+    onWarn(`写入 stack-lock.yaml 失败：${err.message}；运行 devflow stack lock 重建`);
+  }
 }
