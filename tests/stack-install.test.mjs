@@ -2,11 +2,14 @@
 import { test } from 'node:test';
 import './support.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contentHash } from '../scripts/lib/common.mjs';
-import { classifyInstall, targetSnapshot } from '../scripts/lib/stack-install.mjs';
+import { readSources } from '../scripts/lib/stack-ledger.mjs';
+import { applyInstall, classifyInstall, targetSnapshot } from '../scripts/lib/stack-install.mjs';
 
 function packOf(files) {
   return {
@@ -72,5 +75,125 @@ test('targetSnapshot 报告匹配、改动与缺失文件', () => {
     assert.deepEqual(snap.extra, ['extra.md']);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('全新安装写入目录、bases 与账本', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-'));
+  try {
+    const pack = packOf({ '_shared.md': '# shared\n', 'plan.md': '# plan\n' });
+    const result = applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack,
+      source: { type: 'local', localPath: '/tmp/stacks', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+    });
+    assert.equal(result.action, 'fresh');
+    assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', 'plan.md'), 'utf8'), '# plan\n');
+    assert.equal(readFileSync(join(root, '.claude', '.stack-bases', 'java-spring', 'plan.md'), 'utf8'), '# plan\n');
+    const ledger = readSources(root);
+    assert.equal(ledger.packs['java-spring'].source, 'local');
+    assert.equal(
+      ledger.packs['java-spring'].files['.claude/hub/stacks/java-spring/plan.md'].base,
+      contentHash('# plan\n'),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('第 4 步移动 bases 失败时恢复已移走的旧目录，账本保持不变', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-rollback-'));
+  try {
+    const target = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    const bases = join(root, '.claude', '.stack-bases', 'java-spring');
+    mkdirSync(target, { recursive: true });
+    mkdirSync(bases, { recursive: true });
+    writeFileSync(join(target, '_shared.md'), '# old\n');
+    writeFileSync(join(bases, '_shared.md'), '# old\n');
+    writeFileSync(join(root, '.claude', '.stack-sources.json'), JSON.stringify({
+      schemaVersion: 1,
+      packs: {
+        'java-spring': {
+          installedAs: 'java-spring', source: 'local', localPath: '/new', packId: 'java-spring',
+          path: 'stacks/java-spring', version: '1.0.0',
+          files: { '.claude/hub/stacks/java-spring/_shared.md': { base: contentHash('# old\n'), local: contentHash('# old\n') } },
+        },
+      },
+    }, null, 2));
+    const before = readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8');
+
+    let renamedBases = false;
+    const ops = {
+      renameSync(from, to) {
+        if (from === bases) {
+          renamedBases = true;
+          throw new Error('模拟移动 bases 失败');
+        }
+        return renameSync(from, to);
+      },
+      rmSync,
+    };
+
+    assert.throws(() => applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# new\n' }),
+      source: { type: 'local', localPath: '/new', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: readSources(root),
+      noGen: true,
+      ops,
+    }), /模拟移动 bases 失败/);
+    assert.equal(renamedBases, true);
+    assert.equal(readFileSync(join(target, '_shared.md'), 'utf8'), '# old\n');
+    assert.equal(readFileSync(join(bases, '_shared.md'), 'utf8'), '# old\n');
+    assert.equal(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('无账本且已有目录时默认拒绝，--force 才接管', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-force-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub', 'stacks', 'java-spring'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), '# local\n');
+    const args = {
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# pack\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+    };
+    assert.throws(() => applyInstall(args), /--force/);
+    const result = applyInstall({ ...args, force: true });
+    assert.equal(result.action, 'takeover');
+    assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), '# pack\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('目标目录被 junction 引到项目外时拒绝安装', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-junction-'));
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-install-outside-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    symlinkSync(outside, join(root, '.claude', 'hub', 'stacks'), 'junction');
+    assert.throws(() => applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+    }), /越界/);
+    assert.equal(existsSync(join(outside, 'java-spring')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
