@@ -94,3 +94,4 @@ description: 需求澄清阶段：把模糊诉求变成可验证的需求，明�
 - 轻量模式一旦命中硬触发，先写 `## 升级判断` 并停止；不带着风险继续实现。
 - 轻量模式不切换 workflow 类工具；需要完整规格流程时先去掉 `--light`。
 - 目标目录已有 `req.md` / `plan.md` 时，不用 `--light` 覆盖或追加；提示用户改用完整流程或新 slug。
+- 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。

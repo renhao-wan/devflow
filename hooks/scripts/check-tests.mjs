@@ -49,8 +49,8 @@ try {
         state.hubPending = false;
       } else if (!reminded) {
         const files = (state.hubChangedFiles || []).slice(-8);
-        messages.push('devflow 提醒：阶段源（.claude/hub/）有改动，但投影尚未生成。'
-          + '请运行 node scripts/devflow-gen.mjs，再用 node scripts/devflow-doctor.mjs 检查。'
+        messages.push('devflow 提醒：阶段源（.claude/hub/）有改动。'
+          + '新增/删除规则文件或修改 hub.yaml 后运行 node scripts/devflow-gen.mjs；只改已有规则正文可只运行 node scripts/devflow-doctor.mjs 检查。'
           + (files.length ? `\n改动文件：${files.join('、')}` : ''));
         state.lastHubReminderAt = now;
       }

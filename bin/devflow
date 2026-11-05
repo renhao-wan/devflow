@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const COMMANDS = {
-  init: ['hub-init.mjs', '初始化项目工作区（.claude/hub、loader 与投影）'],
+  init: ['hub-init.mjs', '初始化项目工作区（.claude/hub、loader、投影与可选规则草稿）'],
   gen: ['gen-claude-skills.mjs', '从 .claude/hub 生成阶段投影'],
   doctor: ['hub-doctor.mjs', '体检配置、版本、投影与 hooks'],
   status: ['hub-status.mjs', '只读查看进度、产物缺口与下一步命令'],

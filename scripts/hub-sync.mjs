@@ -4,7 +4,7 @@ import { join, dirname, resolve } from 'node:path';
 import {
   argValue, hasFlag, projectRoot, findPluginRoot, pluginInfo, loadHub, satisfies,
   readText, writeAtomic, sha256, contentHash, log, posix, isMain, ensureDir,
-  readMeta, isGeneratedArtifact, isRealPathInside,
+  readMeta, isGeneratedArtifact, isRealPathInside, isDraft,
 } from './lib/common.mjs';
 import { mergeTexts } from './lib/upstream.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
@@ -27,7 +27,17 @@ function label(type) {
     conflict: '冲突',
     keep: '保留手改',
     blocked: '不兼容，已跳过',
+    draft: '跳过草稿',
   })[type] || type;
+}
+
+/** 模板库草稿没有写入项目，不能和项目草稿一起说成“保留”。 */
+function draftSummary(counts) {
+  if (!counts.draft) return '保留草稿 0';
+  if (counts.templateDraft) {
+    return `跳过草稿 ${counts.draft}（其中模板库草稿 ${counts.templateDraft}）`;
+  }
+  return `保留项目草稿 ${counts.draft}`;
 }
 
 function readSources(root) {
@@ -95,6 +105,11 @@ export async function main(argv = process.argv.slice(2)) {
     const templateText = readText(file.src);
     const templateHash = contentHash(templateText);
     const dest = join(root, ...file.destRel.split('/'));
+    // 模板库里的草稿不进入项目：TODO 不是规则，也不该覆盖项目自己的草稿。
+    if (isDraft(templateText)) {
+      actions.push({ ...file, dest, type: 'draft', draftOrigin: 'template', templateText, templateHash });
+      continue;
+    }
     const record = recordOf(sources, file.destRel);
     const compat = templateIssues(templateText, { loaderFiles, pluginVersion: info.version });
     const blocked = compat.length
@@ -110,6 +125,11 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     const destText = readText(dest);
+    // 项目草稿是用户真源：--force 也不覆盖。
+    if (isDraft(destText)) {
+      actions.push({ ...file, dest, type: 'draft', draftOrigin: 'project', templateText, templateHash });
+      continue;
+    }
     const currentHash = contentHash(destText);
     if (currentHash === templateHash) {
       actions.push({ ...file, dest, type: 'same', templateText, templateHash });
@@ -164,11 +184,17 @@ export async function main(argv = process.argv.slice(2)) {
     .map((rel) => rel.slice(HUB_PREFIX.length))
     .filter((hubRel) => !known.has(hubRel) && !isGeneratedArtifact(hubRel));
 
-  const counts = { add: 0, update: 0, merged: 0, overwrite: 0, conflict: 0, keep: 0, same: 0, blocked: 0 };
-  for (const a of actions) counts[a.type] += 1;
+  const counts = {
+    add: 0, update: 0, merged: 0, overwrite: 0, conflict: 0, keep: 0,
+    same: 0, blocked: 0, draft: 0, templateDraft: 0,
+  };
+  for (const a of actions) {
+    counts[a.type] += 1;
+    if (a.type === 'draft' && a.draftOrigin === 'template') counts.templateDraft += 1;
+  }
 
   for (const a of actions) {
-    if (!a.dest || a.type === 'same' || a.type === 'keep' || a.type === 'blocked') continue;
+    if (!a.dest || a.type === 'same' || a.type === 'keep' || a.type === 'blocked' || a.type === 'draft') continue;
     if (!isRealPathInside(root, a.dest)) {
       throw new Error(`同步目标越界（可能被 junction/符号链接引到项目外）：${posix(a.dest)}`);
     }
@@ -176,13 +202,14 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (dryRun) {
     for (const a of actions) {
-      if (a.type === 'same') continue;
+      if (a.type === 'same' || a.type === 'draft') continue;
       const detail = a.reason ? `（${a.reason}）` : '';
       log(a.type === 'conflict' || a.type === 'blocked' ? 'warn' : '..', `${label(a.type)} [${a.source}] ${a.destRel}${detail}`);
     }
     for (const hubRel of removed) log('..', `模板已移除，本地保留 ${HUB_PREFIX}${hubRel}`);
     console.log(`\n[dry-run] 新增 ${counts.add}，更新 ${counts.update}，自动合并 ${counts.merged}，`
-      + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
+      + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，`
+      + `${draftSummary(counts)}，一致 ${counts.same}。`);
     if (counts.conflict) console.log('冲突文件不会被改动；确认覆盖时加 --force，会先生成 .bak 备份。');
     if (counts.blocked) console.log('不兼容文件不会写入；升级插件或改用兼容的模板来源后重试。');
     return { ...counts, dryRun: true };
@@ -257,6 +284,8 @@ export async function main(argv = process.argv.slice(2)) {
       continue;
     }
 
+    if (a.type === 'draft') continue;
+
     if (!isRealPathInside(root, a.dest)) {
       throw new Error(`同步目标越界（可能被 junction/符号链接引到项目外）：${posix(a.dest)}`);
     }
@@ -316,7 +345,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   console.log(`\n完成：新增 ${counts.add}，更新 ${counts.update}，自动合并 ${counts.merged}，`
-    + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，一致 ${counts.same}。`);
+    + `覆盖 ${counts.overwrite}，冲突 ${counts.conflict}，不兼容 ${counts.blocked}，保留手改 ${counts.keep}，`
+    + `${draftSummary(counts)}，一致 ${counts.same}。`);
   if (counts.conflict) console.log('冲突文件保留本地版本；确认覆盖时加 --force。');
   return { ...counts, applied: true };
 }

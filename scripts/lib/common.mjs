@@ -43,6 +43,13 @@ export function isGeneratedArtifact(rel) {
     seg.startsWith('.') || /\.bak(-|$)/i.test(seg) || /\.tmp(-|$)/i.test(seg));
 }
 
+/** 规则草稿标记：放在文件首行。gen 不把草稿纳入投影，sync/upstream 不覆盖也不回灌。 */
+export const DRAFT_MARKER = '<!-- devflow:draft -->';
+
+export function isDraft(text) {
+  return normalizeEol(String(text ?? '')).trimStart().startsWith(DRAFT_MARKER);
+}
+
 export const STAGE_NAME_RE = /^[a-z][a-z0-9_-]*$/;
 
 export function isValidStageName(name) {

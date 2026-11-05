@@ -1,11 +1,49 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { isRealPathInside, isValidStageName, posix, walk } from './common.mjs';
+import { isDraft, isRealPathInside, isValidStageName, posix, readText, walk } from './common.mjs';
+import { detectTechStack } from './discover.mjs';
 
 export const STACK_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 export function isValidStackName(name) {
   return STACK_NAME_RE.test(String(name));
+}
+
+/** 构建文件 label → 栈目录名。Python 与 pytest 归入同一栈，避免被误判成多技术栈。 */
+export const STACK_BY_LABEL = Object.freeze({
+  'Node.js': 'nodejs',
+  'Java / Maven': 'java-maven',
+  'Java / Gradle': 'java-gradle',
+  Go: 'go',
+  Rust: 'rust',
+  Python: 'python',
+  'Python / pytest': 'python',
+  Ruby: 'ruby',
+  PHP: 'php',
+  Make: 'make',
+});
+
+export function stackNameForLabel(label) {
+  return STACK_BY_LABEL[label] || null;
+}
+
+/**
+ * 探测工作区根与所有子项目的技术栈；按映射后的栈名去重。
+ * Makefile 常见于 Node.js/Go 仓库的辅助脚本，只在没有其他栈时才作为主栈。
+ */
+export function detectWorkspaceStacks(root, subs = []) {
+  const dirs = [root, ...subs.map((sub) => join(root, ...String(sub?.path || sub?.name || '.').split('/')))];
+  const names = [];
+  const labels = [];
+  for (const dir of dirs) {
+    for (const { label } of detectTechStack(dir)) {
+      if (!labels.includes(label)) labels.push(label);
+      const name = stackNameForLabel(label);
+      if (name && !names.includes(name)) names.push(name);
+    }
+  }
+  const primary = names.filter((name) => name !== 'make');
+  return { names: primary.length ? primary : names, labels };
 }
 
 export function stackDir(root, name) {
@@ -25,7 +63,10 @@ function fileInStack(root, name, dir, rel) {
   if (!existsSync(abs)) return null;
   if (!statSync(abs).isFile()) return { error: `不是文件：${posix(abs)}` };
   if (!isRealPathInside(root, abs)) return { error: `真实路径越出项目：${posix(abs)}` };
-  return { path: posix(join('.claude', 'hub', 'stacks', name, ...rel.split(/[\\/]/))) };
+  const path = posix(join('.claude', 'hub', 'stacks', name, ...rel.split(/[\\/]/)));
+  // 草稿不是规则：填写完删除首行标记后才会进入投影。
+  if (isDraft(readText(abs))) return { draft: true, path };
+  return { path };
 }
 
 function inspectStack(root, name, stages) {
@@ -51,23 +92,39 @@ function inspectStack(root, name, stages) {
 
   const shared = fileInStack(root, name, dir, '_shared.md');
   if (shared?.error) issues.push({ severity: 'error', message: `${summary.dir}/_shared.md：${shared.error}` });
-  else if (shared?.path) summary.shared = shared.path;
+  else if (shared?.draft) {
+    issues.push({
+      severity: 'warn',
+      message: `${summary.dir}/_shared.md 是草稿，未纳入投影；填写后删除首行的草稿标记。`,
+    });
+  } else if (shared?.path) summary.shared = shared.path;
 
   const stageFiles = {};
   for (const stage of stages) {
     if (!isValidStageName(stage)) continue;
     const found = fileInStack(root, name, dir, `${stage}.md`);
     if (found?.error) issues.push({ severity: 'error', message: `${summary.dir}/${stage}.md：${found.error}` });
-    else if (found?.path) {
+    else if (found?.draft) {
+      issues.push({
+        severity: 'warn',
+        message: `${summary.dir}/${stage}.md 是草稿，未纳入投影；填写后删除首行的草稿标记。`,
+      });
+    } else if (found?.path) {
       stageFiles[stage] = found.path;
       summary.stages[stage] = found.path;
     }
   }
 
-  if (!walk(dir, '.md').length) {
+  const markdown = walk(dir, '.md');
+  if (!markdown.length) {
     issues.push({
       severity: 'warn',
       message: `技术栈目录没有 .md 规则：${summary.dir}。可添加 _shared.md 或 <stage>.md。`,
+    });
+  } else if (markdown.every((abs) => isDraft(readText(abs)))) {
+    issues.push({
+      severity: 'warn',
+      message: `技术栈目录只有草稿：${summary.dir}。填写后删除首行的草稿标记。`,
     });
   }
 

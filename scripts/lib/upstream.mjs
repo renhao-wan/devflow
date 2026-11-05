@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
   readText, writeAtomic, ensureDir, walk, relPosix, isGeneratedArtifact,
-  normalizeEol, isPathInside, isRealPathInside, posix,
+  normalizeEol, isPathInside, isRealPathInside, posix, isDraft,
   parseFrontmatter,
 } from './common.mjs';
 import { isValidStackName } from './stacks.mjs';
@@ -185,11 +185,18 @@ export function planUnit(root, pluginRoot, unit, config) {
     const label = UNIT_LABELS[unit.kind] || unit.kind;
     throw new Error(`项目里没有${unit.kind === 'shared' ? label : `${label} ${unit.name}`}：${posix(sourceDir)}`);
   }
-  const files = walk(sourceDir)
+  const allFiles = walk(sourceDir)
     .map((abs) => ({ abs, rel: relPosix(sourceDir, abs) }))
-    .filter((f) => !isGeneratedArtifact(f.rel))
+    .filter((f) => !isGeneratedArtifact(f.rel));
+  const draftFiles = allFiles.filter((f) => isDraft(readText(f.abs)));
+  const files = allFiles
+    .filter((f) => !draftFiles.includes(f))
     .sort((a, b) => a.rel.localeCompare(b.rel));
-  if (!files.length) throw new Error(`目录为空：${posix(sourceDir)}`);
+  if (!files.length) {
+    throw new Error(draftFiles.length
+      ? `目录只有草稿，填写后删除首行标记再回灌：${posix(sourceDir)}`
+      : `目录为空：${posix(sourceDir)}`);
+  }
 
   const targetDir = join(pluginRoot, ...unit.targetRel.split('/'));
   const results = files.map((file) => {

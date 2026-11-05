@@ -82,8 +82,10 @@ description: Use when the user asks to build, change, or fix something in a proj
 
 - 项目规则：`.claude/hub/stages/<stage>/SKILL.md`
 - 阶段细则与产出骨架：同目录下的 `references/`、`templates/`，按需读取
+- 共享、技术栈与子项目覆盖：投影只记录路径，执行时读取正文
 - 生成的投影：`.claude/skills/devflow-<stage>/SKILL.md`（勿手改）
-- 改动源后运行 `node scripts/devflow-gen.mjs`
+- 新增/删除规则文件或改 `hub.yaml` 后运行 `node scripts/devflow-gen.mjs`；只改已有规则正文不需要 gen
+- 发现可复用的项目规则但不确定放哪时，使用 `devflow-rule-placement`
 
 ## 与 superpowers 的协作边界
 

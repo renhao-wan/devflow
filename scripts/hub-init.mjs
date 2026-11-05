@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureDir, readText, writeText, writeAtomic, pluginInfo, argValue, hasFlag,
   log, posix, isMain, projectRoot, readMeta, isValidPluginRoot, contentHash, normalizeEol,
-  isPathInside, isRealPathInside, parseYaml,
+  isPathInside, isRealPathInside, parseYaml, isDraft,
 } from './lib/common.mjs';
 import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import {
@@ -14,6 +14,8 @@ import {
 } from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 import { discoverSubprojects, detectTestCommand } from './lib/discover.mjs';
+import { detectWorkspaceStacks } from './lib/stacks.mjs';
+import { planDrafts, renderProjectBasicsDraft } from './lib/drafts.mjs';
 import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
@@ -122,12 +124,12 @@ await mod.main(process.argv.slice(2));
 `;
 }
 
-/** 按合并视图复制模板；已有文件默认不覆盖，未命中的来源不影响落盘。 */
+/** 按合并视图复制模板；已有文件默认不覆盖，草稿即使 --force 也不覆盖。 */
 function copyTemplates(files, root, force) {
   let copied = 0;
   for (const file of files) {
     const dst = join(root, ...file.destRel.split('/'));
-    if (existsSync(dst) && !force) continue;
+    if (existsSync(dst) && (!force || isDraft(readText(dst)))) continue;
     ensureDir(dirname(dst));
     copyFileSync(file.src, dst);
     copied += 1;
@@ -199,9 +201,36 @@ function assertWritable(root, target, what) {
   }
 }
 
+/** 草稿是用户真源：已存在一律不覆盖，--force 也不覆盖。 */
+function writeDrafts(root, drafts) {
+  let written = 0;
+  let preserved = 0;
+  for (const draft of drafts) {
+    const target = join(root, ...draft.rel.split('/'));
+    if (existsSync(target)) {
+      // 只有草稿才叫“保留草稿”；模板复制进来的正式规则不计入。
+      if (isDraft(readText(target))) preserved += 1;
+      continue;
+    }
+    if (!isPathInside(root, target) || !isRealPathInside(root, target)) {
+      log('warn', `草稿路径越界，跳过：${draft.rel}`);
+      continue;
+    }
+    ensureDir(dirname(target));
+    if (!isRealPathInside(root, target)) {
+      log('warn', `草稿路径越界，跳过：${draft.rel}`);
+      continue;
+    }
+    writeAtomic(target, draft.content);
+    written += 1;
+  }
+  return { written, preserved };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const root = resolve(argValue(argv, '--root', projectRoot()));
   const force = hasFlag(argv, '--force');
+  const noDraft = hasFlag(argv, '--no-draft');
   const pluginRoot = resolve(argValue(argv, '--plugin-root', pluginRootFromScript()));
   const info = pluginInfo(pluginRoot);
   const hubFile = join(root, '.claude', 'hub', 'hub.yaml');
@@ -221,6 +250,15 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (existsSync(hubFile) && !force) {
     log('warn', `已经初始化：${posix(hubFile)}。使用 --force 覆盖 hub.yaml 与模板；升级模板请用 /devflow:sync。`);
+    // 只补通用草稿，不推断栈：已有工作区应尊重用户当前的 stack 声明。
+    if (!noDraft) {
+      const rel = '.claude/hub/_shared/project-basics.md';
+      const target = join(root, ...rel.split('/'));
+      if (!existsSync(target)) {
+        const { written } = writeDrafts(root, [{ rel, content: renderProjectBasicsDraft() }]);
+        if (written) log('ok', `补生成规则草稿 ${rel}`);
+      }
+    }
     if (!existsSync(join(root, OVERVIEW_FILE))) {
       try {
         generateOverview(root, { full: false });
@@ -261,12 +299,28 @@ export async function main(argv = process.argv.slice(2)) {
     const { list: subs, expanded } = discoverSubprojects(root);
     const subsWithStack = subs.map((sub) => ({ ...sub, stack: previousStack(sub) }));
     const rootTest = detectTestCommand(root);
+    const detected = noDraft ? { names: [], labels: [] } : detectWorkspaceStacks(root, subs);
+    const autoStack = !noDraft && !existing.stack && detected.names.length === 1
+      ? detected.names[0]
+      : null;
+    const stackForYaml = existing.stack ? String(existing.stack) : autoStack;
     writeAtomic(hubFile, renderHubYaml(subsWithStack, info.version, rootTest, {
       templates: config.templates,
       blocklist: existing.upstream?.blocklist,
-      stack: existing.stack ? String(existing.stack) : null,
+      stack: stackForYaml,
     }));
     writeSourceManifest(root, info.version, templateFiles);
+    if (noDraft) {
+      log('ok', '跳过规则草稿生成（--no-draft）');
+    } else {
+      const { written, preserved } = writeDrafts(root, planDrafts({ detected, stackName: stackForYaml }));
+      if (written) log('ok', `生成 ${written} 个规则草稿（TODO 是占位，不是规则）`);
+      if (preserved) log('ok', `保留已有草稿 ${preserved} 个`);
+      if (autoStack) log('ok', `探测到单一技术栈 ${autoStack}，已写入 hub.yaml 的 stack`);
+      else if (!existing.stack && detected.names.length > 1) {
+        log('warn', `探测到多个技术栈（${detected.names.join('、')}），未自动声明 stack；可用 devflow-rule-placement 落位`);
+      }
+    }
     log('ok', `创建 ${posix(hubFile)}（${copied} 个阶段模板，${subs.length} 个子项目）`);
     try {
       generateOverview(root, { full: false });
@@ -341,11 +395,14 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', '初始化完成');
   }
   console.log('\n下一步：');
-  console.log('  1. 编辑 .claude/hub/hub.yaml（子项目、测试命令、stack）');
-  console.log('  2. 编辑 .claude/hub/stages/*/SKILL.md（项目规范）');
-  console.log('  3. 需要按语言/框架复用规范时，在 .claude/hub/stacks/<stack>/ 放 _shared.md 或 <stage>.md');
+  console.log('  1. 填写 .claude/hub/_shared/project-basics.md 中的 TODO（写完删除首行草稿标记）');
+  console.log('  2. 编辑 .claude/hub/stages/*/SKILL.md（阶段规范）');
+  console.log('  3. 技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
   console.log('  4. node scripts/devflow-gen.mjs');
   console.log('  5. node scripts/devflow-doctor.mjs');
+  if (noDraft) {
+    console.log('  （本次使用 --no-draft，没有生成规则草稿；去掉该参数重新运行 init 可生成）');
+  }
   return report;
 }
 

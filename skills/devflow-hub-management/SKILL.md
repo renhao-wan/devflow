@@ -13,7 +13,7 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 | `.claude/hub/stages/<stage>/SKILL.md` | 阶段规则的单一真源 | 可以 |
 | `.claude/hub/stages/<stage>/references/` | 阶段细则，按需读取 | 可以 |
 | `.claude/hub/stages/<stage>/templates/` | 产出骨架 | 可以 |
-| `.claude/hub/_shared/` | 所有阶段共用的规则，生成时内联进投影 | 可以 |
+| `.claude/hub/_shared/` | 所有阶段共用的规则，投影只记录路径、执行时读取正文 | 可以 |
 | `.claude/hub/overrides/<sub>/<stage>.md` | 子项目级覆盖 | 可以 |
 | `.claude/hub/stacks/<stack>/` | 技术栈规范：`_shared.md` 与 `<stage>.md` | 可以 |
 | `.claude/skills/devflow-<stage>/SKILL.md` | 生成的投影 | 不要 |
@@ -23,9 +23,11 @@ description: Use when editing devflow hub config, stage templates, subproject ma
 
 ## 改规则的正确流程
 
+不确定一条规则该放 `_shared/`、阶段、技术栈还是子项目覆盖时，先用 `devflow-rule-placement` 判断落位，再回来执行下面的步骤。
+
 1. 编辑 `.claude/hub/stages/<stage>/SKILL.md`，需要补充细则或产出骨架时，在阶段目录下增删 `references/`、`templates/`；语言/框架规范改 `.claude/hub/stacks/<stack>/`，并在 `hub.yaml` 用 `stack` 映射到子项目。
-2. 运行 `node scripts/devflow-gen.mjs`（资源清单与技术栈映射会进入投影与账本）。
-3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、资源未缺失。
+2. **新增/删除规则文件**或修改 `hub.yaml`（阶段、子项目、`stack` 映射）后，运行 `node scripts/devflow-gen.mjs`；只改已有 `_shared/`、`stages/`、`stacks/`、`overrides/` 文件的正文不需要 gen，投影只记录路径，执行时会直接读取。
+3. 运行 `node scripts/devflow-doctor.mjs` 确认无漂移、资源未缺失、没有遗留草稿标记。
 
 ## hub.yaml 要点
 
