@@ -99,6 +99,8 @@ test('全新安装写入目录、bases 与账本', () => {
       ledger.packs['java-spring'].files['.claude/hub/stacks/java-spring/plan.md'].base,
       contentHash('# plan\n'),
     );
+    // local 来源不维护 stack-lock.yaml，不能凭空生成空 lock 文件。
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stack-lock.yaml')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -195,5 +197,120 @@ test('目标目录被 junction 引到项目外时拒绝安装', { skip: process.
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('非法栈名被拒绝且不移动原有目录', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-name-'));
+  try {
+    const stacks = join(root, '.claude', 'hub', 'stacks');
+    mkdirSync(stacks, { recursive: true });
+    writeFileSync(join(stacks, 'keep.md'), '# keep\n');
+    assert.throws(() => applyInstall({
+      root,
+      installedAs: '../stacks',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      force: true,
+      noGen: true,
+    }), /栈名不合法/);
+    assert.equal(readFileSync(join(stacks, 'keep.md'), 'utf8'), '# keep\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('.stack-bases 被 junction 引到项目外时拒绝安装', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-bases-junction-'));
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-install-bases-outside-'));
+  try {
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    symlinkSync(outside, join(root, '.claude', '.stack-bases'), 'junction');
+    assert.throws(() => applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+    }), /越界/);
+    assert.equal(existsSync(join(outside, 'java-spring')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('.stack-trash 被 junction 引到项目外时拒绝安装', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-trash-junction-'));
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-install-trash-outside-'));
+  try {
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    symlinkSync(outside, join(root, '.claude', '.stack-trash'), 'junction');
+    assert.throws(() => applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+    }), /越界/);
+    assert.equal(existsSync(join(root, '.claude', 'hub', 'stacks', 'java-spring')), false);
+    assert.equal(existsSync(join(outside, 'java-spring')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('提交后清理备份失败只警告，不跳过后续步骤', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-cleanup-'));
+  try {
+    const warnings = [];
+    const result = applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      noGen: true,
+      ops: {
+        renameSync,
+        rmSync(from, options) {
+          if (String(from).includes('.stack-trash')) throw new Error('模拟清理失败');
+          return rmSync(from, options);
+        },
+      },
+      onWarn: (message) => warnings.push(message),
+    });
+    assert.equal(result.action, 'fresh');
+    assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
+    assert.equal(readSources(root).packs['java-spring'].installedAs, 'java-spring');
+    assert.ok(warnings.some((message) => message.includes('清理')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('生成技能失败不回滚，只警告', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-install-gen-'));
+  try {
+    const warnings = [];
+    const result = applyInstall({
+      root,
+      installedAs: 'java-spring',
+      pack: packOf({ '_shared.md': '# shared\n' }),
+      source: { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' },
+      sources: { schemaVersion: 1, packs: {} },
+      generate: () => { throw new Error('模拟生成失败'); },
+      onWarn: (message) => warnings.push(message),
+    });
+    assert.equal(result.action, 'fresh');
+    assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
+    assert.equal(readSources(root).packs['java-spring'].installedAs, 'java-spring');
+    assert.ok(warnings.some((message) => message.includes('生成技能失败')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

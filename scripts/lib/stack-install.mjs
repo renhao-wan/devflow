@@ -10,11 +10,35 @@ import {
 import {
   dropHubOwnership, readLock, readSources, stackPaths, writeLock,
 } from './stack-ledger.mjs';
+import { isValidStackName } from './stacks.mjs';
 
 const DEFAULT_OPS = { renameSync, rmSync };
 
 function tag() {
   return `${process.pid}-${randomBytes(4).toString('hex')}`;
+}
+
+function assertStackName(installedAs) {
+  if (!isValidStackName(installedAs)) {
+    // 不回显非法值，避免日志注入或暴露构造中的路径。
+    throw new Error('栈名不合法：只允许 [a-z0-9][a-z0-9_-]*');
+  }
+}
+
+function assertInsideProject(root, path, label) {
+  if (!isPathInside(root, path) || !isRealPathInside(root, path)) {
+    throw new Error(`${label} 越界（可能被 junction/符号链接引到项目外）`);
+  }
+}
+
+/** 安装会写入的四类路径都在项目内；junction/符号链接不能把它们引到外面。 */
+function assertInstallPaths(root, installedAs) {
+  const paths = stackPaths(root);
+  assertInsideProject(root, paths.stackDir(installedAs), '目标目录');
+  assertInsideProject(root, paths.basesDir(installedAs), 'bases 目录');
+  assertInsideProject(root, paths.stagingRoot, 'staging 目录');
+  assertInsideProject(root, paths.trashRoot, 'trash 目录');
+  return paths;
 }
 
 function listTree(dir, rel = '') {
@@ -145,7 +169,9 @@ function commitStagedTreeLocked({
   root, installedAs, source, pack, record, stagedTarget, stagedBases,
   force = false, ops = DEFAULT_OPS, onWarn = () => {},
 }) {
-  const paths = stackPaths(root);
+  // 预检与提交之间 hub 目录可能被替换成 junction，锁内移动前必须重新校验。
+  assertStackName(installedAs);
+  const paths = assertInstallPaths(root, installedAs);
   const target = paths.stackDir(installedAs);
   const bases = paths.basesDir(installedAs);
   // 锁外判定只用于提前失败；锁内必须按最新账本与目标目录重新裁决，
@@ -195,41 +221,73 @@ function commitStagedTreeLocked({
     };
     writeAtomic(paths.sources, `${JSON.stringify(nextSources, null, 2)}\n`);
   } catch (err) {
-    rollback(tx, { target, bases, trash, installedAs, ops });
+    const rollbackErrors = rollback(tx, { target, bases, trash, installedAs, ops });
+    if (rollbackErrors.length) {
+      onWarn(`回滚未能完全恢复：${rollbackErrors.join('；')}；备份保留在 .claude/.stack-trash`);
+    }
     throw err;
   }
-  // 账本提交成功后才清理旧目录与旧 bases 备份。
-  rmSync(trash, { recursive: true, force: true });
+  // 账本提交成功后才清理旧目录与旧 bases 备份；清理失败不能让已完成的安装报失败。
+  try {
+    ops.rmSync(trash, { recursive: true, force: true });
+  } catch {
+    onWarn('安装已完成，但清理临时备份失败；可手动删除 .claude/.stack-trash');
+  }
 
   for (const message of dropHubOwnership(root, installedAs)) onWarn(message);
 
   try {
-    const lock = readLock(root);
-    if (source.type === 'git') lock.packs[installedAs] = lockEntryFor({ installedAs, source, pack });
-    else delete lock.packs[installedAs];
-    writeLock(root, lock);
+    if (source.type === 'git') {
+      const lock = readLock(root);
+      lock.packs[installedAs] = lockEntryFor({ installedAs, source, pack });
+      writeLock(root, lock);
+    } else if (existsSync(paths.lock)) {
+      const lock = readLock(root);
+      if (lock.packs[installedAs]) {
+        delete lock.packs[installedAs];
+        writeLock(root, lock);
+      }
+    }
   } catch (err) {
     onWarn(`写入 stack-lock.yaml 失败：${err.message}；运行 devflow stack lock 重建`);
   }
+  return action;
 }
 
 function rollback(tx, { target, bases, trash, installedAs, ops }) {
+  const errors = [];
+  const step = (label, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      errors.push(`${label}：${err.message}`);
+    }
+  };
   // 先把本次换入的新 bases 移走，否则恢复旧 bases 时会撞上非空目录；
-  // 再恢复旧目录与旧 bases，最后删除备份。
+  // 再恢复旧目录与旧 bases。任一步失败都继续后续恢复，最后才决定是否删除备份。
   if (tx.placedBases) {
-    ensureDir(trash);
-    ops.renameSync(bases, join(trash, `${installedAs}-new-bases`));
+    step('移出新 bases', () => {
+      ensureDir(trash);
+      ops.renameSync(bases, join(trash, `${installedAs}-new-bases`));
+    });
   }
-  if (tx.placedTarget) ops.rmSync(target, { recursive: true, force: true });
+  if (tx.placedTarget) step('移除新目录', () => ops.rmSync(target, { recursive: true, force: true }));
   if (tx.movedTarget) {
-    ensureDir(dirname(target));
-    ops.renameSync(join(trash, installedAs), target);
+    step('恢复旧目录', () => {
+      ensureDir(dirname(target));
+      ops.renameSync(join(trash, installedAs), target);
+    });
   }
   if (tx.movedBases) {
-    ensureDir(dirname(bases));
-    ops.renameSync(join(trash, `${installedAs}-bases`), bases);
+    step('恢复旧 bases', () => {
+      ensureDir(dirname(bases));
+      ops.renameSync(join(trash, `${installedAs}-bases`), bases);
+    });
   }
-  ops.rmSync(trash, { recursive: true, force: true });
+  if (!errors.length) {
+    step('清理备份', () => ops.rmSync(trash, { recursive: true, force: true }));
+  }
+  return errors;
 }
 
 /** hub.yaml 把同一路径声明给另一个栈名时，安装会制造双 owner。 */
@@ -250,11 +308,10 @@ export function applyInstall({
   root, installedAs, pack, source, sources, force = false,
   noGen = false, generate = null, ops = DEFAULT_OPS, onWarn = () => {},
 }) {
-  const target = stackPaths(root).stackDir(installedAs);
-  // --force 只覆盖目录，不能绕过“目标必须在项目内”的约束。
-  if (!isPathInside(root, target) || !isRealPathInside(root, target)) {
-    throw new Error(`目标目录越界（可能被 junction/符号链接引到项目外）：.claude/hub/stacks/${installedAs}`);
-  }
+  // 校验必须在任何写入之前：非法栈名与越界 junction 都不能进入 staging。
+  assertStackName(installedAs);
+  const paths = assertInstallPaths(root, installedAs);
+  const target = paths.stackDir(installedAs);
   const conflictsWith = declaredConflict(root, installedAs);
   if (conflictsWith) {
     throw new Error(`.claude/hub/stacks/${installedAs} 已声明给 ${conflictsWith}；先修正 hub.yaml`);
@@ -262,7 +319,7 @@ export function applyInstall({
   const lock = readLock(root);
   const record = sources.packs[installedAs] || null;
   const snap = targetSnapshot(root, installedAs, pack);
-  const action = classifyInstall({
+  const preflight = classifyInstall({
     installedAs,
     targetExists: snap.exists,
     targetMatches: snap.matches,
@@ -271,14 +328,13 @@ export function applyInstall({
     force,
     source,
   });
-  if (action === 'conflict') {
+  if (preflight === 'conflict') {
     throw new Error(`目标目录已存在且内容不同：.claude/hub/stacks/${installedAs}；确认覆盖请加 --force`);
   }
-  if (action === 'other-owner') {
+  if (preflight === 'other-owner') {
     throw new Error(`目标目录已由其他安装占用：.claude/hub/stacks/${installedAs}；先运行 devflow stack remove`);
   }
 
-  const paths = stackPaths(root);
   const stageRoot = join(paths.stagingRoot, tag());
   const stagedTarget = join(stageRoot, 'target');
   const stagedBases = join(stageRoot, 'bases');
@@ -286,14 +342,21 @@ export function applyInstall({
   writePackTree(stagedBases, pack);
   const localHashes = hashTree(stagedTarget, pack.files.map((file) => file.rel));
   const nextRecord = ledgerRecord({ installedAs, pack, source, localHashes });
+  let action;
   try {
-    commitStagedTree({
+    action = commitStagedTree({
       root, installedAs, source, pack, record: nextRecord,
       stagedTarget, stagedBases, force, ops, onWarn,
     });
   } finally {
     rmSync(stageRoot, { recursive: true, force: true });
   }
-  if (!noGen && generate) generate(root);
+  if (!noGen && generate) {
+    try {
+      generate(root);
+    } catch {
+      onWarn('安装已完成，但生成技能失败；修正 hub.yaml 或栈声明后运行 node scripts/gen-claude-skills.mjs');
+    }
+  }
   return { action };
 }
