@@ -81,7 +81,7 @@ test('--draft 输出技能补全文案，已初始化时补草稿同样如此', 
   try {
     const first = run('hub-init.mjs', ['--root', root, '--draft'], root);
     assert.equal(first.status, 0, first.stdout + first.stderr);
-    assert.match(first.stdout, /规则草稿已生成；init 技能将按 --draft 补全 TODO/);
+    assert.match(first.stdout, /已按 --draft 生成草稿；通过 \/devflow:init --draft 调用时由技能补全 TODO/);
     assert.doesNotMatch(first.stdout, /智能补全仅在/);
 
     // 已初始化分支补生成草稿时，也按 --draft 区分文案。
@@ -89,7 +89,7 @@ test('--draft 输出技能补全文案，已初始化时补草稿同样如此', 
     const again = run('hub-init.mjs', ['--root', root, '--draft'], root);
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.match(again.stdout, /补生成规则草稿 \.claude\/hub\/_shared\/project-basics\.md/);
-    assert.match(again.stdout, /规则草稿已生成；init 技能将按 --draft 补全 TODO/);
+    assert.match(again.stdout, /已按 --draft 生成草稿；通过 \/devflow:init --draft 调用时由技能补全 TODO/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -145,6 +145,10 @@ test('--no-draft 不生成草稿、不自动声明 stack', () => {
     assert.equal(has(root, '.claude/hub/_shared/project-basics.md'), false);
     assert.equal(has(root, '.claude/hub/stacks/nodejs/_shared.md'), false);
     assert.match(init.stdout, /跳过规则草稿生成/);
+    // 没有草稿时，下一步不再提示填写不存在的文件。
+    assert.doesNotMatch(init.stdout, /project-basics\.md 中的 TODO/);
+    assert.doesNotMatch(init.stdout, /技术栈草稿在/);
+    assert.match(init.stdout, /2\. （可选）node scripts\/devflow-gen\.mjs/);
 
     const doctor = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);

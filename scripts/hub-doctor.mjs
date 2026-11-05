@@ -289,6 +289,10 @@ export async function main(argv = process.argv.slice(2)) {
   const mode = requestedMode === 'auto'
     ? (hasHub || !isPluginRepo ? 'project' : 'plugin')
     : requestedMode;
+  // auto 在双身份目录里只会走项目检查；显式提示另一条路径仍然可用。
+  if (requestedMode === 'auto' && hasHub && isPluginRepo) {
+    add('info', '检测到插件仓库同时是 devflow 项目；插件自检请用 --mode plugin');
+  }
 
   const finish = () => {
     if (json) {

@@ -120,6 +120,37 @@ test('同时存在 hub 与插件清单时 auto 优先项目模式', () => {
     const report = JSON.parse(r.stdout);
     assert.equal(report.mode, 'project');
     assert.ok(!report.rows.some((row) => /插件源码仓库模式/.test(row.message)));
+    // 双身份下提示仍可显式走插件自检，避免静默降级。
+    assert.ok(report.rows.some((row) => row.status === 'info' && /--mode plugin/.test(row.message)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--mode plugin 在插件仓库显式走插件检查', () => {
+  const r = run(['--mode', 'plugin', '--json']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const report = JSON.parse(r.stdout);
+  assert.equal(report.mode, 'plugin');
+  assert.ok(report.rows.some((row) => row.status === 'info' && /插件源码仓库模式/.test(row.message)));
+  assert.equal(report.rows.filter((row) => row.status === 'warn').length, 0);
+  assert.ok(!report.rows.some((row) => /请先运行 \/devflow:init/.test(row.message)));
+});
+
+test('--mode project 在已初始化的普通项目显式走项目检查', () => {
+  const root = makeProject();
+  try {
+    const init = spawnSync(NODE, [join(PLUGIN_ROOT, 'scripts', 'hub-init.mjs'), '--root', root], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    assert.equal(init.status, 0, init.stdout + init.stderr);
+    const r = run(['--root', root, '--mode', 'project', '--json']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const report = JSON.parse(r.stdout);
+    assert.equal(report.mode, 'project');
+    assert.ok(!report.rows.some((row) => /插件源码仓库模式/.test(row.message)));
+    assert.ok(!report.rows.some((row) => /请先运行 \/devflow:init/.test(row.message)));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -122,14 +122,7 @@ function writeSourceManifest(root, version, files) {
 }
 
 const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
-scripts/devflow-gen.mjs
-scripts/devflow-doctor.mjs
-scripts/devflow-route.mjs
-scripts/devflow-upstream.mjs
-scripts/devflow-test.mjs
-scripts/devflow-triage.mjs
-scripts/devflow-check.mjs
-scripts/devflow-trace.mjs
+${Object.keys(LOADERS).map((file) => `scripts/${file}`).join('\n')}
 .claude/skills/devflow-*/
 .claude/.hub-manifest.json
 .claude/.hub-sources.json
@@ -224,7 +217,7 @@ export async function main(argv = process.argv.slice(2)) {
         if (written) {
           log('ok', `补生成规则草稿 ${rel}`);
           log('info', draft
-            ? '规则草稿已生成；init 技能将按 --draft 补全 TODO'
+            ? '已按 --draft 生成草稿；通过 /devflow:init --draft 调用时由技能补全 TODO'
             : '草稿已生成；智能补全仅在 /devflow:init --draft 中执行');
         }
       }
@@ -299,7 +292,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (written) log('ok', `生成 ${written} 个规则草稿（TODO 是占位，不是规则）`);
       if (preserved) log('ok', `保留已有草稿 ${preserved} 个`);
       log('info', draft
-        ? '规则草稿已生成；init 技能将按 --draft 补全 TODO'
+        ? '已按 --draft 生成草稿；通过 /devflow:init --draft 调用时由技能补全 TODO'
         : '草稿已生成；智能补全仅在 /devflow:init --draft 中执行');
       if (autoStack) log('ok', `探测到单一技术栈 ${autoStack}，已写入 hub.yaml 的 stack`);
       else if (!existing.stack && detected.names.length > 1) {
@@ -384,10 +377,13 @@ export async function main(argv = process.argv.slice(2)) {
     log('ok', '初始化完成');
   }
   console.log('\n下一步：');
-  console.log('  1. 直接开始：/devflow:req <需求>');
-  console.log('  2. （可选）填写 .claude/hub/_shared/project-basics.md 中的 TODO，并删除已填草稿首行的草稿标记');
-  console.log('  3. （可选）技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
-  console.log('  4. （可选）node scripts/devflow-gen.mjs 刷新投影，node scripts/devflow-doctor.mjs 体检');
+  const nextSteps = ['直接开始：/devflow:req <需求>'];
+  if (!noDraft) {
+    nextSteps.push('（可选）填写 .claude/hub/_shared/project-basics.md 中的 TODO，并删除已填草稿首行的草稿标记');
+    nextSteps.push('（可选）技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
+  }
+  nextSteps.push('（可选）node scripts/devflow-gen.mjs 刷新投影，node scripts/devflow-doctor.mjs 体检');
+  nextSteps.forEach((line, i) => console.log(`  ${i + 1}. ${line}`));
   if (noDraft) {
     console.log('  （本次使用 --no-draft，没有生成规则草稿；去掉该参数重新运行 init 可生成）');
   }

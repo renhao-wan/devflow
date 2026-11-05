@@ -44,11 +44,13 @@ req 阶段会把模糊诉求整理成可验证的验收标准，产物写到 `do
 status 是只读的。它会告诉当前处于哪个阶段、缺哪份产物、下一条该运行什么命令。只有一个任务时，后续命令可以省略 slug：
 
 ```bash
-/devflow:plan add-login
-/devflow:implement add-login
-/devflow:test add-login
-/devflow:review add-login
+/devflow:plan
+/devflow:implement
+/devflow:test
+/devflow:review
 ```
+
+存在多个任务时必须显式带上 slug，例如 `/devflow:plan add-login`；status 会列出候选。
 
 每个阶段都有明确的产出与门禁：plan 写清方案、任务拆分、测试策略与回滚；implement 小步实现；test 必须真实运行测试并记录证据；review 按风险决定审查方向，结论没有阻断项才算完成。任务完成或交付后，如果本项目改过阶段规则，可以用 `/devflow:upstream` 回灌到个人库或团队库。
 
