@@ -31,7 +31,9 @@ function readInput(timeoutMs = 400) {
       done = true;
       clearTimeout(timer);
       try {
-        resolve(data.trim() ? JSON.parse(data) : {});
+        const parsed = data.trim() ? JSON.parse(data) : {};
+        // stdin 来自宿主，可能不是对象；非对象输入按空上下文处理。
+        resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {});
       } catch {
         resolve({});
       }

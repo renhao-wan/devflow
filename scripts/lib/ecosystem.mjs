@@ -257,8 +257,17 @@ export function loadState(root) {
     };
   }
   try {
-    const state = JSON.parse(readText(file));
-    return { file, exists: true, state, error: null };
+    const parsed = JSON.parse(readText(file));
+    // 检测结果由脚本维护；null / 数组等非法形状按损坏处理并提示重新检测。
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        file,
+        exists: true,
+        state: { schemaVersion: 1, detectedAt: null, tools: {} },
+        error: '状态文件结构非法，请运行 devflow route --detect 重建',
+      };
+    }
+    return { file, exists: true, state: parsed, error: null };
   } catch (err) {
     return {
       file,

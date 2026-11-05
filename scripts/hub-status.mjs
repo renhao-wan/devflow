@@ -40,7 +40,13 @@ const GAP = {
 function readState(root) {
   const file = join(root, '.claude', '.devflow-state.json');
   if (!existsSync(file)) return {};
-  try { return JSON.parse(readText(file)); } catch { return {}; }
+  try {
+    const data = JSON.parse(readText(file));
+    // 手改或写入中断可能留下 null / 数组，按空状态处理，避免读取属性时崩溃。
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch {
+    return {};
+  }
 }
 
 function mtimeOf(file) {

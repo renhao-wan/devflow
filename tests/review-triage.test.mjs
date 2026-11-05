@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  DIRECTIONS, buildReviewPlan, detectFlow, evaluateEscalation, profileChanges, readReviewMarker,
+  DIRECTIONS, buildReviewPlan, collectChanges, detectFlow, evaluateEscalation,
+  profileChanges, readReviewMarker,
 } from '../scripts/lib/review.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -473,6 +474,28 @@ test('CLI --escalate 拒绝与审查参数混用', () => {
     const r = run(['--root', root, '--escalate', '--write']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--escalate/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('collectChanges 解析 rename 目标并统计未跟踪文件行数', () => {
+  const root = initRepo('devflow-changes-stat-');
+  try {
+    mkdirSync(join(root, 'src', 'old'), { recursive: true });
+    writeFileSync(join(root, 'src', 'old', 'a.js'), 'line1\nline2\n');
+    baseline(root);
+    mkdirSync(join(root, 'src', 'new'), { recursive: true });
+    git(root, 'mv', 'src/old/a.js', 'src/new/a.js');
+    writeFileSync(join(root, '中文.js'), '一\n二\n三\n');
+
+    const changes = collectChanges(root);
+    const renamed = changes.files.find((file) => file.path.endsWith('a.js'));
+    // 不能丢掉目录前缀，也不能残留 {old => new} 或路径转义。
+    assert.equal(renamed.path, 'src/new/a.js');
+    const untracked = changes.files.find((file) => file.path === '中文.js');
+    assert.ok(untracked, '未跟踪的中文路径应保持原样');
+    assert.equal(untracked.additions, 3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
