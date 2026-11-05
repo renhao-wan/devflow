@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import './support.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -158,6 +160,107 @@ test('--from 与 --ref / --offline 互斥', () => {
     assert.match(withRef.stderr, /互斥/);
     assert.match(withOffline.stderr, /互斥/);
     assert.equal(existsSync(join(root, '.claude', 'hub', 'stacks', 'java-spring')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+function makeGitStackRepo(base) {
+  const repo = join(base, 'git-stacks');
+  mkdirSync(repo, { recursive: true });
+  const g = (args) => {
+    const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+  };
+  g(['init', '-b', 'main']);
+  g(['config', 'core.autocrlf', 'false']);
+  g(['config', 'user.email', 'test@example.com']);
+  g(['config', 'user.name', 'test']);
+  const text = '# shared\n';
+  const packDir = join(repo, 'stacks', 'java-spring');
+  mkdirSync(packDir, { recursive: true });
+  writeFileSync(join(packDir, '_shared.md'), text);
+  writeFileSync(join(packDir, 'stack.json'), JSON.stringify({
+    name: 'java-spring', version: '1.2.0', minDevflow: '>=1.7.0',
+    detects: ['java-maven'], files: { '_shared.md': contentHash(text) },
+  }));
+  writeFileSync(join(repo, 'index.json'), JSON.stringify({
+    schemaVersion: 1,
+    packs: { 'java-spring': { path: 'stacks/java-spring', detects: ['java-maven'] } },
+  }));
+  g(['add', '.']);
+  g(['commit', '-m', 'init']);
+  return repo;
+}
+
+test('stack add --repo 写入快照与 lock，list/status 可读', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-git-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run('hub-stack.mjs', [
+      'add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen',
+    ], root, env);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const lock = readFileSync(join(root, '.claude', 'hub', 'stack-lock.yaml'), 'utf8');
+    assert.match(lock, /commit:/);
+    const ledger = JSON.parse(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'));
+    assert.equal(ledger.packs['java-spring'].source, 'git');
+    assert.match(ledger.packs['java-spring'].commit, /^[0-9a-f]{40}$/);
+
+    const list = run('hub-stack.mjs', ['list', '--root', root], root, env);
+    assert.match(list.stdout, /java-spring/);
+    const status = run('hub-stack.mjs', ['status', '--root', root, '--json'], root, env);
+    assert.equal(JSON.parse(status.stdout)[0].installedAs, 'java-spring');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack lock 从本地账本重建可复现 lock', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-lock-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    const res = run('hub-stack.mjs', ['lock', '--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /跳过本地来源/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('cache gc 默认 dry-run，--apply 才删除过期快照', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-gc-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const cache = join(base, 'cache');
+    const env = { DEVFLOW_CACHE_DIR: cache, DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--repo', repo, '--no-gen'], root, env);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    // Task 8：快照位于 <cache>/<repo-id>/snapshots/<commit>/，逐仓库目录收集 meta。
+    const metas = [];
+    for (const repoDir of readdirSync(cache)) {
+      const snapshots = join(cache, repoDir, 'snapshots');
+      if (!existsSync(snapshots)) continue;
+      for (const commit of readdirSync(snapshots)) {
+        for (const name of readdirSync(join(snapshots, commit))) {
+          if (name.endsWith('.meta.json')) metas.push(join(snapshots, commit, name));
+        }
+      }
+    }
+    assert.equal(metas.length, 1);
+    const old = new Date('2020-01-01T00:00:00Z');
+    utimesSync(metas[0], old, old);
+    const dry = run('hub-stack.mjs', ['cache', 'gc', '--root', root, '--keep-days', '1'], root, env);
+    assert.match(dry.stdout, /将删除|dry-run/);
+    assert.equal(existsSync(metas[0]), true);
+    run('hub-stack.mjs', ['cache', 'gc', '--root', root, '--keep-days', '1', '--apply'], root, env);
+    assert.equal(existsSync(metas[0]), false);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
