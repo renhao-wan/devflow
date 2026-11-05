@@ -78,6 +78,53 @@ function readJson(file, fallback = null) {
 
 const PLUGIN_STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
 
+// 建议按“先修工作区、再修配置、最后处理生成物与日常状态”的顺序排列。
+const HINT_RULES = [
+  (hint) => /^\/devflow:init\b/.test(hint),
+  (hint) => /^(修改|删除|把|在|填写|安装)/.test(hint),
+  (hint) => /\/devflow:sync\b/.test(hint),
+  (hint) => /scripts\/devflow-gen\.mjs/.test(hint),
+  (hint) => /\/devflow:onboard\b/.test(hint),
+  (hint) => /\/devflow:test\b/.test(hint),
+  (hint) => /devflow route --detect/.test(hint),
+  (hint) => /\/devflow:upstream\b/.test(hint),
+  (hint) => /claude plugin list/.test(hint),
+];
+
+export function hintPriority(hint) {
+  const index = HINT_RULES.findIndex((rule) => rule(hint));
+  return index === -1 ? HINT_RULES.length : index;
+}
+
+function shortenReason(text, max = 60) {
+  const value = String(text).replace(/\s+/g, ' ').trim();
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/** 按优先级输出建议；init 系列合并成一行，并在合并时保留触发原因。 */
+export function renderHints(hints) {
+  const groups = new Map();
+  for (const [hint, reasons] of hints) {
+    const key = /^\/devflow:init\b/.test(hint) ? '/devflow:init' : hint;
+    if (!groups.has(key)) groups.set(key, { hints: [], reasons: [] });
+    const group = groups.get(key);
+    if (!group.hints.includes(hint)) group.hints.push(hint);
+    group.reasons.push(...reasons);
+  }
+  return [...groups.values()]
+    .map((group) => ({ group, priority: Math.min(...group.hints.map(hintPriority)) }))
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ group }) => {
+      const label = group.hints.join('；或 ');
+      const reasons = [...new Set(group.reasons.map((reason) => shortenReason(reason)))];
+      // 只有一个原因时保持原有的一行建议，避免把提醒正文重复一遍。
+      if (reasons.length <= 1) return `建议：${label}`;
+      const shown = reasons.slice(0, 3);
+      const suffix = reasons.length > shown.length ? ` 等 ${reasons.length} 项` : '';
+      return `建议：${label}（${shown.join('；')}${suffix}）`;
+    });
+}
+
 /** 版本权威只认 plugin.json、package.json 与 marketplace 中 name 匹配的 plugins[].version。 */
 function checkPluginVersions(add, root, info) {
   const pkg = readJson(join(root, 'package.json'));
@@ -221,10 +268,14 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`--mode 只支持 auto、plugin 或 project，当前为：${requestedMode}`);
   }
   const rows = [];
-  const hints = new Set();
+  const hints = new Map();
+  const addHint = (hint, reason) => {
+    if (!hints.has(hint)) hints.set(hint, []);
+    if (reason) hints.get(hint).push(reason);
+  };
   const add = (status, message, hint) => {
     rows.push({ status, message });
-    if (hint) hints.add(hint);
+    if (hint) addHint(hint, message);
   };
 
   let isPluginRepo = false;
@@ -248,7 +299,7 @@ export async function main(argv = process.argv.slice(2)) {
       const warns = rows.filter((r) => r.status === 'warn').length;
       const infos = rows.filter((r) => r.status === 'info').length;
       console.log(`\n${errors} 个错误，${warns} 个提醒，${infos} 条提示。`);
-      if (warns) for (const hint of hints) console.log(`建议：${hint}`);
+      if (warns) for (const line of renderHints(hints)) console.log(line);
     }
     if (rows.some((r) => r.status === 'error')) process.exitCode = 1;
     return rows;
@@ -447,7 +498,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (libs.order.includes('personal')) {
         add('ok', `个人库：${posix(libs.personal.root)}`);
         if (!libs.personal.exists) {
-          add('warn', `个人库目录尚未创建：${posix(libs.personal.root)}`, '/devflow:upstream --to personal --stage <name> --apply');
+          add('info', `个人库目录尚未创建：${posix(libs.personal.root)}`);
         }
       } else {
         add('ok', '个人库未启用（templates.order 不含 personal）');
@@ -619,7 +670,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (issues.length) {
       for (const issue of issues) add('warn', issue);
-      hints.add('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本；正文修改不需要重新生成');
+      addHint('运行 /devflow:sync 补齐共享规则，或 node scripts/devflow-gen.mjs 刷新账本；正文修改不需要重新生成');
     } else if (manifest.shared.length) {
       add('ok', `共享规则与账本一致（${manifest.shared.length} 个）`);
     }
