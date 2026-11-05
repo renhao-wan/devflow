@@ -149,9 +149,45 @@ function ledgerLocalPathOf(record) {
   return resolve(value);
 }
 
+/** 账本与 lock 都可能被手工改过；packId 进入日志与错误文案前必须校验。 */
+function ledgerPackIdOf(record) {
+  if (!isValidStackName(record.packId)) {
+    throw new StackPackError('安装账本中的包名缺失或非法', 'STACK_LEDGER');
+  }
+  return record.packId;
+}
+
+function lockPackIdOf(entry) {
+  if (!isValidStackName(entry.packId)) {
+    throw new StackPackError('stack-lock.yaml 中的包名缺失或非法', 'STACK_LOCK');
+  }
+  return entry.packId;
+}
+
+const RESTORE_OWNER_MISMATCH = '安装来源与本地账本不一致：先运行 devflow stack remove 再 restore';
+
+/** 设计 §7：同一 installedAs 换了 repo 或 packId 时必须先 remove，restore 不能静默换 owner。 */
+function assertRestoreOwner(root, installedAs, repo, packId) {
+  const record = readSources(root).packs[installedAs];
+  if (!record) return;
+  let recordRepo = null;
+  if (record.source === 'git') {
+    try {
+      recordRepo = normalizeRepoUrl(record.repo, { allowFile: allowLocalRepo() });
+    } catch {
+      recordRepo = null;
+    }
+  }
+  if (recordRepo !== repo || record.packId !== packId) {
+    throw new Error(RESTORE_OWNER_MISMATCH);
+  }
+}
+
+const SHA40_RE = /^[0-9a-f]{40}$/i;
+
 /** 按账本记录重新解析来源：local 重读 localPath，git 刷新 ref 并物化 lock commit。 */
 function loadRecordSource(record, refOverride, offline) {
-  const packId = record.packId;
+  const packId = ledgerPackIdOf(record);
   if (record.source === 'local') {
     if (refOverride) throw new Error(`${record.installedAs} 是本地来源，不支持 --ref`);
     const fromRoot = ledgerLocalPathOf(record);
@@ -176,9 +212,9 @@ function loadRecordSource(record, refOverride, offline) {
   const info = ensureRepo({
     url: repo, cacheRoot, offline, allowFile,
   });
-  const ref = refOverride || record.ref || 'main';
-  // 先刷新 ref 再解析：缓存里的旧 ref 会让 update 原地不动。
-  if (!offline) refreshRef({ repoGit: info.repoGit, ref });
+  const ref = String(refOverride || record.ref || 'main');
+  // 完整 SHA 不能走 refspec 刷新；直接解析/抓取该对象。
+  if (!offline && !SHA40_RE.test(ref)) refreshRef({ repoGit: info.repoGit, ref });
   const commit = resolveCommit({ repoGit: info.repoGit, ref, offline });
   fetchCommit({
     repoGit: info.repoGit, commit, ref, offline,
@@ -515,8 +551,13 @@ export async function main(argv = process.argv.slice(2)) {
     if (all && packId) throw new Error('--all 与 <installedAs> 不能同时使用');
     if (!all && !packId) throw new Error('update 需要 <installedAs> 或 --all');
     const sources = readSources(root);
+    const paths = stackPaths(root);
     const names = all ? Object.keys(sources.packs) : [packId];
     if (!names.length) log('info', '没有已安装的包可更新');
+    // 设计 §7：lock 缺失不阻断更新；提示可用 stack lock 重建可复现事实。
+    if (!existsSync(paths.lock) && Object.values(sources.packs).some((record) => record.source === 'git')) {
+      log('info', 'stack-lock.yaml 不存在；可运行 devflow stack lock 重建可复现 lock');
+    }
     const refOverride = argValue(argv, '--ref', null);
     const offline = hasFlag(argv, '--offline');
     const dryRun = hasFlag(argv, '--dry-run');
@@ -533,7 +574,7 @@ export async function main(argv = process.argv.slice(2)) {
       for (const warning of pack.warnings) log('warn', `${record.packId}：${warning}`);
       if (dryRun) {
         // 设计第 9 节：dry-run 输出每个文件的动作，不落盘。
-        if (!existsSync(stackPaths(root).stackDir(name))) {
+        if (!existsSync(paths.stackDir(name))) {
           throw new Error('目标目录缺失，不能执行更新；请先运行 devflow stack restore 或重新 add');
         }
         const labels = {
@@ -581,14 +622,16 @@ export async function main(argv = process.argv.slice(2)) {
       restore: '恢复', adopt: '采纳一致目录', force: '强制覆盖', modified: '保留本地并标记 modified',
     };
     let changed = 0;
+    let needsGen = false;
     for (const [installedAs, entry] of Object.entries(lock.packs)) {
-      // lock 里的 repo 必须重新归一化后才能写入账本与 lock。
+      // lock 里的 repo 与 packId 都必须先校验，非法值不进入路径与日志。
       let repo;
       try {
         repo = normalizeRepoUrl(entry.repo, { allowFile });
       } catch {
         throw new StackPackError('stack-lock.yaml 中的仓库地址缺失或非法', 'STACK_LOCK');
       }
+      const packId = lockPackIdOf(entry);
       const info = ensureRepo({
         url: repo, cacheRoot, offline, allowFile,
       });
@@ -596,11 +639,18 @@ export async function main(argv = process.argv.slice(2)) {
       fetchCommit({
         repoGit: info.repoGit, commit: entry.commit, ref: entry.ref, offline,
       });
+      // lock 的 path 不能被篡改：以 commit 内的 index.json 为准并逐字比对。
+      const index = remoteIndex(info.repoGit, entry.commit, offline);
+      const indexEntry = remoteEntry(index, packId);
+      if (indexEntry.path !== entry.path) {
+        throw new StackPackError('stack-lock.yaml 与 index.json 的包路径不一致', 'STACK_LOCK');
+      }
       const snap = materializeSnapshot({
         repoGit: info.repoGit,
         commit: entry.commit,
-        packId: entry.packId,
-        packPath: entry.path,
+        packId,
+        packPath: indexEntry.path,
+        indexEntry,
         cacheRoot,
         offline,
         loaderFiles: loaderFiles(),
@@ -609,12 +659,14 @@ export async function main(argv = process.argv.slice(2)) {
       const source = {
         type: 'git',
         repo,
-        packId: entry.packId,
-        path: entry.path,
+        packId,
+        path: indexEntry.path,
         ref: entry.ref,
         commit: entry.commit,
       };
       const state = targetSnapshot(root, installedAs, snap.pack);
+      // 目录已存在时不能静默换 owner：账本有记录且来源不同必须先 remove。
+      if (state.exists) assertRestoreOwner(root, installedAs, repo, packId);
       const mode = !state.exists ? 'restore' : (state.matches ? 'adopt' : (force ? 'force' : 'modified'));
       if (dryRun) {
         log('info', `将处理 ${installedAs}：${modes[mode]}`);
@@ -640,6 +692,7 @@ export async function main(argv = process.argv.slice(2)) {
           root, installedAs, pack: snap.pack, source, onWarn: (message) => log('warn', message),
         });
         log('ok', `已采纳一致目录 ${installedAs}`);
+        needsGen = true;
       } else {
         // 保留本地内容，只把 lock 的包内容记为 bases 并更新账本。
         adoptExisting({
@@ -647,9 +700,12 @@ export async function main(argv = process.argv.slice(2)) {
           onWarn: (message) => log('warn', message),
         });
         log('warn', `${installedAs} 与 stack-lock.yaml 内容不同：保留本地并标记 modified；确认覆盖请加 --force`);
+        needsGen = true;
       }
       changed += 1;
     }
+    // adopt/modified 不走 applyInstall，循环结束后统一补一次 gen。
+    if (!dryRun && needsGen && !noGen) runGen(root);
     const localOnly = Object.keys(readSources(root).packs).filter((name) => !lock.packs[name]);
     if (localOnly.length) {
       log('warn', `${localOnly.join('、')} 未在 stack-lock.yaml 中，保留不删除；不能跨机器恢复，运行 devflow stack lock 或重新 add`);
@@ -675,8 +731,7 @@ export async function main(argv = process.argv.slice(2)) {
       throw new Error(`${installedAs} 仍被 hub.yaml 引用；先手工解除声明，或使用 --keep`);
     }
     const sources = readSources(root);
-    const record = sources.packs[installedAs];
-    if (!record) throw new Error(`未安装：${installedAs}`);
+    if (!sources.packs[installedAs]) throw new Error(`未安装：${installedAs}`);
     const paths = stackPaths(root);
     const target = paths.stackDir(installedAs);
     const bases = paths.basesDir(installedAs);
@@ -692,17 +747,6 @@ export async function main(argv = process.argv.slice(2)) {
     // lock 必须在任何写入之前读取：损坏时 fail closed，不能留下半删除状态。
     const hasLock = existsSync(paths.lock);
     const lock = hasLock ? readLock(root) : null;
-
-    // purge 只删除“本地未改且本机基线也一致”的文件。
-    const cleanFiles = [];
-    if (purge) {
-      for (const [rel, hashes] of Object.entries(record.files || {})) {
-        if (!hashes || hashes.local === null || hashes.local !== hashes.base) continue;
-        const abs = ledgerStackFileAbs(root, installedAs, rel);
-        if (!existsSync(abs)) continue;
-        if (contentHash(readFileSync(abs, 'utf8')) === hashes.local) cleanFiles.push({ abs, rel });
-      }
-    }
 
     // 删除与安装共用安装锁；账本写入是提交点，此前失败按逆序从 trash 恢复。
     const trash = join(paths.trashRoot, `${process.pid}-${Date.now()}`);
@@ -737,10 +781,25 @@ export async function main(argv = process.argv.slice(2)) {
 
     withFileLock(join(paths.stagingRoot, 'install'), () => {
       try {
+        // 锁内重读账本，避免用取锁前的快照误删并发更新过的文件。
+        const latest = readSources(root);
+        const latestRecord = latest.packs[installedAs];
+        if (!latestRecord) throw new Error(`未安装：${installedAs}`);
         if (!keep) {
           if (purge) {
             const prefix = `.claude/hub/stacks/${installedAs}/`;
-            for (const { abs, rel } of cleanFiles) {
+            for (const [rel, hashes] of Object.entries(latestRecord.files || {})) {
+              if (!hashes || hashes.local === null || hashes.local !== hashes.base) continue;
+              const abs = ledgerStackFileAbs(root, installedAs, rel);
+              if (!existsSync(abs)) continue;
+              // 取锁后、rename 前再次复核内容哈希：期间被手改的文件必须保留。
+              let current;
+              try {
+                current = contentHash(readFileSync(abs, 'utf8'));
+              } catch {
+                continue;
+              }
+              if (current !== hashes.local) continue;
               // 保留相对路径，便于失败回滚与手工取证。
               const relInStack = rel.slice(prefix.length);
               move(abs, join(trash, installedAs, ...relInStack.split('/')));
@@ -750,7 +809,6 @@ export async function main(argv = process.argv.slice(2)) {
           }
         }
         move(bases, join(trash, `${installedAs}-bases`));
-        const latest = readSources(root);
         const next = { ...latest, packs: { ...latest.packs } };
         delete next.packs[installedAs];
         writeSources(root, next);
@@ -758,9 +816,9 @@ export async function main(argv = process.argv.slice(2)) {
         rollbackRemoval();
         throw err;
       }
+      // 账本提交后再清理空目录；只删空目录，失败不影响一致性。
+      if (purge) pruneEmptyDirs(target);
     }, { failClosed: true, timeoutMs: 10000 });
-
-    if (purge) pruneEmptyDirs(target);
 
     // 只有 lock 原本存在时才回写；lock 写失败不回滚已提交的删除。
     if (hasLock && lock.packs[installedAs]) {

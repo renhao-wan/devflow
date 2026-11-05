@@ -165,8 +165,11 @@ test('--from 与 --ref / --offline 互斥', () => {
   }
 });
 
-function makeGitStackRepo(base) {
-  const repo = join(base, 'git-stacks');
+function makeGitStackRepo(base, options = {}) {
+  const {
+    dir = 'git-stacks', packId = 'java-spring', version = '1.2.0', text = '# shared\n',
+  } = options;
+  const repo = join(base, dir);
   mkdirSync(repo, { recursive: true });
   const g = (args) => {
     const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -176,21 +179,26 @@ function makeGitStackRepo(base) {
   g(['config', 'core.autocrlf', 'false']);
   g(['config', 'user.email', 'test@example.com']);
   g(['config', 'user.name', 'test']);
-  const text = '# shared\n';
-  const packDir = join(repo, 'stacks', 'java-spring');
+  const packDir = join(repo, 'stacks', packId);
   mkdirSync(packDir, { recursive: true });
   writeFileSync(join(packDir, '_shared.md'), text);
   writeFileSync(join(packDir, 'stack.json'), JSON.stringify({
-    name: 'java-spring', version: '1.2.0', minDevflow: '>=1.7.0',
+    name: packId, version, minDevflow: '>=1.7.0',
     detects: ['java-maven'], files: { '_shared.md': contentHash(text) },
   }));
   writeFileSync(join(repo, 'index.json'), JSON.stringify({
     schemaVersion: 1,
-    packs: { 'java-spring': { path: 'stacks/java-spring', detects: ['java-maven'] } },
+    packs: { [packId]: { path: `stacks/${packId}`, detects: ['java-maven'] } },
   }));
   g(['add', '.']);
   g(['commit', '-m', 'init']);
   return repo;
+}
+
+function gitHead(repo) {
+  const res = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(res.status, 0, res.stderr + res.stdout);
+  return res.stdout.trim();
 }
 
 function commitRepo(repo, message) {
@@ -285,6 +293,75 @@ test('restore 对内容不一致的目录保留本地并在 --force 时覆盖', 
     assert.equal(readFileSync(join(stackDir, '_shared.md'), 'utf8'), '# shared\n');
     const after = JSON.parse(readFileSync(ledgerFile, 'utf8')).packs['java-spring'];
     assert.equal(after.files[rel].local, contentHash('# shared\n'));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('restore 拒绝来源与本地账本不一致的 lock', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-restore-owner-'));
+  try {
+    const root = makeProject(base);
+    const repoA = makeGitStackRepo(base);
+    const repoB = makeGitStackRepo(base, { dir: 'git-stacks-b' });
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repoA, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const before = readFileSync(ledgerFile, 'utf8');
+    // 换成另一仓库的 lock：installedAs/packId 相同但 repo 不同。
+    writeFileSync(join(root, '.claude', 'hub', 'stack-lock.yaml'), [
+      'version: 1',
+      'packs:',
+      '  java-spring:',
+      '    installedAs: java-spring',
+      `    repo: '${repoB.replace(/\\/g, '/')}'`,
+      '    packId: java-spring',
+      '    path: stacks/java-spring',
+      '    ref: main',
+      `    commit: '${gitHead(repoB)}'`,
+      '    version: 1.2.0',
+      '',
+    ].join('\n'));
+
+    const res = run('hub-stack.mjs', ['restore', '--root', root, '--no-gen'], root, env);
+    assert.notEqual(res.status, 0, res.stdout);
+    assert.match(res.stderr, /先运行 devflow stack remove/);
+    assert.equal(readFileSync(ledgerFile, 'utf8'), before);
+
+    const forced = run('hub-stack.mjs', ['restore', '--root', root, '--force', '--no-gen'], root, env);
+    assert.notEqual(forced.status, 0, forced.stdout);
+    assert.match(forced.stderr, /先运行 devflow stack remove/);
+    assert.equal(readFileSync(ledgerFile, 'utf8'), before);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('restore 拒绝被篡改的 lock 包路径', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-restore-path-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const lockFile = join(root, '.claude', 'hub', 'stack-lock.yaml');
+    writeFileSync(lockFile, readFileSync(lockFile, 'utf8').replace(/path: '[^']*'/, "path: 'stacks/other'"));
+
+    const res = run('hub-stack.mjs', ['restore', '--root', root, '--no-gen'], root, env);
+    assert.notEqual(res.status, 0, res.stdout);
+    assert.match(res.stderr, /包路径不一致/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -403,6 +480,45 @@ test('remove 默认把目录与 bases 移入 trash 并清除账本', () => {
     assert.equal(existsSync(join(root, '.claude', '.stack-bases', 'java-spring')), false);
     const ledger = JSON.parse(readFileSync(join(root, '.claude', '.stack-sources.json'), 'utf8'));
     assert.equal(ledger.packs['java-spring'], undefined);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('remove 删除 lock 条目且 --dry-run 不写入', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-remove-lock-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeGitStackRepo(base);
+    const env = { DEVFLOW_CACHE_DIR: join(base, 'cache'), DEVFLOW_STACK_ALLOW_LOCAL_REPO: '1' };
+    const add = run(
+      'hub-stack.mjs',
+      ['add', 'java-spring', '--root', root, '--repo', repo, '--ref', 'main', '--no-gen'],
+      root,
+      env,
+    );
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const lockFile = join(root, '.claude', 'hub', 'stack-lock.yaml');
+    const ledgerBefore = readFileSync(ledgerFile, 'utf8');
+    const lockBefore = readFileSync(lockFile, 'utf8');
+    assert.match(lockBefore, /java-spring/);
+
+    const dry = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--dry-run', '--no-gen'], root, env);
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.equal(existsSync(stackDir), true);
+    assert.equal(readFileSync(ledgerFile, 'utf8'), ledgerBefore);
+    assert.equal(readFileSync(lockFile, 'utf8'), lockBefore);
+
+    const res = run('hub-stack.mjs', ['remove', 'java-spring', '--root', root, '--no-gen'], root, env);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.equal(existsSync(stackDir), false);
+    assert.equal(existsSync(join(root, '.claude', '.stack-bases', 'java-spring')), false);
+    const ledger = JSON.parse(readFileSync(ledgerFile, 'utf8'));
+    assert.equal(ledger.packs['java-spring'], undefined);
+    assert.equal(existsSync(lockFile), true);
+    assert.doesNotMatch(readFileSync(lockFile, 'utf8'), /java-spring/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
