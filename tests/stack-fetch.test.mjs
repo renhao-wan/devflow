@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { tmpdir, homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  ensureRepo, resolveCommit, fetchCommit, refreshRef, gitRun,
+  ensureRepo, resolveCommit, fetchCommit, refreshRef, gitRun, stackCacheRoot,
 } from '../scripts/lib/stack-fetch.mjs';
 
 // 离线测试环境：不读系统/用户 git 配置，也不允许终端或凭据管理器弹出交互。
@@ -240,6 +240,58 @@ test('缓存缺少 HEAD 时按损坏处理', () => {
       );
     });
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('clone 后远程新建的分支可通过 fetchCommit 建立并解析', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-fetch-newbranch-'));
+  try {
+    withCacheEnv(base, () => {
+      const remote = makeGitRepo(base, { 'index.json': '{}' });
+      const { repoGit } = ensureRepo({ url: remote, cacheRoot: join(base, 'cache'), allowFile: true });
+
+      git(remote, ['checkout', '-q', '-b', 'side']);
+      const latest = addCommit(remote, '{"packs":{"side":{}}}');
+      git(remote, ['checkout', '-q', 'main']);
+
+      fetchCommit({ repoGit, ref: 'side' });
+      assert.equal(resolveCommit({ repoGit, ref: 'side' }), latest);
+    });
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stackCacheRoot 解析显式目录并保留默认目录', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-fetch-root-'));
+  try {
+    assert.equal(
+      stackCacheRoot({ DEVFLOW_CACHE_DIR: join(base, 'cache') }),
+      resolve(join(base, 'cache')),
+    );
+    assert.equal(
+      stackCacheRoot({}),
+      resolve(join(homedir(), '.devflow', 'cache', 'stacks')),
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('gitRun 每次调用都读取当前环境', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-fetch-gitenv-'));
+  const prev = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    const config = join(base, 'gitconfig');
+    writeFileSync(config, '[init]\n\tdefaultBranch = envbranch\n');
+    process.env.GIT_CONFIG_GLOBAL = config;
+    const repo = join(base, 'repo');
+    gitRun(['init', '-q', repo]);
+    assert.equal(gitRun(['-C', repo, 'symbolic-ref', '--short', 'HEAD']).trim(), 'envbranch');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prev;
     rmSync(base, { recursive: true, force: true });
   }
 });
