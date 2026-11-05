@@ -78,6 +78,27 @@ test('目录声明按前缀匹配，测试与文档改动被忽略', () => {
   }
 });
 
+test('顶层目录只写目录名时也能按前缀匹配', () => {
+  const root = makeRoot('devflow-drift-top-');
+  try {
+    mkdirSync(join(root, 'src', 'auth'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'devflow', 'demo', 'plan.md'), `# 计划
+
+## 任务拆分
+
+| # | 任务 | 涉及文件 | 验证方式 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 | 实现 | src | 单测 | 待办 |
+`);
+    const drift = planDriftFor(root, 'demo', { changes: changes(['src/auth/session.js']) });
+    assert.deepEqual(drift.planned, ['src']);
+    assert.deepEqual(drift.unplannedChanged, []);
+    assert.deepEqual(drift.plannedButUnchanged, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('轻量功能读取 brief.md 的改动范围表', () => {
   const root = makeRoot('devflow-drift4-');
   try {

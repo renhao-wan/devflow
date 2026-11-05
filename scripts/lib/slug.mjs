@@ -13,7 +13,11 @@ export function isTaskDir(dir) {
 }
 
 export function validSlug(slug) {
-  return Boolean(slug) && !slug.includes('..') && !/[\\/]/.test(slug);
+  if (typeof slug !== 'string' || !slug || slug.length > 80) return false;
+  // 尾随空格、隐藏目录、`.`/`..` 与路径分隔符都不能作为任务名。
+  if (slug.trim() !== slug || slug.startsWith('.')) return false;
+  if (slug.includes('..') || /[\\/]/.test(slug)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug);
 }
 
 export function listCandidates(root) {

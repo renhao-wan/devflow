@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { defaultConfig, renderConfig, validateConfig, detectTools } from '../scripts/lib/ecosystem.mjs';
+import { defaultConfig, renderConfig, validateConfig, detectTools, normalizeConfig } from '../scripts/lib/ecosystem.mjs';
 import { parseYaml } from '../scripts/lib/common.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -431,4 +431,20 @@ test('route 拒绝语法合法但不存在的阶段名', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('ecosystem 的 enabled 只接受布尔真', () => {
+  const config = normalizeConfig({
+    tools: {
+      superpowers: { enabled: null },
+      bmad: { enabled: 'false' },
+      'spec-kit': { enabled: true },
+      opencode: {},
+    },
+  });
+  assert.equal(config.tools.superpowers.enabled, false);
+  assert.equal(config.tools.bmad.enabled, false);
+  assert.equal(config.tools['spec-kit'].enabled, true);
+  // 未写 enabled 的自定义工具沿用默认启用，保持旧配置可用。
+  assert.equal(config.tools.opencode.enabled, true);
 });

@@ -146,7 +146,8 @@ function normalizeTool(id, parsed, base) {
   const kind = p.kind ?? b.kind ?? 'workflow';
   return {
     label: String(p.label ?? b.label ?? id),
-    enabled: p.enabled !== false,
+    // 显式写了 enabled 就必须是布尔真才启用：null、字符串 "false" 都不能当作启用。
+    enabled: Object.prototype.hasOwnProperty.call(p, 'enabled') ? p.enabled === true : b.enabled !== false,
     // 未知 kind 一律按 workflow 处理：宁可多问一次，也不自动接管流程。
     kind: kind === 'technique' ? 'technique' : 'workflow',
     stages: toArray(p.stages ?? b.stages),
