@@ -73,6 +73,15 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  // 子命令后的 --help 必须在这里拦下：各脚本未统一实现该参数，
+  // 直接透传可能被当成普通参数执行（例如 test --help 被记录成一次通过）。
+  if (rest.includes('--help') || rest.includes('-h')) {
+    console.log(`devflow ${command} — ${entry[1]}`);
+    console.log('');
+    console.log(`用法：devflow ${command} [options]`);
+    console.log('参数说明见 docs/usage.md。');
+    return;
+  }
   const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const mod = await import(pathToFileURL(join(pluginRoot, 'scripts', entry[0])).href);
   await mod.main(rest);

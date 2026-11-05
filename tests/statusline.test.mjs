@@ -12,7 +12,9 @@ const BIN = join(ROOT, 'bin', 'devflow');
 function makeTask(root, slug, files) {
   const dir = join(root, 'docs', 'devflow', slug);
   mkdirSync(dir, { recursive: true });
-  for (const name of files) writeFileSync(join(dir, name), '# x\n');
+  for (const name of files) {
+    writeFileSync(join(dir, name), name === 'test.md' ? '# test\n\n已运行 node --test。\n' : '# x\n');
+  }
   return dir;
 }
 

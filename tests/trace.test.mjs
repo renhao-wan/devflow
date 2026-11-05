@@ -228,11 +228,12 @@ test('CLI 默认只读，--check 在缺口时退出 1', () => {
   }
 });
 
-test('CLI --json 输出完整模型，skipped 时退出 0', () => {
+test('CLI --json 输出完整模型，已知流程无法追踪时退出 1', () => {
   const root = makeTask({ 'brief.md': '---\nmode: light\n---\n\n# 轻量\n\n## 验收标准\n\n- [ ] ...\n' });
   try {
     const result = run(['--slug', 'demo', '--check', '--json'], root);
-    assert.equal(result.status, 0, result.stderr);
+    // --check 下“没有可追踪的验收项”意味着无法验证，不能返回成功。
+    assert.equal(result.status, 1, result.stderr);
     assert.equal(result.json.skipped, true);
     assert.match(result.json.reason, /没有可追踪的验收项/);
   } finally {

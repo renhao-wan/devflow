@@ -19,7 +19,8 @@ function evidenceLine(item) {
 
 function render(result, { check }) {
   if (result.skipped) {
-    const marker = check && result.flow === 'unknown' ? 'ERR' : 'WARN';
+    // --check 下无法追踪等同于没有通过校验，不能只给 WARN 却返回成功。
+    const marker = check ? 'ERR' : 'WARN';
     console.log(`[${marker}] ${result.slug}：${result.reason}`);
     return;
   }
@@ -59,8 +60,10 @@ export function main(argv = process.argv.slice(2)) {
   if (json) console.log(JSON.stringify(result, null, 2));
   else render(result, { check });
 
-  if (check && result.flow === 'unknown') process.exitCode = 1;
-  else if (check && !result.skipped && result.totals.gaps > 0) process.exitCode = 1;
+  // 已知流程但无法追踪（缺少验收来源等）同样视为校验失败；只有缺口为 0 才算通过。
+  if (check && (result.flow === 'unknown' || result.skipped || result.totals.gaps > 0)) {
+    process.exitCode = 1;
+  }
   return result;
 }
 

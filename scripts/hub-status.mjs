@@ -47,6 +47,19 @@ function mtimeOf(file) {
   try { return statSync(file).mtimeMs; } catch { return 0; }
 }
 
+/** 去掉标题与空行后是否还有内容；只有标题的空壳产物不算进入该阶段。 */
+function hasSubstance(file) {
+  try {
+    const body = readText(file)
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('');
+    return body.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function scanSlugs(root) {
   const docs = join(root, 'docs', 'devflow');
   if (!existsSync(docs)) return [];
@@ -55,8 +68,9 @@ function scanSlugs(root) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const dir = join(docs, entry.name);
     const files = ARTIFACTS.filter((name) => existsSync(join(dir, name)));
+    const substantive = new Set(files.filter((name) => hasSubstance(join(dir, name))));
     const latest = Math.max(mtimeOf(dir), ...files.map((name) => mtimeOf(join(dir, name))));
-    slugs.push({ slug: entry.name, files, latest });
+    slugs.push({ slug: entry.name, files, substantive, latest });
   }
   return slugs.sort((a, b) => b.latest - a.latest);
 }
@@ -100,8 +114,10 @@ function needsReview(root, slug) {
   }
 }
 
-function stageOf(files, testsPending, reviewRequired = false) {
+function stageOf(files, testsPending, reviewRequired = false, substantive = new Set(files)) {
   const has = (name) => files.includes(name);
+  // 空的 test.md 只是占位，不构成测试证据，不能据此进入 review/done。
+  const testDone = has('test.md') && substantive.has('test.md');
 
   // 完整流程优先：一旦出现 req.md / plan.md，原有四产物推断保持不变。
   if (has('req.md') || has('plan.md')) {
@@ -109,29 +125,25 @@ function stageOf(files, testsPending, reviewRequired = false) {
     if (!has('plan.md')) return 'plan';
     // 代码改动晚于最近一次测试时，即使已有 review.md 也应回到 test。
     if (testsPending) return 'test';
-    // review 不能早于测试证据：缺少 test.md 时先补测试，不因 review.md 直接判完成。
-    if (has('review.md') && !has('test.md')) return 'test';
+    // review 不能早于测试证据：缺少有效 test.md 时先补测试，不因 review.md 直接判完成。
+    if (!testDone) return has('review.md') ? 'test' : 'implement';
     if (has('review.md')) return 'done';
-    if (has('test.md')) return 'review';
-    return 'implement';
+    return 'review';
   }
 
   // 轻量功能：brief 替代 req + plan，review 始终保留。
   if (has('brief.md')) {
     if (testsPending) return 'test';
-    if (has('test.md')) return has('review.md') ? 'done' : 'review';
-    if (has('review.md')) return 'test';
-    return 'implement';
+    if (!testDone) return has('review.md') ? 'test' : 'implement';
+    return has('review.md') ? 'done' : 'review';
   }
 
   // 轻量修复：debug 替代 req + plan + implement。
   if (has('debug.md')) {
     if (testsPending) return 'test';
-    if (has('test.md')) {
-      if (!has('review.md') && reviewRequired) return 'review';
-      return 'done';
-    }
-    return 'test';
+    if (!testDone) return 'test';
+    if (!has('review.md') && reviewRequired) return 'review';
+    return 'done';
   }
 
   return 'req';
@@ -166,7 +178,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       ? (markerRequired || (triage ? triage.trigger !== 'skipped' : false))
       : false;
     const triageStale = triage ? triageIsStale(root, item.slug) : false;
-    let stage = stageOf(item.files, pending, reviewRequired);
+    let stage = stageOf(item.files, pending, reviewRequired, item.substantive);
     const fullTrace = traceFor(root, item.slug);
     // review.md 存在时校验内容；有未关闭阻断项或画像缺失时不能判完成。
     const reviewGate = item.files.includes('review.md') && (stage === 'done' || stage === 'review')

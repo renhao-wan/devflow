@@ -326,10 +326,10 @@ export function buildTrace({ flow, source, texts = {} }) {
       warnings.push(`${item.id} 的测试结论与 review 不一致，以 review 为准`);
     }
     let status;
-    if (reviewRow?.status === 'blocked') status = 'blocked';
-    else if (reviewRow?.status === 'covered' || testRow?.covered) status = 'covered';
-    else if (reviewRow?.status === 'accepted') status = 'accepted';
-    else if (reviewRow?.status === 'uncovered') status = 'uncovered';
+    // 审查结论是最终裁决：review 说未覆盖时，不能因为测试通过就判为已覆盖。
+    if (reviewStatus === 'blocked') status = 'blocked';
+    else if (['covered', 'accepted', 'uncovered'].includes(reviewStatus)) status = reviewStatus;
+    else if (testRow?.covered) status = 'covered';
     else if (planRows.length) status = 'planned';
     else status = 'uncovered';
 

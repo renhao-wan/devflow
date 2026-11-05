@@ -168,10 +168,16 @@ test('debug 缺少根因或复现步骤时失败', () => {
   assert.ok(result.errors.some((e) => e.includes('复现步骤')));
 });
 
-test('debug 升级判断未填写只提示，不阻断', () => {
+test('debug 升级判断未填写时阻断', () => {
   const result = checkDebug(DEBUG.replace('- 触发项：无', '- 触发项：'));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.includes('升级判断')));
+});
+
+test('升级判断标题带括号说明时仍能匹配', () => {
+  const text = DEBUG.replace('## 升级判断', '## 升级判断（命中硬触发时填写）');
+  const result = checkDebug(text);
   assert.equal(result.ok, true, result.errors.join('；'));
-  assert.ok(result.warnings.some((w) => w.includes('升级判断')));
 });
 
 function makeRoot(prefix) {
