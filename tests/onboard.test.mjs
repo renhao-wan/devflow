@@ -11,6 +11,7 @@ import {
 import { main as onboardMain } from '../scripts/hub-onboard.mjs';
 import { main as initMain } from '../scripts/hub-init.mjs';
 import { assessProject } from '../scripts/lib/assessment.mjs';
+import { discoverSubprojects } from '../scripts/lib/discover.mjs';
 
 function makeProject() {
   const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-'));
@@ -206,6 +207,8 @@ test('--print 输出内容且不写文件', () => {
   const root = makeProject();
   const result = onboardMain(['--root', root, '--print', '--now', 'fixed']);
   assert.match(result.content, /Node\.js/);
+  // 适用性参考只走默认输出与 --json；--print 保持纯概览。
+  assert.doesNotMatch(result.content, /适用性参考/);
   assert.equal(existsSync(join(root, OVERVIEW_FILE)), false);
   rmSync(root, { recursive: true, force: true });
 });
@@ -252,10 +255,24 @@ test('assessProject 在 Git、测试与 CI 齐全时更接近完整流程', () =
   }
 });
 
+test('assessProject 只有一个强信号时为信息不足', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-unclear-'));
+  try {
+    mkdirSync(join(root, '.git'));
+    const a = assessProject({ root, facts: { ci: [] } });
+    assert.equal(a.strongSignals, 1);
+    assert.equal(a.level, 'unclear');
+    assert.equal(a.label, '信息不足');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('assessProject 不把 hub.yaml 的兜底 npm test 当作测试信号', () => {
   const root = mkdtempSync(join(tmpdir(), 'devflow-assess-fallback-'));
   try {
     mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    mkdirSync(join(root, 'service'));
     writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
       'version: 1',
       'stages:',
@@ -265,9 +282,35 @@ test('assessProject 不把 hub.yaml 的兜底 npm test 当作测试信号', () =
       '  testCommand: "npm test"',
       '',
     ].join('\n'));
-    const a = assessProject({ root, facts: { ci: [] } });
+    // 即使调用方传入带 testCommand 的子项目，也应重新探测磁盘。
+    const a = assessProject({
+      root,
+      facts: { ci: [] },
+      subprojects: [{ path: 'service', testCommand: 'npm test' }],
+    });
     assert.equal(a.signals.tests, false);
     assert.equal(a.level, 'light');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('assessProject 过滤已删除与越界的声明子项目', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-subpaths-'));
+  try {
+    mkdirSync(join(root, 'service'));
+    // 只有一个真实目录：缺失目录与 ../ 越界路径都不应计入多项目。
+    const a = assessProject({
+      root,
+      facts: { ci: [] },
+      subprojects: [
+        { path: 'service' },
+        { path: 'missing-service' },
+        { path: '../outside' },
+      ],
+    });
+    assert.equal(a.signals.multiProject, false);
+    assert.equal(a.reasons.some((r) => /包含 1 个子项目/.test(r)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -311,7 +354,7 @@ test('--json 包含 assessment 结构', () => {
   ], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const data = JSON.parse(r.stdout);
-  assert.equal(typeof data.assessment.level, 'string');
+  assert.ok(['full', 'light', 'unclear'].includes(data.assessment.level));
   assert.equal(typeof data.assessment.signals.git, 'boolean');
   assert.ok(Array.isArray(data.assessment.reasons));
   assert.match(data.assessment.disclaimer, /不构成是否使用 devflow 的结论/);
@@ -414,6 +457,30 @@ test('init 先报告创建工作区再报告生成概览', async () => {
   assert.ok(overview !== -1, logs.join('\n'));
   assert.ok(created < overview, logs.join('\n'));
   rmSync(root, { recursive: true, force: true });
+});
+
+test('discoverSubprojects 跳过 junction 子项目', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('仅在 Windows 上验证 junction');
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), 'devflow-discover-junction-'));
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-discover-outside-'));
+  let junction = null;
+  try {
+    writeFileSync(join(outside, 'package.json'), '{}');
+    junction = join(root, 'linked');
+    const link = spawnSync('cmd', ['/c', 'mklink', '/J', junction, outside], { encoding: 'utf8' });
+    if (link.status !== 0) {
+      t.skip('mklink /J 不可用');
+      return;
+    }
+    assert.equal(discoverSubprojects(root).list.length, 0);
+  } finally {
+    if (junction) spawnSync('cmd', ['/c', 'rmdir', junction], { encoding: 'utf8' });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 test('拒绝通过 junction 写到项目外', (t) => {

@@ -1,10 +1,11 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isPathInside, isRealPathInside } from './common.mjs';
 import { detectTestCommand, discoverSubprojects } from './discover.mjs';
 
 /** 静态启发式不读取 hub.yaml：init 在探测不到测试命令时也会写 npm test，
- * 把配置里的 testCommand 当作“有测试”的证据会把兜底值误判成真实信号。 */
+ * 把配置里的 testCommand 当作“有测试”的证据会把兜底值误判成真实信号。
+ * 这里的 tests 只表示“存在可运行的测试工具链”，不代表项目里真的有测试用例。 */
 function hasOwnTestCommand(root, dirs) {
   if (detectTestCommand(root)) return true;
   return dirs.some((dir) => detectTestCommand(dir, root));
@@ -16,12 +17,31 @@ function safeSubprojectDirs(root, subprojects) {
     const rel = typeof sub?.path === 'string' ? sub.path : null;
     if (!rel) continue;
     const dir = resolve(root, rel);
-    // 声明的子项目路径可能被改成 ../ 或 junction，只统计仍在项目内的真实目录。
+    // 声明的子项目路径可能被改成 ../、junction，或指向已删除的目录：
+    // 只统计仍在项目内、且真实存在的目录。
     if (!isPathInside(root, dir) || !isRealPathInside(root, dir)) continue;
+    let isDir = false;
+    try { isDir = statSync(dir).isDirectory(); } catch { isDir = false; }
+    if (!isDir) continue;
     dirs.push(dir);
   }
   return dirs;
 }
+
+const PRESETS = {
+  full: {
+    label: '更接近完整流程',
+    suggestion: '完整任务走 /devflow:req；小功能仍可用 /devflow:req --light。',
+  },
+  light: {
+    label: '更接近轻量流程',
+    suggestion: '先用 /devflow:req --light；需要方案评审或评审留痕时再升级。',
+  },
+  unclear: {
+    label: '信息不足',
+    suggestion: '按单个任务的规模选择：小功能用 --light，小 bug 用 /devflow:debug，需要评审时走完整流程。',
+  },
+};
 
 /**
  * 项目画像：只基于可解释的静态信号给出参考，不判断项目是否适合 devflow。
@@ -44,19 +64,10 @@ export function assessProject({ root, facts = {}, subprojects = null } = {}) {
   else if (strongSignals === 0) level = 'light';
   else level = 'unclear';
 
-  const label = {
-    full: '更接近完整流程',
-    light: '更接近轻量流程',
-    unclear: '信息不足',
-  }[level];
-  const suggestion = {
-    full: '完整任务走 /devflow:req；小功能仍可用 /devflow:req --light。',
-    light: '先用 /devflow:req --light；需要方案评审或评审留痕时再升级。',
-    unclear: '按单个任务的规模选择：小功能用 --light，小 bug 用 /devflow:debug，需要评审时走完整流程。',
-  }[level];
+  const { label, suggestion } = PRESETS[level];
   const reasons = [
     signals.git ? '位于 Git 仓库' : '未检测到 Git 仓库',
-    signals.tests ? '检测到可直接运行的测试命令' : '未检测到可直接运行的测试命令',
+    signals.tests ? '检测到可运行的测试工具链' : '未检测到可运行的测试工具链',
     signals.ci ? `检测到 ${ciCount} 个 GitHub Actions 工作流` : '未检测到 GitHub Actions 工作流',
     signals.multiProject ? `包含 ${dirs.length} 个子项目` : '未识别到多个子项目',
   ];
