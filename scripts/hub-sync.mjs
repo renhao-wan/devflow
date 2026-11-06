@@ -13,7 +13,7 @@ import { templateIssues } from './lib/template-compat.mjs';
 import { LOADERS } from './lib/loaders.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
 // 本文件已有读取 .hub-sources.json 的同名 readSources，必须别名以免被静默覆盖。
-import { readSources as readStackSources, managedStackPrefixes } from './lib/stack-ledger.mjs';
+import { readSources as readStackSources, managedStackPrefixes, managedStackNames } from './lib/stack-ledger.mjs';
 
 const HUB_PREFIX = '.claude/hub/';
 
@@ -99,7 +99,7 @@ export async function main(argv = process.argv.slice(2)) {
   // 新账本损坏必须 fail closed：否则会当成“没有受管栈”继续覆盖。
   const stackSources = readStackSources(root);
   const managedPrefixes = managedStackPrefixes(stackSources);
-  const managedNames = new Set(Object.values(stackSources.packs).map((record) => record.installedAs));
+  const managedNames = managedStackNames(stackSources);
   const isManagedDest = (destRel) => managedPrefixes.some((prefix) => destRel.startsWith(prefix));
   for (const name of managedNames) log('info', `受管栈 ${name}：由 stack pack 管理，sync 跳过`);
 
@@ -194,7 +194,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   // known 保留受管路径：否则模板库里真的提供同名文件时，会被误判为“模板已移除”。
   const known = new Set(files.map((f) => f.hubRel));
-  const managedHubRels = [...managedNames].map((name) => `stacks/${name}/`);
+  const managedHubRels = managedPrefixes.map((prefix) => prefix.slice(HUB_PREFIX.length));
   const removed = Object.keys(sources?.files || {})
     .filter((rel) => rel.startsWith(HUB_PREFIX))
     .map((rel) => rel.slice(HUB_PREFIX.length))
