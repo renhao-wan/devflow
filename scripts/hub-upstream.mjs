@@ -194,8 +194,7 @@ function passthrough(argv, names) {
   return out;
 }
 
-async function runRemote(argv, { root, pluginRoot, units, target }) {
-  const { main: ship } = await import('./hub-ship.mjs');
+export function buildRemoteShipArgs(argv, { root, pluginRoot, units, target }) {
   const args = ['--root', root, '--plugin-root', pluginRoot];
   if (target.kind === 'team') args.push('--profile', 'team');
   for (const unit of units) {
@@ -205,10 +204,17 @@ async function runRemote(argv, { root, pluginRoot, units, target }) {
   if (units.some((u) => u.kind === 'shared')) args.push('--shared');
   args.push(...passthrough(argv, ['--base', '--remote', '--resume', '--pr-repo']));
   if (hasFlag(argv, '--fork')) args.push('--fork');
+  // 受管栈的放行是用户显式决定，委托 ship 时必须原样透传，否则会被二次拦截。
+  if (hasFlag(argv, '--allow-fork')) args.push('--allow-fork');
   if (hasFlag(argv, '--no-pr')) args.push('--no-pr');
   // 远程回灌只有加 --apply 才真正推送；不带时等价于 ship --dry-run。
   if (!hasFlag(argv, '--apply')) args.push('--dry-run');
-  return ship(args);
+  return args;
+}
+
+async function runRemote(argv, opts) {
+  const { main: ship } = await import('./hub-ship.mjs');
+  return ship(buildRemoteShipArgs(argv, opts));
 }
 
 export async function main(argv = process.argv.slice(2)) {

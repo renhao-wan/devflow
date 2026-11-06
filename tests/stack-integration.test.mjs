@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { buildRemoteShipArgs } from '../scripts/hub-upstream.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const PLUGIN_VERSION = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
@@ -99,9 +100,35 @@ test('upstream --all 与 ship --all 排除受管栈，显式 --stack 拒绝', ()
 
     const allowed = run('hub-upstream.mjs', ['--root', root, '--stack', 'java-spring', '--allow-fork'], root);
     assert.equal(allowed.status, 0, allowed.stderr + allowed.stdout);
+    // 放行后必须真正进入计划，而不是被静默跳过。
+    assert.match(allowed.stdout, /java-spring 技术栈/);
+    assert.doesNotMatch(allowed.stdout, /受管栈 java-spring/);
+
+    const shipExplicit = run('hub-ship.mjs', ['--root', root, '--stack', 'java-spring'], root);
+    assert.notEqual(shipExplicit.status, 0);
+    assert.match(shipExplicit.stderr, /stack pack 管理/);
+
+    // ship 侧的放行检查只断言不再命中受管错误；其余环境错误不在本测试范围。
+    const shipAllowed = run('hub-ship.mjs', ['--root', root, '--stack', 'java-spring', '--allow-fork', '--dry-run'], root);
+    assert.doesNotMatch(shipAllowed.stderr, /stack pack 管理/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('upstream --pr 委托 ship 时透传 --allow-fork', () => {
+  const opts = {
+    root: '/project',
+    pluginRoot: '/plugin',
+    units: [{ kind: 'stack', name: 'java-spring' }],
+    target: { kind: 'upstream', pr: true },
+  };
+  const withFork = buildRemoteShipArgs(['--allow-fork', '--apply'], opts);
+  assert.ok(withFork.includes('--allow-fork'), withFork.join(' '));
+  assert.ok(withFork.includes('--stack'));
+  assert.equal(withFork.includes('--dry-run'), false);
+  const without = buildRemoteShipArgs(['--apply'], opts);
+  assert.equal(without.includes('--allow-fork'), false);
 });
 
 test('账本损坏时 sync fail closed', () => {

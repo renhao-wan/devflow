@@ -311,6 +311,13 @@ export async function main(argv = process.argv.slice(2)) {
       throw new Error(`技术栈名非法：${stack}。只允许 [a-z0-9][a-z0-9_-]*。`);
     }
   }
+  const managed = managedStackNames(readSources(root));
+  const allowManaged = hasFlag(argv, '--allow-fork');
+  for (const stack of stacks) {
+    if (managed.has(stack) && !allowManaged) {
+      throw new Error(`技术栈 ${stack} 由 stack pack 管理；确认提交请加 --allow-fork`);
+    }
+  }
 
   const cwdIsPlugin = existsSync(join(process.cwd(), '.claude-plugin', 'plugin.json'));
   const pluginRootArg = argValue(argv, '--plugin-root', null);
@@ -381,13 +388,6 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
-  const managed = managedStackNames(readSources(root));
-  const allowManaged = hasFlag(argv, '--allow-fork');
-  for (const stack of stacks) {
-    if (managed.has(stack) && !allowManaged) {
-      throw new Error(`技术栈 ${stack} 由 stack pack 管理；确认提交请加 --allow-fork`);
-    }
-  }
   const units = resume ? [] : resolveUnits(root, {
     stages,
     stacks,
