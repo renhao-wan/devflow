@@ -746,3 +746,17 @@ test('stack cache gc 在非 devflow 目录可执行', () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test('stack 技能存在且禁止模型自动调用', () => {
+  const file = join(PLUGIN_ROOT, 'skills', 'stack', 'SKILL.md');
+  assert.equal(existsSync(file), true);
+  const text = readFileSync(file, 'utf8');
+  assert.match(text, /^---[\s\S]*name:\s*stack[\s\S]*---/);
+  assert.match(text, /disable-model-invocation:\s*true/);
+});
+
+test('CLI 帮助包含 stack 安装示例', () => {
+  const help = spawnSync(NODE, [join(PLUGIN_ROOT, 'bin', 'devflow'), 'help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /devflow stack add java-spring --repo/);
+});

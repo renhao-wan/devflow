@@ -20,6 +20,12 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow route --stage plan
   devflow route --detect
   devflow sync --dry-run
+  devflow stack add java-spring --repo <url>
+  devflow stack list
+  devflow stack update --all
+  devflow stack restore
+  devflow stack status --json
+  devflow stack remove java-spring --keep
   devflow upstream --stage review
   devflow upstream --stage review --apply
   devflow upstream --stack java-spring
