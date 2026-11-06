@@ -757,6 +757,13 @@ test('stack 技能存在且禁止模型自动调用', () => {
   assert.match(frontmatter[1], /disable-model-invocation:\s*true/);
 });
 
+test('静态 fixture 可通过 stack lint', () => {
+  const fixture = join(PLUGIN_ROOT, 'tests', 'fixtures', 'stack-pack');
+  const res = run('hub-stack.mjs', ['lint', fixture], PLUGIN_ROOT);
+  assert.equal(res.status, 0, res.stderr + res.stdout);
+  assert.match(res.stdout, /java-spring@1\.0\.0/);
+});
+
 test('CLI 帮助包含 stack 安装示例', () => {
   const help = spawnSync(NODE, [join(PLUGIN_ROOT, 'bin', 'devflow'), 'help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);

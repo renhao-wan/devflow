@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "packs": {
+    "java-spring": {
+      "title": "Spring Boot / Maven",
+      "description": "Java 后端阶段规范样例",
+      "path": "stacks/java-spring",
+      "detects": ["java-maven", "java-gradle"],
+      "tags": ["java", "spring", "backend"]
+    }
+  }
+}
