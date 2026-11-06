@@ -22,6 +22,7 @@ import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
 import { ledgerStackFileAbs, readSources, readLock, stackPaths } from './lib/stack-ledger.mjs';
+import { listTree } from './lib/stack-install.mjs';
 import {
   ensureRepo, refreshRef, resolveCommit, stackCacheRoot,
 } from './lib/stack-fetch.mjs';
@@ -425,7 +426,8 @@ export async function main(argv = process.argv.slice(2)) {
       } else {
         const missing = [];
         const modified = [];
-        for (const [rel, hashes] of Object.entries(record.files || {})) {
+        const fileEntries = Object.entries(record.files || {});
+        for (const [rel, hashes] of fileEntries) {
           // 手改账本可能给出越界路径；统一走账本校验，失败即中止 doctor。
           const abs = ledgerStackFileAbs(root, record.installedAs, rel);
           // local === null 表示上次更新时本地已删除；这是账本事实，不能只看文件是否存在。
@@ -434,15 +436,32 @@ export async function main(argv = process.argv.slice(2)) {
             continue;
           }
           // 手改只报告，不阻断；缺失才给恢复建议。
-          if (contentHash(readText(abs)) !== hashes.local) modified.push(rel);
+          // base 偏离 local 同样说明本地已偏离受管基线（restore modified / update 合并结果）。
+          if (contentHash(readText(abs)) !== hashes.local
+            || (typeof hashes.base === 'string' && hashes.local !== hashes.base)) modified.push(rel);
         }
+        // 实际目录中不属于账本的文件：可能是有价值的本地文件，只提醒不删除。
+        const prefix = `.claude/hub/stacks/${record.installedAs}/`;
+        const managed = new Set(fileEntries
+          .filter(([rel]) => rel.startsWith(prefix))
+          .map(([rel]) => rel.slice(prefix.length).toLowerCase()));
+        const extra = listTree(dir)
+          .filter((file) => !managed.has(file.rel.toLowerCase()))
+          .map((file) => file.rel)
+          .sort();
         if (missing.length) {
           add('warn', `受管栈 ${record.installedAs} 缺失 ${missing.length} 个文件：${missing.join('、')}`, '运行 devflow stack restore');
         }
         if (modified.length) {
           add('info', `受管栈 ${record.installedAs} 有 ${modified.length} 个文件被手改（保留，不阻断）`);
         }
-        if (!missing.length && !modified.length) {
+        if (extra.length) {
+          // 文件名不可信：去掉控制字符并限制数量，避免日志注入；不回显账本 key。
+          const shown = extra.slice(0, 5).map((name) => String(name).replace(/[\0-\x1f\x7f]/g, '?'));
+          const suffix = extra.length > shown.length ? ` 等 ${extra.length} 个` : '';
+          add('warn', `受管栈 ${record.installedAs} 有 ${extra.length} 个额外文件（不由 pack 管理）：${shown.join('、')}${suffix}`, '确认后删除这些文件，或运行 devflow stack remove');
+        }
+        if (!missing.length && !modified.length && !extra.length) {
           add('ok', `受管栈 ${record.installedAs}@${record.version} 完整`);
         }
       }

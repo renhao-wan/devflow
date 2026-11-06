@@ -411,6 +411,48 @@ test('doctor 提示受管文件被手改但保持退出码 0', () => {
   }
 });
 
+test('doctor 报告 base 偏离（即使本地内容与 local 哈希一致）', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-base-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const rel = '.claude/hub/stacks/java-spring/plan.md';
+    const ledgerFile = join(root, '.claude', '.stack-sources.json');
+    const ledger = JSON.parse(readFileSync(ledgerFile, 'utf8'));
+    ledger.packs['java-spring'].files[rel].base = contentHash('# other base\n');
+    writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
+
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /1 个文件被手改/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 报告受管栈的额外文件且不回显账本 key', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-extra-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const stackDir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    writeFileSync(join(stackDir, 'extra.md'), '# extra\n');
+
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /额外文件/);
+    assert.match(res.stdout, /extra\.md/);
+    // 额外文件存在时不能再报“完整”。
+    assert.doesNotMatch(res.stdout, /受管栈 java-spring@.*完整/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('doctor 在受管目录缺失时报错并退出 1', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-missing-dir-'));
   try {
