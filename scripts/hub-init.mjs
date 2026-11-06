@@ -14,7 +14,7 @@ import {
   ecosystemPath, statePath,
 } from './lib/ecosystem.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
-import { discoverSubprojects, detectTestCommand } from './lib/discover.mjs';
+import { discoverSubprojects, detectTestCommand, detectPackHints } from './lib/discover.mjs';
 import { detectWorkspaceStacks } from './lib/stacks.mjs';
 import { planDrafts, renderProjectBasicsDraft } from './lib/drafts.mjs';
 import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
@@ -127,6 +127,10 @@ ${Object.keys(LOADERS).map((file) => `scripts/${file}`).join('\n')}
 .claude/.hub-manifest.json
 .claude/.hub-sources.json
 .claude/.hub-bases/
+.claude/.stack-sources.json
+.claude/.stack-bases/
+.claude/.stack-staging/
+.claude/.stack-trash/
 .claude/.devflow-state.json
 .claude/.ecosystem-state.json
 .devflow.json
@@ -198,6 +202,8 @@ export async function main(argv = process.argv.slice(2)) {
   assertWritable(root, statePath(root), STATE_FILE);
 
   const previousMeta = readMeta(root) || {};
+  // 只在首次初始化时探测：已初始化的项目不再反复提示安装。
+  let packHints = [];
   const personalLibrary = argValue(argv, '--personal-library', null);
   const teamLibrary = argValue(argv, '--team-library', null);
   const sourceArg = argValue(argv, '--source-root', null);
@@ -272,6 +278,7 @@ export async function main(argv = process.argv.slice(2)) {
     const templateFiles = collectTemplateFiles(libraries);
     const copied = copyTemplates(templateFiles, root, force);
     const { list: subs, expanded } = discoverSubprojects(root);
+    packHints = detectPackHints(root, subs);
     const subsWithStack = subs.map((sub) => ({ ...sub, stack: previousStack(sub) }));
     const rootTest = detectTestCommand(root);
     const detected = noDraft ? { names: [], labels: [] } : detectWorkspaceStacks(root, subs);
@@ -381,6 +388,16 @@ export async function main(argv = process.argv.slice(2)) {
   if (!noDraft) {
     nextSteps.push('（可选）填写 .claude/hub/_shared/project-basics.md 中的 TODO，并删除已填草稿首行的草稿标记');
     nextSteps.push('（可选）技术栈草稿在 .claude/hub/stacks/<stack>/；多栈或不确定放哪时用 devflow-rule-placement');
+  }
+  // 只在值看起来安全时回显：带 URL userinfo 或选项形态的值可能含凭据。
+  const stackRepo = (process.env.DEVFLOW_STACK_REPO || '').trim();
+  const safeStackRepo = stackRepo && !stackRepo.startsWith('-')
+    && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*@/.test(stackRepo)
+    ? stackRepo
+    : null;
+  const repoHint = safeStackRepo ? ` --repo ${safeStackRepo}` : ' --repo <仓库地址>';
+  for (const hint of packHints) {
+    nextSteps.push(`（可选）检测到 ${hint} 技术栈：devflow stack add ${hint}${repoHint}`);
   }
   nextSteps.push('（可选）node scripts/devflow-gen.mjs 刷新投影，node scripts/devflow-doctor.mjs 体检');
   nextSteps.forEach((line, i) => console.log(`  ${i + 1}. ${line}`));

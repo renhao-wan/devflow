@@ -161,3 +161,31 @@ export function discoverSubprojects(root) {
   }
   return { list: found, expanded };
 }
+
+export function detectFrameworks(dir) {
+  const pkg = join(dir, 'package.json');
+  if (!existsSync(pkg)) return [];
+  try {
+    const data = JSON.parse(readText(pkg));
+    const deps = { ...(data.dependencies || {}), ...(data.devDependencies || {}) };
+    // 只认 Vue 3：Vue 2 的规范差异大，误报会诱导安装错误的包。
+    // 取声明范围的主版本判断，拒绝 >=2.6.0 <3.0.0 这类含 3 的 Vue 2 区间。
+    const vue = deps.vue;
+    if (typeof vue === 'string' && /^(?:npm:vue@)?\s*[~^<>=]*\s*3(?:\.|$)/.test(vue)) return ['vue3'];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export function detectPackHints(root, subs = []) {
+  const dirs = [root, ...subs.map((sub) => join(root, ...String(sub?.path || sub?.name || '.').split('/')))];
+  const hints = [];
+  for (const dir of dirs) {
+    if (existsSync(join(dir, 'pom.xml')) || existsSync(join(dir, 'build.gradle'))) {
+      if (!hints.includes('java-spring')) hints.push('java-spring');
+    }
+    if (detectFrameworks(dir).includes('vue3') && !hints.includes('vue3')) hints.push('vue3');
+  }
+  return hints;
+}

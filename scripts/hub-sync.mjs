@@ -12,6 +12,8 @@ import { resolveLibraries, collectTemplateFiles } from './lib/libraries.mjs';
 import { templateIssues } from './lib/template-compat.mjs';
 import { LOADERS } from './lib/loaders.mjs';
 import { main as generate } from './gen-claude-skills.mjs';
+// 本文件已有读取 .hub-sources.json 的同名 readSources，必须别名以免被静默覆盖。
+import { readSources as readStackSources, managedStackPrefixes, managedStackNames } from './lib/stack-ledger.mjs';
 
 const HUB_PREFIX = '.claude/hub/';
 
@@ -94,6 +96,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (!sources) {
     log('warn', '缺少 .claude/.hub-sources.json：已有文件一律按“可能手改”处理，冲突时需 --force 才会覆盖。');
   }
+  // 新账本损坏必须 fail closed：否则会当成“没有受管栈”继续覆盖。
+  const stackSources = readStackSources(root);
+  const managedPrefixes = managedStackPrefixes(stackSources);
+  const managedNames = managedStackNames(stackSources);
+  const isManagedDest = (destRel) => managedPrefixes.some((prefix) => destRel.startsWith(prefix));
+  for (const name of managedNames) log('info', `受管栈 ${name}：由 stack pack 管理，sync 跳过`);
 
   const personalLibrary = argValue(argv, '--personal-library', null);
   const teamLibrary = argValue(argv, '--team-library', null);
@@ -107,6 +115,7 @@ export async function main(argv = process.argv.slice(2)) {
   const actions = [];
   const loaderFiles = new Set(Object.keys(LOADERS));
   for (const file of files) {
+    if (isManagedDest(file.destRel)) continue;
     const templateText = readText(file.src);
     const templateHash = contentHash(templateText);
     const dest = join(root, ...file.destRel.split('/'));
@@ -183,11 +192,14 @@ export async function main(argv = process.argv.slice(2)) {
 
     actions.push({ ...file, dest, type: 'conflict', templateText, templateHash, reason: '本地改动未记录基线' });
   }
+  // known 保留受管路径：否则模板库里真的提供同名文件时，会被误判为“模板已移除”。
   const known = new Set(files.map((f) => f.hubRel));
+  const managedHubRels = managedPrefixes.map((prefix) => prefix.slice(HUB_PREFIX.length));
   const removed = Object.keys(sources?.files || {})
     .filter((rel) => rel.startsWith(HUB_PREFIX))
     .map((rel) => rel.slice(HUB_PREFIX.length))
-    .filter((hubRel) => !known.has(hubRel) && !isGeneratedArtifact(hubRel));
+    .filter((hubRel) => !known.has(hubRel) && !isGeneratedArtifact(hubRel))
+    .filter((hubRel) => !managedHubRels.some((prefix) => hubRel.startsWith(prefix)));
 
   const counts = {
     add: 0, update: 0, merged: 0, overwrite: 0, conflict: 0, keep: 0,

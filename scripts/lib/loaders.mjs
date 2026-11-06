@@ -11,6 +11,7 @@ export const LOADERS = {
   'devflow-triage.mjs': 'review-triage',
   'devflow-check.mjs': 'stage-check',
   'devflow-trace.mjs': 'trace',
+  'devflow-stack.mjs': 'hub-stack',
 };
 
 export function loaderSource(name) {

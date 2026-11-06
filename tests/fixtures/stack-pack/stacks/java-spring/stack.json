@@ -1,0 +1,11 @@
+{
+  "name": "java-spring",
+  "title": "Spring Boot / Maven",
+  "version": "1.0.0",
+  "minDevflow": ">=1.7.0",
+  "detects": ["java-maven", "java-gradle"],
+  "files": {
+    "_shared.md": "75a28267c147da483ea87bb878891a7fad807859f0c126bde5a018f1d9542f21",
+    "plan.md": "617f2842ddd22bb936c47cb82d38a592929d8e2f9bb8d729f1a0b8a102724761"
+  }
+}

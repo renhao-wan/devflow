@@ -137,9 +137,12 @@ export function classifyText(text, config) {
 
 export function resolveUnits(root, {
   stage = null, stages = [], shared = false, stacks = [], all = false, onSkip = null,
+  managedStacks = new Set(), allowManagedStacks = false, onManagedSkip = null,
 } = {}) {
   const units = [];
   const seen = new Set();
+  const managed = new Set(managedStacks);
+  const blockedManaged = [];
   const add = (unit) => {
     const key = `${unit.kind}:${unit.name}`;
     if (seen.has(key)) return;
@@ -152,12 +155,19 @@ export function resolveUnits(root, {
     sourceRel: `.claude/hub/stages/${name}`,
     targetRel: `templates/stages/${name}`,
   });
-  const addStack = (name) => add({
-    kind: 'stack',
-    name,
-    sourceRel: `.claude/hub/stacks/${name}`,
-    targetRel: `templates/stacks/${name}`,
-  });
+  const addStack = (name) => {
+    // 受管栈默认拒绝；显式 --allow-fork 才回灌，--all 也必须走同一条检查。
+    if (managed.has(name) && !allowManagedStacks) {
+      blockedManaged.push(name);
+      return;
+    }
+    add({
+      kind: 'stack',
+      name,
+      sourceRel: `.claude/hub/stacks/${name}`,
+      targetRel: `templates/stacks/${name}`,
+    });
+  };
 
   for (const name of [...stages, ...(stage ? [stage] : [])]) addStage(name);
   for (const name of stacks) addStack(name);
@@ -189,7 +199,11 @@ export function resolveUnits(root, {
       if (skipped.length && onSkip) onSkip(skipped);
     }
   }
-  if (!units.length) throw new Error('必须指定 --stage <name>、--shared、--stack <name> 或 --all');
+  if (blockedManaged.length && onManagedSkip) onManagedSkip([...new Set(blockedManaged)]);
+  // 全部输入都被受管检查拦下时，不能退化成“参数缺失”的错误。
+  if (!units.length && !blockedManaged.length) {
+    throw new Error('必须指定 --stage <name>、--shared、--stack <name> 或 --all');
+  }
   return units;
 }
 
