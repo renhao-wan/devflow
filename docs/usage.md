@@ -2,6 +2,16 @@
 
 面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md) 和 [quickstart.md](quickstart.md)。
 
+## 先选流程
+
+先按任务规模选入口，再读对应阶段规则：
+
+- 几行到几十行的小功能：`/devflow:req --light`，产出 `brief.md`。
+- 只修缺陷：`/devflow:debug`，产出 `debug.md`。
+- 需要方案评审、跨模块改动、迁移或合规留痕：走完整六阶段，产出 `req.md → plan.md → test.md → review.md`。
+
+轻量只压缩文档，测试与审查仍然保留；命中硬触发时阶段入口会提示升级，并保留 `brief.md` / `debug.md` 作为审计材料。一次轻量任务通常写一到三份文档，完整任务约五份：这是 devflow 的主要成本，也是可追溯性的来源。
+
 ## 六个阶段
 
 | 阶段 | 职责 | 关键门禁 |
@@ -214,6 +224,119 @@ subprojects:
 - 栈目录缺失或栈名非法是配置错误，`gen` 与 `doctor` 会报错；`stack` 声明不是字符串时同样报错，并在投影中标为「配置无效」。报错时 `gen` 仍会写出带「缺失」「名称非法」或「配置无效」标记的投影与账本，但退出码为 1。栈目录存在但没有任何 `.md` 时只给提醒。
 - 子项目省略 `stack` 即继承顶层；当前不支持显式退出继承，个别子项目需要不同规范时给它指定另一个栈。
 - 同步与回灌都覆盖 `stacks/`：对应模板库的 `templates/stacks/`；回灌使用 `devflow upstream --stack <name>`，`--all` 包含所有技术栈。`--all` 会跳过名字非法的栈目录，并提示被跳过的目录。
+
+## 技术栈包（stack packs）
+
+项目里的 `.claude/hub/stacks/` 始终是本项目的规则真源。如果某个语言或框架的规范已经在独立仓库维护，可以用技术栈包按需安装单个栈：只拉取该包的快照，不 clone 整个仓库，也不把全部模板随插件内置。pack 安装的目录由 pack 管理，`sync` 会跳过它，`upstream` / `ship` 默认拒绝回灌；要改规范就改 pack 仓库，再在项目里 `stack update`。
+
+### 第一次安装
+
+先确保工作区已初始化（存在 `.claude/hub/hub.yaml`），然后：
+
+```bash
+# 从远程仓库安装；URL 归一化后写入 lock，凭据不会落盘
+devflow stack add java-spring --repo https://github.com/<org>/<repo>.git
+
+# 本地开发 pack 时直接指向仓库根目录
+devflow stack add java-spring --from ../devflow-stacks
+
+# 指定分支、tag 或 commit；--as 改名；--dry-run 只显示计划
+devflow stack add java-spring --repo <url> --ref v1.2.0 --as backend --dry-run
+
+# 查看已安装；带 --repo 时再列出仓库中的可用包
+devflow stack list
+devflow stack list --repo <url>
+```
+
+`<packId>` 是仓库 `index.json` 的 key；`--from` 指向与远程仓库同形的根目录（根下有 `index.json`），不是单个包目录。`--repo` 与 `--from` 互斥，也可以用环境变量 `DEVFLOW_STACK_REPO` 提供默认仓库；`--ref` 和 `--offline` 只用于远程来源，`--offline` 要求缓存中已有目标 commit。`--from` 的本地来源不会写 lock，因此不能跨机器恢复。
+
+安装本身**不改写** `hub.yaml`。成功后按提示把包声明到顶层或子项目：
+
+```yaml
+stack: java-spring
+# 或
+subprojects:
+  apps/web:
+    stack: java-spring
+```
+
+然后运行 `node scripts/devflow-gen.mjs` 刷新投影。未声明也可以先安装，但 `gen` 不会把它接进阶段读取链。
+
+重复对同一个安装名执行 `add` 会按更新处理，不会整目录覆盖。若目标目录已由其他仓库或包占用，命令会拒绝；先 `stack remove` 再安装。
+
+### 更新与合并
+
+```bash
+devflow stack status
+devflow stack update java-spring
+devflow stack update --all
+devflow stack update java-spring --dry-run
+devflow stack update java-spring --force
+```
+
+`update` 以安装时保存的 bases 为基线做三方合并：上游改了、本地没改的文件直接更新；本地手改与上游改动能自动合并就合并；冲突保留本地内容并写 `<文件>.bak`；本地删除的文件不会自动恢复；上游删除且本地未改的文件才删除；额外文件保留。`--force` 以新包为准覆盖本地改动，覆盖前同样写 `.bak`。`--dry-run` 会逐文件列出动作。
+
+`status` 报告每个受管栈的版本、来源与文件状态。`modified` 包括两种偏离：安装后手改，以及本地内容与 pack 基线不同（例如 `restore` 保留了本地内容，或更新发生合并/冲突）；缺失文件单独列出。手改只提示，不阻断阶段流程。
+
+### 恢复、删除与锁
+
+```bash
+devflow stack restore            # 按 stack-lock.yaml 恢复缺失或校验受管目录
+devflow stack restore --force    # 覆盖与 lock 不一致的本地目录
+devflow stack remove java-spring # 目录与 bases 移入 .stack-trash，可恢复
+devflow stack remove java-spring --purge
+devflow stack remove java-spring --keep
+devflow stack lock
+```
+
+`restore` 只使用 `stack-lock.yaml` 记录的 commit，不跟随分支移动；目录缺失时恢复，内容一致时采纳并补账本，内容不同时保留本地并标记 modified，`--force` 才覆盖。新机器或 CI 上先提交 `stack-lock.yaml`，初始化后运行 `restore` 即可。
+
+`remove` 在被 `hub.yaml` 引用时拒绝执行（先手工解除声明），也不接受 `--force`。默认把目录整体移入 `.claude/.stack-trash/<时间戳>/` 并保留备份，命令结束会打印路径；`--purge` 只移动账本记录且未手改的文件，手改与额外文件保留在原目录；`--keep` 只移除账本、bases 与 lock 条目，目录留下成为普通栈目录，之后 `sync` 可能接管。
+
+`lock` 从本地账本重建可提交的 `stack-lock.yaml`；本地 `--from` 来源不可跨机器复现，会被跳过，只有 git 来源写入。`lock` 需要工作区已初始化；`list` 与 `status` 可以在任意目录排查，未初始化时会提示先运行 `/devflow:init`，但仍返回空结果。
+
+### 状态文件与缓存
+
+- `.claude/hub/stack-lock.yaml`：可提交的复现事实（repo、ref、commit、packId）；跨机器恢复只认它。
+- `.claude/.stack-sources.json`：本机安装账本（安装名、来源、每个文件的 base/local 哈希）；已加入 `.gitignore`，不要手改。
+- `.claude/.stack-bases/<installedAs>/`：上次安装的干净内容，三方合并的 base，同样不提交。
+- `.claude/.stack-staging/`、`.claude/.stack-trash/`：临时与备份目录；`remove` 的备份会保留，确认无用后手动清理。
+- 用户级缓存默认在 `~/.devflow/cache/stacks/`，可用 `DEVFLOW_CACHE_DIR` 改位置。
+
+```bash
+devflow stack cache gc --keep-days 30          # 预览
+devflow stack cache gc --keep-days 30 --apply  # 删除过期快照
+```
+
+### 校验、体检与协作边界
+
+```bash
+devflow stack lint <pack-repo-root>
+devflow doctor
+devflow doctor --check-remote
+```
+
+`lint` 校验仓库 `index.json`、包的 `stack.json`、文件哈希、大小限制、`minDevflow` 与 loader 兼容性，适合在 pack 仓库的 CI 中运行。`doctor` 检查受管目录是否存在、文件缺失或手改、与 lock 是否一致、额外文件，以及残留的 `.hub-sources.json` / `.hub-bases` 快照；`--check-remote` 额外提示 commit 是否落后于远端分支，网络失败只警告。
+
+`sync` 不会覆盖受管栈；`upstream` / `ship` 默认拒绝回灌受管栈（改动应回到 pack 仓库）。确需分叉时加 `--allow-fork`，但改动不会通过 `sync` 回来。
+
+### 安全与限制
+
+- 远程 URL 只接受 `https://`、`ssh://`、`git@host:`；拒绝带凭据的 URL、`ext::` / `transport::` 和以 `-` 开头的值。认证交给 git credential helper，凭据不会写入缓存 ID、账本、lock 或日志。
+- `file://` 只用于本地开发，需要显式设置 `DEVFLOW_STACK_ALLOW_LOCAL_REPO=1`。
+- 包内容按不可信输入处理：拒绝符号链接/junction、越界路径和仅大小写不同的重复路径；单文件 1 MiB、整包 10 MiB、最多 500 个文件。
+- `--force` 只覆盖项目内的目标目录，不跳过 URL、路径、大小、哈希、版本与 loader 校验。
+- 安装会扫描包正文中的危险指令模式并警告，但不会执行；真正的命令拦截仍由 hooks 负责。
+
+### 常见问题
+
+- **`找不到 hub 配置`**：先运行 `/devflow:init`；`add` / `update` / `restore` / `remove` 都要求工作区已初始化。
+- **安装后阶段没有读到规范**：检查 `hub.yaml` 是否声明了 `stack`，再运行 `node scripts/devflow-gen.mjs`。
+- **`doctor` 报“未写入 stack-lock.yaml”**：运行 `devflow stack lock`；本地 `--from` 来源不会写 lock。
+- **更新后出现 `.bak`**：这是冲突或 `--force` 覆盖前的备份，确认内容后可删除；`doctor` 会把它列为额外文件。
+- **磁盘占用变大**：`.stack-trash` 保存了删除备份，`cache gc` 只清理用户级快照缓存，两者需要分别处理。
+
+设计细节与状态机见 [stack-packs-design.md](stack-packs-design.md)。
 
 ## 单一真源与投影
 
