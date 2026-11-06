@@ -124,7 +124,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:review <slug> [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only] [--base <ref>] [--since <ref>]` | 先判定触发与风险画像，再按选中方向审查，输出阻断项与建议项；`--since` 用于增量复审 |
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
-| `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
+| `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段；默认与 `--json` 附带适用性参考（仅静态启发式，不构成结论） |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
 | `/devflow:upstream [--stage <stage>] [--stack <name>] [--shared] [--all] [--to personal\|team\|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 把项目经验回灌到个人库、团队库或上游插件；`--stack` 回灌单个技术栈，`--all` 包含所有栈；默认只预览，`--apply` 才写入，`team` 加 `--pr` 提交并开 PR |
 | `/devflow:ship [--stage <stage>] [--stack <name>] [--shared] [--all] [--profile upstream\|team] [--plugin-root <模板库根>] [--dry-run] [--resume <branch>] [--no-pr]` | 上游回灌后提交到分支、推送并生成 PR；`--no-pr` 只推送不建 PR，`--profile team` 可推到团队库 |

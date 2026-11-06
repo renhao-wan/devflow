@@ -461,6 +461,16 @@ node scripts/devflow-doctor.mjs
 - 多技术栈不自动声明 `stack`，只生成通用草稿；日志会提示使用落位技能。
 - 不需要的草稿直接删除即可，不进入账本，也没有额外清理步骤。
 
+### 使用边界（固定提示）
+
+`init` 结束时总会打印同一段使用边界，不探测项目内容、也不下“本项目适合/不适合 devflow”的结论：
+
+- devflow 适合会持续维护、需要保留需求/计划/测试/评审记录的项目。
+- demo、原型或一次性脚本直接用 Claude Code 更快。
+- 小功能用 `/devflow:req --light`，小 bug 用 `/devflow:debug`。
+
+需要更具体的参考时运行 `/devflow:onboard`，它会在项目概览之外输出一份静态启发式画像。
+
 ### 规则该放哪
 
 按最小充分范围选择：所有阶段都适用 → `_shared/`；只影响某阶段 → `stages/<stage>/SKILL.md`；只影响某语言/框架 → `stacks/<stack>/`；只影响某子项目 → `overrides/<sub>/<stage>.md`；只影响当前任务 → 留在 `docs/devflow/<slug>/`，不落位。
@@ -476,6 +486,8 @@ node scripts/devflow-doctor.mjs
 ```
 
 概览中 `<!-- devflow:auto:start -->` 与 `<!-- devflow:auto:end -->` 之间是自动段，重扫会刷新；`## 项目补充` 等标记外内容由你维护，重扫不会覆盖。`--print` 只输出不写文件。自动段记录项目结构指纹，`/devflow:doctor` 会发现概览过期或标记残缺；会话启动时只注入一行摘要，req/plan 会先读概览定位，再以代码与 `hub.yaml` 为准。
+
+默认输出与 `--json` 还会附带一份**适用性参考**，等级为 `full`（更接近完整流程）、`light`（更接近轻量流程）或 `unclear`（信息不足）。依据只有可解释的静态信号：是否在 Git 仓库中、是否有可直接运行的测试命令、是否存在 GitHub Actions 工作流、是否包含两个及以上子项目。它不读取 `hub.yaml` 的 `testCommand`（根目录没有构建文件时 init 会写 `npm test` 兜底，不能当作“有测试”的证据），也不会写进概览文件；`--print` 仍然只输出概览内容。等级只是启发式参考，不构成项目是否适合 devflow 的结论，实际价值取决于项目是否长期维护、是否需要可追溯记录。`--json` 中对应字段为 `assessment`。
 
 ## statusline（可选）
 

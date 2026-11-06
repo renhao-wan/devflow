@@ -6,6 +6,7 @@ import {
   warnUnknownArgs,
 } from './lib/common.mjs';
 import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
+import { assessProject } from './lib/assessment.mjs';
 
 export function main(argv = process.argv.slice(2)) {
   warnUnknownArgs(argv, ['--root', '--print', '--json', '--now']);
@@ -23,6 +24,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   const now = nowRaw ?? new Date().toISOString();
   const result = generateOverview(root, { full: true, now, write: !print });
+  const assessment = assessProject({ root, facts: result.facts });
 
   if (print) {
     console.log(result.content);
@@ -34,6 +36,7 @@ export function main(argv = process.argv.slice(2)) {
       changed: result.changed,
       subprojects: result.subprojects,
       facts: result.facts,
+      assessment,
     }, null, 2));
     return result;
   }
@@ -42,6 +45,9 @@ export function main(argv = process.argv.slice(2)) {
   log(result.changed ? 'ok' : '..', result.changed
     ? `已更新 ${OVERVIEW_FILE}（${summary}）`
     : `${OVERVIEW_FILE} 无变化（${summary}）`);
+  log('info', `适用性参考：${assessment.label}（${assessment.reasons.join('；')}）`);
+  log('info', assessment.suggestion);
+  log('info', assessment.disclaimer);
   return result;
 }
 

@@ -10,6 +10,7 @@ import {
 } from '../scripts/lib/overview.mjs';
 import { main as onboardMain } from '../scripts/hub-onboard.mjs';
 import { main as initMain } from '../scripts/hub-init.mjs';
+import { assessProject } from '../scripts/lib/assessment.mjs';
 
 function makeProject() {
   const root = mkdtempSync(join(tmpdir(), 'devflow-onboard-'));
@@ -219,6 +220,101 @@ test('默认输出包含概览摘要', () => {
   assert.match(r.stdout, /项技术栈/);
   assert.match(r.stdout, /个入口/);
   assert.match(r.stdout, /个 CI/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('assessProject 无可用信号时更接近轻量流程', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-light-'));
+  try {
+    const a = assessProject({ root, facts: { ci: [] } });
+    assert.equal(a.level, 'light');
+    assert.equal(a.strongSignals, 0);
+    assert.deepEqual(a.signals, { git: false, tests: false, ci: false, multiProject: false });
+    assert.match(a.disclaimer, /不构成是否使用 devflow 的结论/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('assessProject 在 Git、测试与 CI 齐全时更接近完整流程', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-full-'));
+  try {
+    mkdirSync(join(root, '.git'));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'node --test' } }));
+    mkdirSync(join(root, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'name: CI\n');
+    const a = assessProject({ root, facts: { ci: ['ci.yml'] } });
+    assert.equal(a.level, 'full');
+    assert.deepEqual(a.signals, { git: true, tests: true, ci: true, multiProject: false });
+    assert.match(a.suggestion, /\/devflow:req/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('assessProject 不把 hub.yaml 的兜底 npm test 当作测试信号', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-fallback-'));
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), [
+      'version: 1',
+      'stages:',
+      '  - req',
+      'subprojects: {}',
+      'defaults:',
+      '  testCommand: "npm test"',
+      '',
+    ].join('\n'));
+    const a = assessProject({ root, facts: { ci: [] } });
+    assert.equal(a.signals.tests, false);
+    assert.equal(a.level, 'light');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('assessProject 从子项目探测测试并计入多项目', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-assess-sub-'));
+  try {
+    mkdirSync(join(root, '.git'));
+    for (const name of ['api', 'web']) {
+      mkdirSync(join(root, 'services', name), { recursive: true });
+      writeFileSync(join(root, 'services', name, 'package.json'),
+        JSON.stringify({ name, scripts: { test: 'node --test' } }));
+    }
+    const a = assessProject({ root, facts: { ci: [] } });
+    assert.equal(a.signals.tests, true);
+    assert.equal(a.signals.multiProject, true);
+    assert.equal(a.level, 'full');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('默认输出包含适用性参考与免责声明', () => {
+  const root = makeProject();
+  const r = spawnSync(process.execPath, [
+    resolve(import.meta.dirname, '..', 'scripts', 'hub-onboard.mjs'),
+    '--root', root,
+  ], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /适用性参考/);
+  assert.match(r.stdout, /不构成是否使用 devflow 的结论/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('--json 包含 assessment 结构', () => {
+  const root = makeProject();
+  const r = spawnSync(process.execPath, [
+    resolve(import.meta.dirname, '..', 'scripts', 'hub-onboard.mjs'),
+    '--root', root, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const data = JSON.parse(r.stdout);
+  assert.equal(typeof data.assessment.level, 'string');
+  assert.equal(typeof data.assessment.signals.git, 'boolean');
+  assert.ok(Array.isArray(data.assessment.reasons));
+  assert.match(data.assessment.disclaimer, /不构成是否使用 devflow 的结论/);
   rmSync(root, { recursive: true, force: true });
 });
 

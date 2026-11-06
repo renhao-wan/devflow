@@ -383,6 +383,9 @@ export async function main(argv = process.argv.slice(2)) {
   } else {
     log('ok', '初始化完成');
   }
+  // 静态使用边界：不探测项目、不判断“适不适合”，只说明成本与替代入口。
+  log('info', '使用边界：devflow 适合会持续维护、需要保留需求/计划/测试/评审记录的项目');
+  log('info', 'demo、原型或一次性脚本直接用 Claude Code 更快；小功能用 /devflow:req --light，小 bug 用 /devflow:debug');
   console.log('\n下一步：');
   const nextSteps = ['直接开始：/devflow:req <需求>'];
   if (!noDraft) {

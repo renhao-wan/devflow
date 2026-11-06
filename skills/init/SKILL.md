@@ -20,6 +20,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-init.mjs" --root "${CLAUDE_PROJECT_DIR:-
    - 默认测试命令
    - 是否自动写入了 `stack`（只探测到单一技术栈时才会写）
    - 需要用户确认或修改的地方（尤其测试命令为空、子项目识别错误）
+
+   同时复述 init 输出中的固定“使用边界”：devflow 适合会持续维护、需要保留需求/计划/测试/评审记录的项目；demo、原型或一次性脚本直接用 Claude Code 更快，小功能用 `/devflow:req --light`，小 bug 用 `/devflow:debug`。这是固定说明，不要根据本项目内容改写成“适合/不适合”的结论。
 4. 读取 init 生成的规则草稿（首行为 `<!-- devflow:draft -->`）：
    - `.claude/hub/_shared/project-basics.md`
    - 单一技术栈时的 `.claude/hub/stacks/<stack>/_shared.md`
