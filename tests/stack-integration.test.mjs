@@ -27,6 +27,40 @@ function makeProject(base) {
   return root;
 }
 
+function makeStackRepo(base) {
+  const repo = join(base, 'stacks-repo');
+  const files = { '_shared.md': '# shared\n', 'plan.md': '# plan\n' };
+  const hashes = {};
+  for (const [rel, text] of Object.entries(files)) {
+    const abs = join(repo, 'stacks', 'java-spring', ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text);
+    hashes[rel] = contentHash(text);
+  }
+  writeFileSync(join(repo, 'stacks', 'java-spring', 'stack.json'), JSON.stringify({
+    name: 'java-spring', title: 'Spring', version: '1.2.0', minDevflow: '>=1.7.0',
+    detects: ['java-maven'], files: hashes,
+  }, null, 2));
+  writeFileSync(join(repo, 'index.json'), JSON.stringify({
+    schemaVersion: 1,
+    packs: { 'java-spring': { title: 'Spring', path: 'stacks/java-spring', detects: ['java-maven'] } },
+  }, null, 2));
+  return repo;
+}
+
+function writeLedger(root, packs) {
+  mkdirSync(join(root, '.claude'), { recursive: true });
+  writeFileSync(join(root, '.claude', '.stack-sources.json'), JSON.stringify({ schemaVersion: 1, packs }));
+}
+
+function stackRecord(overrides = {}) {
+  return {
+    installedAs: 'java-spring', source: 'local', localPath: '/x', packId: 'java-spring',
+    path: 'stacks/java-spring', version: '1.0.0', files: {},
+    ...overrides,
+  };
+}
+
 test('sync 跳过受管栈路径，不用模板库覆盖 pack', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-sync-'));
   try {
@@ -231,6 +265,7 @@ test('doctor 在账本为空时仍报告 stack-lock.yaml 的孤立条目', () =>
     const res = run('hub-doctor.mjs', ['--root', root], root);
     assert.equal(res.status, 0, res.stderr + res.stdout);
     assert.match(res.stdout, /stack-lock\.yaml 记录了未安装的包 ghost/);
+    assert.doesNotMatch(res.stdout, /没有受管的技术栈包/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -286,6 +321,138 @@ test('doctor --check-remote 报告落后 commit，默认不联网', () => {
     assert.equal(checked.status, 0, checked.stderr + checked.stdout);
     assert.match(checked.stdout, /落后/);
     assert.match(checked.stdout, /stack update/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 不对本地来源提示未写入 stack-lock.yaml', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-local-'));
+  try {
+    const root = makeProject(base);
+    const repo = makeStackRepo(base);
+    const add = run('hub-stack.mjs', ['add', 'java-spring', '--root', root, '--from', repo, '--no-gen'], root);
+    assert.equal(add.status, 0, add.stderr + add.stdout);
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    // 设计第 3 节：本地来源本来就不写 lock，永久告警只会误导用户。
+    assert.doesNotMatch(res.stdout, /未写入 stack-lock\.yaml/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 对 git 来源缺失 lock 条目给出提醒', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-git-lock-'));
+  try {
+    const root = makeProject(base);
+    mkdirSync(join(root, '.claude', 'hub', 'stacks', 'java-spring'), { recursive: true });
+    writeLedger(root, {
+      'java-spring': stackRecord({
+        source: 'git',
+        repo: 'https://example.com/packs.git',
+        ref: 'main',
+        commit: 'a'.repeat(40),
+      }),
+    });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /受管栈 java-spring 未写入 stack-lock\.yaml/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 将 local 为 null 的文件按缺失报告而不是手改', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-null-'));
+  try {
+    const root = makeProject(base);
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '_shared.md'), '# present\n');
+    writeLedger(root, {
+      'java-spring': stackRecord({
+        files: { '.claude/hub/stacks/java-spring/_shared.md': { base: 'x', local: null } },
+      }),
+    });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /缺失 1 个文件/);
+    assert.doesNotMatch(res.stdout, /被手改/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 提示受管文件被手改但保持退出码 0', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-modified-'));
+  try {
+    const root = makeProject(base);
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '_shared.md'), '# edited\n');
+    writeLedger(root, {
+      'java-spring': stackRecord({
+        files: {
+          '.claude/hub/stacks/java-spring/_shared.md': {
+            base: contentHash('# original\n'),
+            local: contentHash('# original\n'),
+          },
+        },
+      }),
+    });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /1 个文件被手改/);
+    assert.doesNotMatch(res.stdout, /缺失/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 在受管目录缺失时报错并退出 1', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-missing-dir-'));
+  try {
+    const root = makeProject(base);
+    writeLedger(root, { 'java-spring': stackRecord() });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 1);
+    assert.match(res.stdout, /受管栈目录缺失/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 在受管目录缺失时仍检查陈旧 .hub-bases 快照', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-missing-dir-bases-'));
+  try {
+    const root = makeProject(base);
+    mkdirSync(join(root, '.claude', '.hub-bases', 'stacks', 'java-spring'), { recursive: true });
+    writeLedger(root, { 'java-spring': stackRecord() });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 1);
+    assert.match(res.stdout, /受管栈目录缺失/);
+    assert.match(res.stdout, /陈旧的 \.hub-bases 快照/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('doctor 拒绝越界的账本文件路径且不回显 key', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-escape-'));
+  try {
+    const root = makeProject(base);
+    mkdirSync(join(root, '.claude', 'hub', 'stacks', 'java-spring'), { recursive: true });
+    writeLedger(root, {
+      'java-spring': stackRecord({
+        files: { '../../outside.txt': { base: 'x', local: 'x' } },
+      }),
+    });
+    const res = run('hub-doctor.mjs', ['--root', root], root);
+    assert.equal(res.status, 1, res.stderr + res.stdout);
+    // 设计第 13 节：不可信 key 不得回显到输出。
+    assert.doesNotMatch(`${res.stdout}${res.stderr}`, /outside\.txt/);
+    assert.match(res.stdout, /非法文件路径/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

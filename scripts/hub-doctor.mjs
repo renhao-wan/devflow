@@ -21,7 +21,7 @@ import {
 import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
-import { readSources, readLock, stackPaths } from './lib/stack-ledger.mjs';
+import { ledgerStackFileAbs, readSources, readLock, stackPaths } from './lib/stack-ledger.mjs';
 import {
   ensureRepo, refreshRef, resolveCommit, stackCacheRoot,
 } from './lib/stack-fetch.mjs';
@@ -409,41 +409,50 @@ export async function main(argv = process.argv.slice(2)) {
     if (!entries.length && !Object.keys(lock.packs).length) {
       add('ok', '没有受管的技术栈包');
     }
+    // 陈旧记录检查与具体记录无关：整个账本只读取、解析一次。
+    let hubSourceKeys = [];
+    if (existsSync(staleHubSources)) {
+      try {
+        const data = JSON.parse(readText(staleHubSources));
+        hubSourceKeys = Object.keys(data?.files || {});
+      } catch { /* 由现有 hub-sources 检查处理 */ }
+    }
     for (const record of entries) {
       const dir = stackState.stackDir(record.installedAs);
+      // 目录缺失时无法比对哈希，但 lock 与陈旧记录检查仍必须执行。
       if (!existsSync(dir)) {
         add('error', `受管栈目录缺失：.claude/hub/stacks/${record.installedAs}`, '运行 devflow stack restore');
-        continue;
-      }
-      const missing = [];
-      const modified = [];
-      for (const [rel, hashes] of Object.entries(record.files || {})) {
-        const abs = join(root, ...rel.split('/'));
-        // local === null 表示上次更新时本地已删除；这是账本事实，不能只看文件是否存在。
-        if (hashes.local === null || !existsSync(abs)) {
-          missing.push(rel);
-          continue;
+      } else {
+        const missing = [];
+        const modified = [];
+        for (const [rel, hashes] of Object.entries(record.files || {})) {
+          // 手改账本可能给出越界路径；统一走账本校验，失败即中止 doctor。
+          const abs = ledgerStackFileAbs(root, record.installedAs, rel);
+          // local === null 表示上次更新时本地已删除；这是账本事实，不能只看文件是否存在。
+          if (hashes.local === null || !existsSync(abs)) {
+            missing.push(rel);
+            continue;
+          }
+          // 手改只报告，不阻断；缺失才给恢复建议。
+          if (contentHash(readText(abs)) !== hashes.local) modified.push(rel);
         }
-        // 手改只报告，不阻断；缺失才给恢复建议。
-        if (contentHash(readText(abs)) !== hashes.local) modified.push(rel);
+        if (missing.length) {
+          add('warn', `受管栈 ${record.installedAs} 缺失 ${missing.length} 个文件：${missing.join('、')}`, '运行 devflow stack restore');
+        }
+        if (modified.length) {
+          add('info', `受管栈 ${record.installedAs} 有 ${modified.length} 个文件被手改（保留，不阻断）`);
+        }
+        if (!missing.length && !modified.length) {
+          add('ok', `受管栈 ${record.installedAs}@${record.version} 完整`);
+        }
       }
-      if (missing.length) {
-        add('warn', `受管栈 ${record.installedAs} 缺失 ${missing.length} 个文件：${missing.join('、')}`, '运行 devflow stack restore');
-      }
-      if (modified.length) {
-        add('info', `受管栈 ${record.installedAs} 有 ${modified.length} 个文件被手改（保留，不阻断）`);
-      }
-      if (!lock.packs[record.installedAs]) {
+      // 设计第 3 节：本地来源不写 lock，只有 git 来源缺失条目才值得提醒。
+      if (record.source === 'git' && !lock.packs[record.installedAs]) {
         add('warn', `受管栈 ${record.installedAs} 未写入 stack-lock.yaml`, '运行 devflow stack lock');
       }
-      if (existsSync(staleHubSources)) {
-        try {
-          const data = JSON.parse(readText(staleHubSources));
-          const prefix = `.claude/hub/stacks/${record.installedAs}/`;
-          if (Object.keys(data.files || {}).some((rel) => rel.startsWith(prefix))) {
-            add('warn', `受管栈 ${record.installedAs} 仍有陈旧的 .hub-sources.json 记录`, '运行 devflow sync 或手工删除该记录');
-          }
-        } catch { /* 由现有 hub-sources 检查处理 */ }
+      const prefix = `.claude/hub/stacks/${record.installedAs}/`;
+      if (hubSourceKeys.some((rel) => rel.startsWith(prefix))) {
+        add('warn', `受管栈 ${record.installedAs} 仍有陈旧的 .hub-sources.json 记录`, '运行 devflow sync 或手工删除该记录');
       }
       if (existsSync(join(staleHubBases, record.installedAs))) {
         add('warn', `受管栈 ${record.installedAs} 仍有陈旧的 .hub-bases 快照`, '删除该目录；pack 使用 .stack-bases');
@@ -469,9 +478,6 @@ export async function main(argv = process.argv.slice(2)) {
           // 网络或证书问题不应让 doctor 失败；只说明本次无法检查。
           add('warn', `无法检查 ${record.installedAs} 的远程状态：${err.message}`);
         }
-      }
-      if (!missing.length && !modified.length) {
-        add('ok', `受管栈 ${record.installedAs}@${record.version} 完整`);
       }
     }
     // 设计第 15 节：lock 与本地账本也要比对，不能只在 lock 缺失时提示；

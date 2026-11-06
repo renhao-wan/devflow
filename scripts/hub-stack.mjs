@@ -14,7 +14,7 @@ import {
   StackPackError, normalizeRepoUrl, readIndex, readPackFromDir, resolveIndexPack, validateIndex,
 } from './lib/stack-pack.mjs';
 import {
-  readLock, readSources, stackPaths, writeLock, writeSources,
+  ledgerStackFileAbs, readLock, readSources, stackPaths, writeLock, writeSources,
 } from './lib/stack-ledger.mjs';
 import {
   ensureRepo, fetchCommit, listSnapshots, materializeSnapshot, readFileAtCommit,
@@ -260,19 +260,6 @@ function pruneEmptyDirs(dir) {
   } catch {
     // 清理空目录失败不影响已提交的账本与 lock。
   }
-}
-
-/** purge 只允许账本内、目标栈目录下的相对路径；账本被手改时 fail closed。 */
-function ledgerStackFileAbs(root, installedAs, rel) {
-  const prefix = `.claude/hub/stacks/${installedAs}/`;
-  const value = String(rel ?? '');
-  const segments = value.split('/');
-  if (!value.startsWith(prefix)
-    || value.includes('\\') || value.includes(':') || /[\0\r\n]/.test(value)
-    || segments.some((seg) => !seg || seg === '.' || seg === '..')) {
-    throw new StackPackError('安装账本包含非法文件路径', 'STACK_LEDGER');
-  }
-  return join(root, ...segments);
 }
 
 

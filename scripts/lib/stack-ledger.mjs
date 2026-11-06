@@ -255,6 +255,22 @@ export function managedStackNames(sources) {
   return new Set(Object.values(sources.packs || {}).map((record) => record.installedAs));
 }
 
+/**
+ * 账本中的文件路径必须严格落在目标栈目录内；账本被手改时 fail closed。
+ * 错误消息保持静态，不回显不可信 key（否则会造成日志注入）。
+ */
+export function ledgerStackFileAbs(root, installedAs, rel) {
+  const prefix = `.claude/hub/stacks/${installedAs}/`;
+  const value = String(rel ?? '');
+  const segments = value.split('/');
+  if (!value.startsWith(prefix)
+    || value.includes('\\') || value.includes(':') || /[\0\r\n]/.test(value)
+    || segments.some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new StackPackError('安装账本包含非法文件路径', 'STACK_LEDGER');
+  }
+  return join(root, ...segments);
+}
+
 /** pack 接管目录后，模板库不再保留同一目录的同步基线；失败只降级为 warning。 */
 export function dropHubOwnership(root, installedAs) {
   const warnings = [];
