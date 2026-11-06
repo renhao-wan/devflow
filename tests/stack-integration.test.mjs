@@ -69,6 +69,41 @@ test('sync 跳过受管栈路径，不用模板库覆盖 pack', () => {
   }
 });
 
+test('upstream --all 与 ship --all 排除受管栈，显式 --stack 拒绝', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-upstream-'));
+  try {
+    const root = makeProject(base);
+    // makeProject 用 --no-draft 初始化，_shared 目录为空；补一个文件让 --all 能走到技术栈检查。
+    writeFileSync(join(root, '.claude', 'hub', '_shared', 'project-basics.md'), '# 共享规则\n');
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '_shared.md'), '# pack content\n');
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', '.stack-sources.json'), JSON.stringify({
+      schemaVersion: 1,
+      packs: {
+        'java-spring': {
+          installedAs: 'java-spring', source: 'local', localPath: '/x', packId: 'java-spring',
+          path: 'stacks/java-spring', version: '1.0.0', files: {},
+        },
+      },
+    }));
+    const all = run('hub-upstream.mjs', ['--root', root, '--all'], root);
+    assert.equal(all.status, 0, all.stderr + all.stdout);
+    assert.doesNotMatch(all.stdout, /java-spring 技术栈/);
+    assert.match(all.stdout, /受管栈 java-spring/);
+
+    const explicit = run('hub-upstream.mjs', ['--root', root, '--stack', 'java-spring'], root);
+    assert.notEqual(explicit.status, 0);
+    assert.match(explicit.stderr, /stack pack 管理/);
+
+    const allowed = run('hub-upstream.mjs', ['--root', root, '--stack', 'java-spring', '--allow-fork'], root);
+    assert.equal(allowed.status, 0, allowed.stderr + allowed.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('账本损坏时 sync fail closed', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-sync-bad-'));
   try {

@@ -15,6 +15,7 @@ import {
   appendLog, readLog, revertFromLog,
 } from './lib/upstream.mjs';
 import { resolveLibraryRoot, assertLibraryRoot } from './lib/libraries.mjs';
+import { readSources, managedStackNames } from './lib/stack-ledger.mjs';
 
 function normalizeTarget(raw, pr) {
   if (['personal', 'team', 'upstream'].includes(raw)) return { kind: raw, pr: Boolean(pr) };
@@ -214,7 +215,7 @@ export async function main(argv = process.argv.slice(2)) {
   warnUnknownArgs(argv, [
     '--root', '--stage', '--stack', '--shared', '--all', '--apply', '--json', '--force',
     '--to', '--pr', '--revert', '--personal-library', '--team-library', '--plugin-root',
-    '--base', '--remote', '--resume', '--pr-repo', '--fork', '--no-pr',
+    '--base', '--remote', '--resume', '--pr-repo', '--fork', '--no-pr', '--allow-fork',
   ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stage = argValue(argv, '--stage', null);
@@ -278,11 +279,21 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`找不到回灌记录：${revertId}`);
   }
 
+  const managed = managedStackNames(readSources(root));
+  const allowManaged = hasFlag(argv, '--allow-fork');
+  for (const stack of stacks) {
+    if (managed.has(stack) && !allowManaged) {
+      throw new Error(`技术栈 ${stack} 由 stack pack 管理；确认回灌请加 --allow-fork`);
+    }
+  }
   const units = resolveUnits(root, {
     stage,
     shared,
     stacks,
     all,
+    managedStacks: managed,
+    allowManagedStacks: allowManaged,
+    onManagedSkip: (names) => log('info', `受管栈 ${names.join('、')}：由 stack pack 管理，跳过回灌`),
     onSkip: (names) => log('warn', `跳过无法声明的技术栈目录：${names.join('、')}（只允许 [a-z0-9][a-z0-9_-]*）`),
   });
   const libRoot = resolveKind(target.kind);

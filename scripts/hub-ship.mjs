@@ -12,6 +12,7 @@ import { isValidStackName } from './lib/stacks.mjs';
 import {
   resolveUnits, planUnits, applyPlan, validateWrittenFiles, appendLog,
 } from './lib/upstream.mjs';
+import { readSources, managedStackNames } from './lib/stack-ledger.mjs';
 
 const UPSTREAM_WHITELIST = [
   (p) => p === '.claude-plugin/plugin.json',
@@ -277,7 +278,7 @@ function ghUpsert(worktreeDir, { base, head, headOwner, title, body }) {
 export async function main(argv = process.argv.slice(2)) {
   warnUnknownArgs(argv, [
     '--root', '--stage', '--stack', '--shared', '--all', '--profile', '--base',
-    '--dry-run', '--no-pr', '--resume', '--remote', '--fork', '--plugin-root', '--pr-repo',
+    '--dry-run', '--no-pr', '--resume', '--remote', '--fork', '--plugin-root', '--pr-repo', '--allow-fork',
   ]);
   const root = projectRoot(argValue(argv, '--root', process.cwd()));
   const stages = argValues(argv, '--stage');
@@ -380,11 +381,21 @@ export async function main(argv = process.argv.slice(2)) {
     log('..', `使用 ${baseRef}（不会自动 fetch；如远端刚更新，请先 git fetch origin ${base}）`);
   }
 
+  const managed = managedStackNames(readSources(root));
+  const allowManaged = hasFlag(argv, '--allow-fork');
+  for (const stack of stacks) {
+    if (managed.has(stack) && !allowManaged) {
+      throw new Error(`技术栈 ${stack} 由 stack pack 管理；确认提交请加 --allow-fork`);
+    }
+  }
   const units = resume ? [] : resolveUnits(root, {
     stages,
     stacks,
     shared,
     all,
+    managedStacks: managed,
+    allowManagedStacks: allowManaged,
+    onManagedSkip: (names) => log('info', `受管栈 ${names.join('、')}：由 stack pack 管理，跳过`),
     onSkip: (names) => log('warn', `跳过无法声明的技术栈目录：${names.join('、')}（只允许 [a-z0-9][a-z0-9_-]*）`),
   });
   const plans = resume ? [] : planUnits(root, pluginRoot, units, config);
