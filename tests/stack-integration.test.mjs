@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { buildRemoteShipArgs } from '../scripts/hub-upstream.mjs';
 import { contentHash } from '../scripts/lib/common.mjs';
+import { detectFrameworks } from '../scripts/lib/discover.mjs';
 
 const PLUGIN_ROOT = resolve(import.meta.dirname, '..');
 const PLUGIN_VERSION = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
@@ -487,6 +488,96 @@ test('doctor 拒绝越界的账本文件路径且不回显 key', () => {
     // 设计第 13 节：不可信 key 不得回显到输出。
     assert.doesNotMatch(`${res.stdout}${res.stderr}`, /outside\.txt/);
     assert.match(res.stdout, /非法文件路径/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFrameworks 按主版本识别 Vue 3', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-vue-detect-'));
+  try {
+    const dir = join(base, 'app');
+    mkdirSync(dir, { recursive: true });
+    const writeVue = (vue) => writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { vue } }));
+    for (const vue of ['^3', '3', '^3.5.0', '~3.4', '>=3.0', '3.x', 'npm:vue@3.5.0']) {
+      writeVue(vue);
+      assert.deepEqual(detectFrameworks(dir), ['vue3'], `应识别 ${vue}`);
+    }
+    for (const vue of ['^2.7.0', '>=2.6.0 <3.0.0', '10.3.x']) {
+      writeVue(vue);
+      assert.deepEqual(detectFrameworks(dir), [], `应拒绝 ${vue}`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('init 提示不回显带凭据的 stack 仓库地址', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-cred-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'pom.xml'), '<project></project>');
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root, {
+      DEVFLOW_STACK_REPO: 'https://user:secret@example.com/repo.git',
+    });
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    assert.doesNotMatch(`${init.stdout}${init.stderr}`, /secret/);
+    assert.match(init.stdout, /--repo <仓库地址>/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('init 提示展示安全的 stack 仓库地址', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-repo-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'pom.xml'), '<project></project>');
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root, {
+      DEVFLOW_STACK_REPO: 'https://github.com/acme/stacks.git',
+    });
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    assert.ok(init.stdout.includes('--repo https://github.com/acme/stacks.git'), init.stdout);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('init 在旧标记块中补齐 stack 忽略项', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-old-ignore-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, '.gitignore'), [
+      '# >>> devflow (generated, do not commit)',
+      '.claude/.hub-sources.json',
+      '.claude/.hub-bases/',
+      '# <<< devflow',
+      '',
+    ].join('\n'));
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root);
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    const ignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    for (const line of ['.claude/.stack-sources.json', '.claude/.stack-bases/', '.claude/.stack-staging/', '.claude/.stack-trash/']) {
+      assert.match(ignore, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.equal(ignore.match(/# >>> devflow/g).length, 1);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('非 Java 非 Vue 项目不提示安装技术栈', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-plain-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'plain', scripts: { test: 'node --test' } }));
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root);
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    assert.doesNotMatch(init.stdout, /devflow stack add/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

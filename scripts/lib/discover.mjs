@@ -169,9 +169,9 @@ export function detectFrameworks(dir) {
     const data = JSON.parse(readText(pkg));
     const deps = { ...(data.dependencies || {}), ...(data.devDependencies || {}) };
     // 只认 Vue 3：Vue 2 的规范差异大，误报会诱导安装错误的包。
-    // 兼容 ^3.5.0、~3.4、>=3.0、3.x、npm:vue@3.5.0 等写法。
+    // 取声明范围的主版本判断，拒绝 >=2.6.0 <3.0.0 这类含 3 的 Vue 2 区间。
     const vue = deps.vue;
-    if (typeof vue === 'string' && /(^|[^0-9])3\./.test(vue)) return ['vue3'];
+    if (typeof vue === 'string' && /^(?:npm:vue@)?\s*[~^<>=]*\s*3(?:\.|$)/.test(vue)) return ['vue3'];
     return [];
   } catch {
     return [];
