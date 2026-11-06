@@ -312,6 +312,8 @@ test('生成技能失败不回滚，只警告', () => {
     assert.equal(readFileSync(join(root, '.claude', 'hub', 'stacks', 'java-spring', '_shared.md'), 'utf8'), '# shared\n');
     assert.equal(readSources(root).packs['java-spring'].installedAs, 'java-spring');
     assert.ok(warnings.some((message) => message.includes('生成技能失败')));
+    // 入口脚本必须指向仓库实际存在的 devflow-gen.mjs。
+    assert.ok(warnings.some((message) => message.includes('scripts/devflow-gen.mjs')), warnings.join('\n'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -422,6 +424,62 @@ test('冲突备份不覆盖已有 .bak', () => {
     assert.equal(readFileSync(join(dir, 'plan.md.bak.1'), 'utf8'), 'a\nLOCAL\nc\n');
     assert.equal(readFileSync(join(dir, 'plan.md'), 'utf8'), 'a\nLOCAL\nc\n');
     assert.ok(warnings.some((message) => message.includes('plan.md.bak.1')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('update --force 覆盖本地改动并保留旧内容为 .bak', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-force-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    const v1 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nb\nc\n', 'old.md': '# old\n' });
+    applyInstall({
+      root, installedAs: 'java-spring', pack: v1, source,
+      sources: { schemaVersion: 1, packs: {} }, noGen: true,
+    });
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    writeFileSync(join(dir, 'plan.md'), 'a\nLOCAL\nc\n');
+    writeFileSync(join(dir, 'old.md'), '# local old\n');
+    writeFileSync(join(dir, 'extra.md'), '# extra\n');
+
+    const v2 = packOf({ '_shared.md': '# shared\n', 'plan.md': 'a\nTHEIRS\nc\n' });
+    const warnings = [];
+    applyPackUpdate({
+      root, installedAs: 'java-spring', pack: v2, source, force: true, noGen: true,
+      onWarn: (message) => warnings.push(message),
+    });
+    // 新包内容整体覆盖本地改动，但旧内容必须先备份。
+    assert.equal(readFileSync(join(dir, 'plan.md'), 'utf8'), 'a\nTHEIRS\nc\n');
+    assert.equal(readFileSync(join(dir, 'plan.md.bak'), 'utf8'), 'a\nLOCAL\nc\n');
+    // 新包已删除、本地改过的文件先备份再删除。
+    assert.equal(existsSync(join(dir, 'old.md')), false);
+    assert.equal(readFileSync(join(dir, 'old.md.bak'), 'utf8'), '# local old\n');
+    // 不属于包也不属于 base 的额外文件保持不动。
+    assert.equal(readFileSync(join(dir, 'extra.md'), 'utf8'), '# extra\n');
+    assert.ok(warnings.some((message) => message.includes('--force')), warnings.join('\n'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('update 不带 --force 时保留本地内容（现有三方合并行为）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-update-no-force-'));
+  try {
+    const source = { type: 'local', localPath: '/x', packId: 'java-spring', path: 'stacks/java-spring' };
+    applyInstall({
+      root, installedAs: 'java-spring', noGen: true, source,
+      pack: packOf({ 'plan.md': 'a\nb\nc\n' }),
+      sources: { schemaVersion: 1, packs: {} },
+    });
+    const dir = join(root, '.claude', 'hub', 'stacks', 'java-spring');
+    writeFileSync(join(dir, 'plan.md'), 'a\nLOCAL\nc\n');
+    applyPackUpdate({
+      root, installedAs: 'java-spring', source, noGen: true,
+      pack: packOf({ 'plan.md': 'a\nTHEIRS\nc\n' }),
+    });
+    assert.equal(readFileSync(join(dir, 'plan.md'), 'utf8'), 'a\nLOCAL\nc\n');
+    assert.equal(readFileSync(join(dir, 'plan.md.bak'), 'utf8'), 'a\nLOCAL\nc\n');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

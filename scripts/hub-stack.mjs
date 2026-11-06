@@ -21,7 +21,8 @@ import {
   refreshRef, resolveCommit, stackCacheRoot,
 } from './lib/stack-fetch.mjs';
 import {
-  adoptExisting, applyInstall, applyPackUpdate, planPackUpdate, targetSnapshot,
+  adoptExisting, applyInstall, applyPackUpdate, assertInstallPaths, assertProjectPath,
+  classifyInstall, planPackUpdate, targetSnapshot,
 } from './lib/stack-install.mjs';
 
 const VALUE_FLAGS = new Set(['--root', '--repo', '--ref', '--as', '--from', '--keep-days']);
@@ -183,7 +184,7 @@ function assertRestoreOwner(root, installedAs, repo, packId) {
   }
 }
 
-const SHA40_RE = /^[0-9a-f]{40}$/i;
+const SHA_REF_RE = /^[0-9a-f]{7,40}$/i;
 
 /** 按账本记录重新解析来源：local 重读 localPath，git 刷新 ref 并物化 lock commit。 */
 function loadRecordSource(record, refOverride, offline) {
@@ -214,7 +215,7 @@ function loadRecordSource(record, refOverride, offline) {
   });
   const ref = String(refOverride || record.ref || 'main');
   // 完整 SHA 不能走 refspec 刷新；直接解析/抓取该对象。
-  if (!offline && !SHA40_RE.test(ref)) refreshRef({ repoGit: info.repoGit, ref });
+  if (!offline && !SHA_REF_RE.test(ref)) refreshRef({ repoGit: info.repoGit, ref });
   const commit = resolveCommit({ repoGit: info.repoGit, ref, offline });
   fetchCommit({
     repoGit: info.repoGit, commit, ref, offline,
@@ -329,9 +330,8 @@ export async function main(argv = process.argv.slice(2)) {
     return { stale: stale.length };
   }
 
-  loadHub(root);
-
   if (command === 'add') {
+    loadHub(root);
     // 本地目录没有 ref，也不存在离线缓存语义；--offline 只对远程来源有意义。
     // 显式 --from 优先于环境变量默认值；只有两者都显式给出才算互斥。
     const from = argValue(argv, '--from', null);
@@ -371,7 +371,8 @@ export async function main(argv = process.argv.slice(2)) {
         url: normalizedRepo, cacheRoot, offline, allowFile,
       });
       const ref = argValue(argv, '--ref', 'main');
-      if (!offline) refreshRef({ repoGit: info.repoGit, ref });
+      // SHA 只解析该 commit；对 SHA 做分支 fetch 通常必然失败。
+      if (!offline && !SHA_REF_RE.test(ref)) refreshRef({ repoGit: info.repoGit, ref });
       const commit = resolveCommit({ repoGit: info.repoGit, ref, offline });
       fetchCommit({
         repoGit: info.repoGit, commit, ref, offline,
@@ -405,18 +406,64 @@ export async function main(argv = process.argv.slice(2)) {
       return { dryRun: true, packId, installedAs };
     }
     const noGen = hasFlag(argv, '--no-gen');
-    const result = applyInstall({
-      root,
+    const force = hasFlag(argv, '--force');
+    // 写盘前按目标目录与账本/锁裁决动作：重复 add 必须走合并更新而不是整目录覆盖。
+    const sources = readSources(root);
+    const lockEntry = readLock(root).packs[installedAs] || null;
+    const snap = targetSnapshot(root, installedAs, pack);
+    const action = classifyInstall({
       installedAs,
-      pack,
+      targetExists: snap.exists,
+      targetMatches: snap.matches,
+      record: sources.packs[installedAs] || null,
+      lockEntry,
+      force,
       source,
-      sources: readSources(root),
-      force: hasFlag(argv, '--force'),
-      noGen,
-      generate: noGen ? null : runGen,
-      onWarn: (message) => log('warn', message),
     });
-    log('ok', `已安装 ${packId}@${pack.manifest.version} → .claude/hub/stacks/${installedAs}（${result.action}）`);
+    if (action === 'conflict') {
+      throw new Error(`目标目录已存在且内容不同：.claude/hub/stacks/${installedAs}；确认覆盖请加 --force`);
+    }
+    if (action === 'other-owner') {
+      throw new Error(`目标目录已由其他安装占用：.claude/hub/stacks/${installedAs}；先运行 devflow stack remove`);
+    }
+    let result;
+    if (action === 'update') {
+      result = {
+        ...applyPackUpdate({
+          root,
+          installedAs,
+          pack,
+          source,
+          force,
+          noGen,
+          generate: noGen ? null : runGen,
+          onWarn: (message) => log('warn', message),
+        }),
+        action,
+      };
+      log('ok', `已更新 ${packId}@${pack.manifest.version} → .claude/hub/stacks/${installedAs}`);
+    } else if (action === 'adopt') {
+      // 目录内容与包一致：补 bases 与账本，不覆盖任何本地文件。
+      adoptExisting({
+        root, installedAs, pack, source, onWarn: (message) => log('warn', message),
+      });
+      if (!noGen) runGen(root);
+      result = { action };
+      log('ok', `已采纳一致目录 ${packId}@${pack.manifest.version} → .claude/hub/stacks/${installedAs}`);
+    } else {
+      result = applyInstall({
+        root,
+        installedAs,
+        pack,
+        source,
+        sources,
+        force,
+        noGen,
+        generate: noGen ? null : runGen,
+        onWarn: (message) => log('warn', message),
+      });
+      log('ok', `已安装 ${packId}@${pack.manifest.version} → .claude/hub/stacks/${installedAs}（${result.action}）`);
+    }
     if (!noGen && !declaredStacks(root).has(installedAs)) {
       log('info', `hub.yaml 尚未声明 ${installedAs}；补充 stack: ${installedAs}（或对应子项目的 stack）后再运行 node scripts/devflow-gen.mjs`);
     }
@@ -465,14 +512,17 @@ export async function main(argv = process.argv.slice(2)) {
       const modified = [];
       const missing = [];
       for (const [rel, hashes] of Object.entries(record.files || {})) {
+        // 账本路径不可信；统一走校验，越界直接 fail closed。
+        const abs = ledgerStackFileAbs(root, record.installedAs, rel);
         // 安装时本地就缺失的文件记 local: null，必须继续按缺失报告。
         if (hashes.local === null) {
           missing.push(rel);
           continue;
         }
-        const abs = join(root, ...rel.split('/'));
         if (!existsSync(abs)) missing.push(rel);
-        else if (contentHash(readFileSync(abs, 'utf8')) !== hashes.local) modified.push(rel);
+        // base 偏离 local 同样表示本地已偏离受管基线（restore modified / update 合并结果）。
+        else if (contentHash(readFileSync(abs, 'utf8')) !== hashes.local
+          || (typeof hashes.base === 'string' && hashes.local !== hashes.base)) modified.push(rel);
       }
       return {
         installedAs: record.installedAs,
@@ -534,6 +584,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'update') {
+    loadHub(root);
     const all = hasFlag(argv, '--all');
     if (all && packId) throw new Error('--all 与 <installedAs> 不能同时使用');
     if (!all && !packId) throw new Error('update 需要 <installedAs> 或 --all');
@@ -568,7 +619,9 @@ export async function main(argv = process.argv.slice(2)) {
           write: '写入', delete: '删除', keep: '保留', missing: '本地缺失',
           conflict: '冲突', orphan: '额外文件', same: '不变',
         };
-        const plan = planPackUpdate({ root, installedAs: name, pack });
+        const plan = planPackUpdate({
+          root, installedAs: name, pack, force,
+        });
         for (const op of plan.ops) {
           log('info', `${name} ${op.merged ? '合并写入' : labels[op.type] || op.type} ${op.rel}`);
         }
@@ -594,6 +647,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'restore') {
+    loadHub(root);
     const lock = readLock(root);
     if (!Object.keys(lock.packs).length) {
       log('info', '没有可恢复的包：stack-lock.yaml 为空或不存在');
@@ -702,6 +756,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'remove') {
+    loadHub(root);
     const installedAs = packId;
     if (!installedAs) throw new Error('remove 需要 <installedAs>');
     if (!isValidStackName(installedAs)) {
@@ -736,7 +791,8 @@ export async function main(argv = process.argv.slice(2)) {
     const lock = hasLock ? readLock(root) : null;
 
     // 删除与安装共用安装锁；账本写入是提交点，此前失败按逆序从 trash 恢复。
-    const trash = join(paths.trashRoot, `${process.pid}-${Date.now()}`);
+    const stamp = `${process.pid}-${Date.now()}`;
+    const trash = join(paths.trashRoot, stamp);
     const moved = [];
     const move = (from, to) => {
       if (!existsSync(from)) return;
@@ -768,6 +824,8 @@ export async function main(argv = process.argv.slice(2)) {
 
     withFileLock(join(paths.stagingRoot, 'install'), () => {
       try {
+        // 锁内、移动任何东西之前重新校验派生路径；junction 不能把删除引到项目外。
+        assertInstallPaths(root, installedAs);
         // 锁内重读账本，避免用取锁前的快照误删并发更新过的文件。
         const latest = readSources(root);
         const latestRecord = latest.packs[installedAs];
@@ -778,6 +836,8 @@ export async function main(argv = process.argv.slice(2)) {
             for (const [rel, hashes] of Object.entries(latestRecord.files || {})) {
               if (!hashes || hashes.local === null || hashes.local !== hashes.base) continue;
               const abs = ledgerStackFileAbs(root, installedAs, rel);
+              // existsSync/readFileSync/renameSync 之前逐段校验，拒绝符号链接/junction。
+              assertProjectPath(root, abs, '账本文件');
               if (!existsSync(abs)) continue;
               // 取锁后、rename 前再次复核内容哈希：期间被手改的文件必须保留。
               let current;
@@ -805,7 +865,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
       // 账本提交后再清理空目录；只删空目录，失败不影响一致性。
       if (purge) pruneEmptyDirs(target);
-    }, { failClosed: true, timeoutMs: 10000 });
+    }, { failClosed: true, timeoutMs: 10000, staleMs: 30 * 60 * 1000 });
 
     // 只有 lock 原本存在时才回写；lock 写失败不回滚已提交的删除。
     if (hasLock && lock.packs[installedAs]) {
@@ -817,10 +877,9 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
 
-    try {
-      rmSync(trash, { recursive: true, force: true });
-    } catch {
-      log('warn', '删除已完成，但清理临时备份失败；可手动删除 .claude/.stack-trash');
+    // 账本已删，trash 是唯一可恢复来源：保留并给出可复制路径。
+    if (existsSync(trash)) {
+      log('info', `备份保留在 .claude/.stack-trash/${stamp}；确认无误后可手动删除`);
     }
 
     if (!noGen) runGen(root);

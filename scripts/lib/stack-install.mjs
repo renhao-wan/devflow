@@ -3,7 +3,7 @@ import {
   cpSync, existsSync, readdirSync, lstatSync, readFileSync, mkdirSync, renameSync, rmSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   contentHash, ensureDir, isPathInside, isRealPathInside, loadHub, posix, withFileLock, writeAtomic,
 } from './common.mjs';
@@ -30,10 +30,29 @@ function assertInsideProject(root, path, label) {
   if (!isPathInside(root, path) || !isRealPathInside(root, path)) {
     throw new Error(`${label} 越界（可能被 junction/符号链接引到项目外）`);
   }
+  // isRealPathInside 只看最近的已存在祖先；从项目根逐段 lstat 才能发现中间的链接。
+  // 错误文案保持静态，不回显路径或不可信片段。
+  const rel = relative(resolve(root), resolve(path));
+  let current = resolve(root);
+  for (const segment of rel.split(/[\\/]+/)) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') throw new Error(`${label} 路径越界（可能被 junction/符号链接引到项目外）`);
+    current = join(current, segment);
+    let info;
+    try {
+      info = lstatSync(current);
+    } catch {
+      // 后续段都不存在，无需继续检查。
+      break;
+    }
+    if (info.isSymbolicLink()) {
+      throw new Error(`${label} 包含符号链接或 junction，拒绝操作`);
+    }
+  }
 }
 
 /** 安装会写入的四类路径都在项目内；junction/符号链接不能把它们引到外面。 */
-function assertInstallPaths(root, installedAs) {
+export function assertInstallPaths(root, installedAs) {
   const paths = stackPaths(root);
   assertInsideProject(root, paths.stackDir(installedAs), '目标目录');
   assertInsideProject(root, paths.basesDir(installedAs), 'bases 目录');
@@ -42,7 +61,43 @@ function assertInstallPaths(root, installedAs) {
   return paths;
 }
 
-function listTree(dir, rel = '') {
+/** 账本文件路径来自不可信输入，读取/移动前同样做词法、真实路径与逐段链接校验。 */
+export function assertProjectPath(root, path, label = '目标路径') {
+  assertInsideProject(root, path, label);
+}
+
+/**
+ * 受管目录整体参与复制与更新时必须先拒绝其中的链接：
+ * cpSync/读取都可能跟随 junction 把项目外内容带进来。
+ */
+function assertTreeHasNoLinks(dir, label = '受管目录') {
+  if (!existsSync(dir)) return;
+  const pending = [dir];
+  while (pending.length) {
+    const current = pending.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      throw new Error(`无法安全检查${label}，拒绝操作`);
+    }
+    for (const entry of entries) {
+      const abs = join(current, entry.name);
+      let info;
+      try {
+        info = lstatSync(abs);
+      } catch {
+        throw new Error(`无法安全检查${label}，拒绝操作`);
+      }
+      if (info.isSymbolicLink()) {
+        throw new Error(`${label}包含符号链接或 junction，拒绝操作`);
+      }
+      if (info.isDirectory()) pending.push(abs);
+    }
+  }
+}
+
+export function listTree(dir, rel = '') {
   if (!existsSync(dir)) return [];
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -149,7 +204,7 @@ export function commitStagedTree(args) {
   // withFileLock 会自动追加 .lock，这里传 install 以得到 .stack-staging/install.lock。
   const lockFile = join(stackPaths(args.root).stagingRoot, 'install');
   return withFileLock(lockFile, () => commitStagedTreeLocked(args), {
-    failClosed: true, timeoutMs: 10000,
+    failClosed: true, timeoutMs: 10000, staleMs: 30 * 60 * 1000,
   });
 }
 
@@ -356,13 +411,15 @@ export function applyInstall({
     try {
       generate(root);
     } catch {
-      onWarn('安装已完成，但生成技能失败；修正 hub.yaml 或栈声明后运行 node scripts/gen-claude-skills.mjs');
+      onWarn('安装已完成，但生成技能失败；修正 hub.yaml 或栈声明后运行 node scripts/devflow-gen.mjs');
     }
   }
   return { action };
 }
 
 function readTreeTexts(dir) {
+  // 三方合并会读取整棵树；先把 junction/符号链接挡在外面。
+  assertTreeHasNoLinks(dir);
   const map = new Map();
   for (const file of listTree(dir)) map.set(file.rel, readFileSync(file.abs, 'utf8'));
   return map;
@@ -390,7 +447,7 @@ function pickBackupRel(targetDir, rel) {
  * 以 bases 为 base、当前目录为 local、新包为 theirs 计算更新动作，不落盘。
  * 只读取项目内路径；栈名与路径先过校验，避免 junction 把读取引到项目外。
  */
-export function planPackUpdate({ root, installedAs, pack }) {
+export function planPackUpdate({ root, installedAs, pack, force = false }) {
   assertStackName(installedAs);
   const paths = assertInstallPaths(root, installedAs);
   const targetDir = paths.stackDir(installedAs);
@@ -404,6 +461,27 @@ export function planPackUpdate({ root, installedAs, pack }) {
     const b = base.get(rel);
     const l = current.get(rel);
     const t = theirs.get(rel);
+    if (force) {
+      // --force：新包内容整体生效；本地改动只备份不参与合并。
+      if (t !== undefined) {
+        const backupRel = l !== undefined && !sameText(l, t) ? pickBackupRel(targetDir, rel) : null;
+        ops.push(backupRel
+          ? {
+            type: 'write', rel, text: t, backupRel,
+          }
+          : { type: 'write', rel, text: t });
+      } else if (b !== undefined) {
+        if (l === undefined) ops.push({ type: 'missing', rel });
+        else {
+          const backupRel = sameText(l, b) ? null : pickBackupRel(targetDir, rel);
+          ops.push(backupRel ? { type: 'delete', rel, backupRel } : { type: 'delete', rel });
+        }
+      } else {
+        // 不属于包也不属于 base 的额外文件保持不动。
+        ops.push({ type: 'orphan', rel });
+      }
+      continue;
+    }
     if (t !== undefined && l === undefined && b === undefined) {
       ops.push({ type: 'write', rel, text: t });
     } else if (t !== undefined && l === undefined) {
@@ -449,16 +527,26 @@ function stageCurrentTree(root, installedAs, staged, ops) {
   const current = stackPaths(root).stackDir(installedAs);
   ensureDir(dirname(staged));
   if (existsSync(current)) {
+    // cpSync 会跟随 junction；源树内不允许任何链接。
+    assertTreeHasNoLinks(current);
     cpSync(current, staged, { recursive: true });
   } else {
     ensureDir(staged);
   }
+  const backup = (abs, backupRel) => {
+    if (!backupRel || !existsSync(abs)) return;
+    const backupAbs = join(staged, ...backupRel.split('/'));
+    ensureDir(dirname(backupAbs));
+    cpSync(abs, backupAbs);
+  };
   for (const op of ops) {
     const abs = join(staged, ...op.rel.split('/'));
     if (op.type === 'write') {
+      backup(abs, op.backupRel);
       ensureDir(dirname(abs));
       writeAtomic(abs, op.text);
     } else if (op.type === 'delete') {
+      backup(abs, op.backupRel);
       rmSync(abs, { force: true });
     } else if (op.type === 'conflict' && op.backupRel && existsSync(abs)) {
       const backupAbs = join(staged, ...op.backupRel.split('/'));
@@ -481,11 +569,17 @@ export function applyPackUpdate({
   if (!existsSync(paths.stackDir(installedAs))) {
     throw new Error('目标目录缺失，不能执行更新；请先运行 devflow stack restore 或重新 add');
   }
-  const plan = planPackUpdate({ root, installedAs, pack });
+  const plan = planPackUpdate({
+    root, installedAs, pack, force,
+  });
   for (const warning of plan.warnings) onWarn(warning);
   for (const op of plan.ops) {
     if (op.type === 'conflict') {
       onWarn(`${op.rel}：${op.reason}；已保留本地内容并写入 ${op.backupRel}`);
+    } else if (op.backupRel && op.type === 'write') {
+      onWarn(`${op.rel}：--force 覆盖本地改动，旧内容已备份为 ${op.backupRel}`);
+    } else if (op.backupRel && op.type === 'delete') {
+      onWarn(`${op.rel}：--force 删除本地改动过的文件，旧内容已备份为 ${op.backupRel}`);
     }
   }
   const stageRoot = join(paths.stagingRoot, tag());
@@ -533,6 +627,8 @@ export function adoptExisting({
     if (!existsSync(target)) {
       throw new Error('目标目录不存在，不能采纳；请先运行 devflow stack add 或在联网环境恢复');
     }
+    // 计算哈希前拒绝树内链接，避免读取项目外内容。
+    assertTreeHasNoLinks(target);
     const localHashes = hashTree(target, pack.files.map((file) => file.rel));
     const absent = pack.files.filter((file) => localHashes.get(file.rel) === null);
     if (!allowMissing && absent.length) {
@@ -592,7 +688,7 @@ export function adoptExisting({
         onWarn('采纳已完成，但清理临时备份失败；可手动删除 .claude/.stack-trash');
       }
     }
-  }, { failClosed: true, timeoutMs: 10000 });
+  }, { failClosed: true, timeoutMs: 10000, staleMs: 30 * 60 * 1000 });
 
   // dropHubOwnership 只返回 warning，不抛出；逐条交给 onWarn。
   for (const message of dropHubOwnership(root, installedAs)) onWarn(message);
