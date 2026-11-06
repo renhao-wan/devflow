@@ -21,6 +21,10 @@ import {
 import { LIBRARY_KINDS, describeLibraries } from './lib/libraries.mjs';
 import { planStacks } from './lib/stacks.mjs';
 import { resolveStages } from './lib/stages.mjs';
+import { readSources, readLock, stackPaths } from './lib/stack-ledger.mjs';
+import {
+  ensureRepo, refreshRef, resolveCommit, stackCacheRoot,
+} from './lib/stack-fetch.mjs';
 
 const KNOWN_TOOLS = new Set([
   'npm', 'pnpm', 'yarn', 'bun', 'node', 'npx',
@@ -260,9 +264,11 @@ function safeManifestTarget(root, rel) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  warnUnknownArgs(argv, ['--root', '--json', '--mode']);
+  warnUnknownArgs(argv, ['--root', '--json', '--mode', '--check-remote']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
+  // 设计第 15 节：只有显式 --check-remote 才联网，默认体检不访问网络。
+  const checkRemote = hasFlag(argv, '--check-remote');
   const requestedMode = argValue(argv, '--mode', 'auto');
   if (!['auto', 'plugin', 'project'].includes(requestedMode)) {
     throw new Error(`--mode 只支持 auto、plugin 或 project，当前为：${requestedMode}`);
@@ -391,6 +397,100 @@ export async function main(argv = process.argv.slice(2)) {
     } else {
       add('ok', '没有待填写的规则草稿');
     }
+  }
+
+  const stackState = stackPaths(root);
+  const staleHubSources = join(root, '.claude', '.hub-sources.json');
+  const staleHubBases = join(root, '.claude', '.hub-bases', 'stacks');
+  try {
+    const sources = readSources(root);
+    const lock = readLock(root);
+    const entries = Object.values(sources.packs);
+    if (!entries.length && !Object.keys(lock.packs).length) {
+      add('ok', '没有受管的技术栈包');
+    }
+    for (const record of entries) {
+      const dir = stackState.stackDir(record.installedAs);
+      if (!existsSync(dir)) {
+        add('error', `受管栈目录缺失：.claude/hub/stacks/${record.installedAs}`, '运行 devflow stack restore');
+        continue;
+      }
+      const missing = [];
+      const modified = [];
+      for (const [rel, hashes] of Object.entries(record.files || {})) {
+        const abs = join(root, ...rel.split('/'));
+        // local === null 表示上次更新时本地已删除；这是账本事实，不能只看文件是否存在。
+        if (hashes.local === null || !existsSync(abs)) {
+          missing.push(rel);
+          continue;
+        }
+        // 手改只报告，不阻断；缺失才给恢复建议。
+        if (contentHash(readText(abs)) !== hashes.local) modified.push(rel);
+      }
+      if (missing.length) {
+        add('warn', `受管栈 ${record.installedAs} 缺失 ${missing.length} 个文件：${missing.join('、')}`, '运行 devflow stack restore');
+      }
+      if (modified.length) {
+        add('info', `受管栈 ${record.installedAs} 有 ${modified.length} 个文件被手改（保留，不阻断）`);
+      }
+      if (!lock.packs[record.installedAs]) {
+        add('warn', `受管栈 ${record.installedAs} 未写入 stack-lock.yaml`, '运行 devflow stack lock');
+      }
+      if (existsSync(staleHubSources)) {
+        try {
+          const data = JSON.parse(readText(staleHubSources));
+          const prefix = `.claude/hub/stacks/${record.installedAs}/`;
+          if (Object.keys(data.files || {}).some((rel) => rel.startsWith(prefix))) {
+            add('warn', `受管栈 ${record.installedAs} 仍有陈旧的 .hub-sources.json 记录`, '运行 devflow sync 或手工删除该记录');
+          }
+        } catch { /* 由现有 hub-sources 检查处理 */ }
+      }
+      if (existsSync(join(staleHubBases, record.installedAs))) {
+        add('warn', `受管栈 ${record.installedAs} 仍有陈旧的 .hub-bases 快照`, '删除该目录；pack 使用 .stack-bases');
+      }
+      if (checkRemote && record.source === 'git' && record.repo) {
+        try {
+          const info = ensureRepo({
+            url: record.repo,
+            cacheRoot: stackCacheRoot(),
+            allowFile: process.env.DEVFLOW_STACK_ALLOW_LOCAL_REPO === '1',
+          });
+          const ref = record.ref || 'main';
+          refreshRef({ repoGit: info.repoGit, ref });
+          const latest = resolveCommit({ repoGit: info.repoGit, ref });
+          if (record.commit && latest !== record.commit) {
+            add(
+              'warn',
+              `受管栈 ${record.installedAs} 落后于 ${ref}（本地 ${record.commit.slice(0, 8)}，远程 ${latest.slice(0, 8)}）`,
+              '运行 devflow stack update',
+            );
+          }
+        } catch (err) {
+          // 网络或证书问题不应让 doctor 失败；只说明本次无法检查。
+          add('warn', `无法检查 ${record.installedAs} 的远程状态：${err.message}`);
+        }
+      }
+      if (!missing.length && !modified.length) {
+        add('ok', `受管栈 ${record.installedAs}@${record.version} 完整`);
+      }
+    }
+    // 设计第 15 节：lock 与本地账本也要比对，不能只在 lock 缺失时提示；
+    // 即使账本为空也要检查，否则锁里的孤立条目永远不会被发现。
+    for (const [name, entry] of Object.entries(lock.packs)) {
+      const record = sources.packs[name];
+      if (!record) {
+        add('warn', `stack-lock.yaml 记录了未安装的包 ${name}`, '运行 devflow stack restore，或手工删除该条目');
+        continue;
+      }
+      if (record.packId !== entry.packId || record.repo !== entry.repo) {
+        add('warn', `受管栈 ${name} 的来源与 stack-lock.yaml 不一致`, '运行 devflow stack lock 重建');
+      } else if (record.commit && entry.commit && record.commit !== entry.commit) {
+        add('warn', `受管栈 ${name} 的 commit 与 stack-lock.yaml 不一致`, '运行 devflow stack lock 重建');
+      }
+    }
+  } catch (err) {
+    // 账本或 lock 损坏必须让 doctor 失败，不能降级成“没有受管栈”。
+    add('error', err.message, '修复或删除 .claude/.stack-sources.json / stack-lock.yaml 后重试');
   }
 
   const eco = loadEcosystem(root);
