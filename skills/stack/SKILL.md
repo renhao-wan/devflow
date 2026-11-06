@@ -24,5 +24,5 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-stack.mjs" --root "${CLAUDE_PROJECT_DIR:
 
 1. `add` 必须显式提供 `--repo <url>`、`--from <dir>` 或环境变量 `DEVFLOW_STACK_REPO`；不要猜测默认源。
 2. 安装成功后，提醒用户把 `stack: <installedAs>` 写入 `.claude/hub/hub.yaml` 的顶层或对应 `subprojects`，再运行 `gen`。
-3. `status`、`list`、`lint` 只读；`remove`、`restore --force`、`update --force` 属于破坏性操作，执行前必须向用户确认。
+3. `status`、`list`、`lint` 只读；`remove`、`restore --force`、`update --force`、`cache gc --apply` 属于破坏性操作，执行前必须向用户确认；`lock` 会重写 `.claude/hub/stack-lock.yaml`，执行前说明。
 4. 不修改 pack 缓存中的快照，也不手工编辑 `.claude/.stack-sources.json`。

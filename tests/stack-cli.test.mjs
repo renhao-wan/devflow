@@ -751,12 +751,23 @@ test('stack 技能存在且禁止模型自动调用', () => {
   const file = join(PLUGIN_ROOT, 'skills', 'stack', 'SKILL.md');
   assert.equal(existsSync(file), true);
   const text = readFileSync(file, 'utf8');
-  assert.match(text, /^---[\s\S]*name:\s*stack[\s\S]*---/);
-  assert.match(text, /disable-model-invocation:\s*true/);
+  const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  assert.ok(frontmatter, 'SKILL.md 缺少 frontmatter');
+  assert.match(frontmatter[1], /name:\s*stack/);
+  assert.match(frontmatter[1], /disable-model-invocation:\s*true/);
 });
 
 test('CLI 帮助包含 stack 安装示例', () => {
   const help = spawnSync(NODE, [join(PLUGIN_ROOT, 'bin', 'devflow'), 'help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /devflow stack add java-spring --repo/);
+  for (const example of [
+    'devflow stack add java-spring --repo',
+    'devflow stack list',
+    'devflow stack update --all',
+    'devflow stack restore',
+    'devflow stack status --json',
+    'devflow stack remove java-spring --keep',
+  ]) {
+    assert.ok(help.stdout.includes(example), `help 缺少示例：${example}`);
+  }
 });
