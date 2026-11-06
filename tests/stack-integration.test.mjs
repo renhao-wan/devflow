@@ -438,6 +438,40 @@ test('doctor 在受管目录缺失时仍检查陈旧 .hub-bases 快照', () => {
   }
 });
 
+test('init 写入 stack 忽略项并提示 Java 包', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-init-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'pom.xml'), '<project></project>');
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root);
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    const ignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    for (const line of ['.claude/.stack-sources.json', '.claude/.stack-bases/', '.claude/.stack-staging/', '.claude/.stack-trash/']) {
+      assert.match(ignore, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(init.stdout, /devflow stack add java-spring/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('Vue 3 项目提示 vue3 包', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-vue-'));
+  try {
+    const root = join(base, 'project');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'web', dependencies: { vue: '^3.5.0' }, scripts: { test: 'node --test' },
+    }));
+    const init = run('hub-init.mjs', ['--root', root, '--plugin-root', PLUGIN_ROOT, '--no-draft'], root);
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    assert.match(init.stdout, /devflow stack add vue3/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('doctor 拒绝越界的账本文件路径且不回显 key', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-doctor-escape-'));
   try {
