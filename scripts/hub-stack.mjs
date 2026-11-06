@@ -27,6 +27,16 @@ import {
 
 const VALUE_FLAGS = new Set(['--root', '--repo', '--ref', '--as', '--from', '--keep-days']);
 
+const UNINITIALIZED_MESSAGE = '尚未初始化：运行 /devflow:init 创建工作区（.claude/hub、投影与规则草稿）';
+
+/** 只读命令可在未初始化目录排查；给一句提示但继续。JSON 模式写 stderr，保持 stdout 可解析。 */
+function warnIfUninitialized(root, json) {
+  if (existsSync(join(root, '.claude', 'hub', 'hub.yaml'))) return false;
+  if (json) console.error(`[WARN] ${UNINITIALIZED_MESSAGE}`);
+  else log('warn', UNINITIALIZED_MESSAGE);
+  return true;
+}
+
 function positionals(argv) {
   const out = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -471,6 +481,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'list') {
+    const json = hasFlag(argv, '--json');
+    warnIfUninitialized(root, json);
     const sources = readSources(root);
     const repoArg = argValue(argv, '--repo', null);
     const installed = Object.values(sources.packs).map((record) => ({
@@ -507,6 +519,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'status') {
+    warnIfUninitialized(root, hasFlag(argv, '--json'));
     const sources = readSources(root);
     const rows = Object.values(sources.packs).map((record) => {
       const modified = [];
@@ -547,6 +560,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'lock') {
+    // lock 是写操作：未初始化时拒绝，避免在空目录创建无意义的 stack-lock.yaml。
+    loadHub(root);
     const sources = readSources(root);
     // 不新建对象：readLock 把未知顶层字段原文挂在非枚举 Symbol 上，原地替换才能保留。
     const next = readLock(root);

@@ -12,9 +12,20 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 - **规则落位与草稿**：`init` 生成待填写的规则草稿；不确定一条规范该放 `_shared/`、阶段、技术栈还是子项目覆盖时，用 `devflow-rule-placement` 按最小充分范围判断。
 - **阶段资源**：每个阶段可带 `references/`（细则）与 `templates/`（产出骨架），按需读取，避免把长清单塞进主文件。
 - **按技术栈复用规范**：在 `.claude/hub/stacks/<stack>/` 维护 Java、Vue 等语言/框架规范，用 `hub.yaml` 的 `stack` 把子项目映射到栈；阶段执行时只读任务涉及子项目的规范，`overrides/` 优先且不得放宽门禁。
+- **技术栈包按需安装**：规范已在独立仓库维护时，用 `devflow stack add` 只装单个栈，不 clone 整个仓库；更新走三方合并并保留 `.bak`，提交 `stack-lock.yaml` 后可在新机器恢复。受管栈由 pack 管理，`sync` 与 `upstream` / `ship` 默认不再改写。
 - **多根工作区**：自动探测 `services/api` 这类两层子项目，Maven `<modules>` 展开为模块级条目，测试命令统一从工作区根执行。
 - **安全门禁**：系统级破坏命令直接拒绝，有丢数据风险的操作要求确认，未测试改动只提醒不阻止。
 - **可回灌、可升级**：项目里打磨过的阶段规则与共享规则可回灌到**个人库**（跨项目复用）、**团队库**（团队共享，可开 PR）或**上游插件**；插件升级后用 `/devflow:sync` 非破坏性同步，多来源按团队 > 个人 > 上游合并，手改文件自动三方合并、冲突时保留并可备份；模板引用当前插件没有的 loader 或要求更高版本时会被识别为不兼容并跳过，不会把项目写坏。
+
+## 什么时候不该用
+
+devflow 的价值来自留下可追溯的需求、计划、测试与审查记录。
+
+适合：需要跨会话保持阶段顺序、多人协作，或需要评审证据的项目。
+
+不适合：demo、原型、一次性脚本、几小时内完成的验证。这些场景直接用 Claude Code 更快，产物与门禁会成为负担。
+
+介于两者之间时：小功能用 `/devflow:req --light`，缺陷用 `/devflow:debug`。
 
 ## 前置要求
 
@@ -41,9 +52,14 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 
 ## 快速开始
 
-最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。下面是完整步骤。
+最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。按任务规模选一条：
 
-### 1. 初始化工作区
+- **小功能或快速验证（推荐第一次这样试）**：`/devflow:init` → `/devflow:req --light <需求>` → `/devflow:implement` → `/devflow:test` → `/devflow:review`。轻量流程用 `brief.md` 合并需求与计划，只压缩文档，不减测试与审查；一次任务通常产出三份文件（`brief.md`、测试记录、审查结论）。
+- **需要方案评审、合规留痕或多人接手**：走下面的完整六阶段，产物约五份文档。
+
+规则草稿不阻塞流程，初始化后可以直接开始；需要智能补全时再运行 `/devflow:init --draft`。
+
+### 完整六阶段：初始化工作区
 
 在工作区根目录执行：
 
@@ -60,9 +76,9 @@ Claude Code 的六阶段工程工作流插件：需求、计划、实现、测�
 5. 生成 `.claude/skills/devflow-*` 投影。
 6. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
 
-初始化后可以直接用 `/devflow:req <需求>` 开始，规则草稿不阻塞流程。需要时再检查 `.claude/hub/hub.yaml`（尤其是自动探测的测试命令），填写草稿并删除首行 `<!-- devflow:draft -->`，然后运行 `node scripts/devflow-gen.mjs`；之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
+初始化后可以直接用 `/devflow:req --light <需求>`（小功能）或 `/devflow:req <需求>`（完整流程）开始，规则草稿不阻塞流程。需要时再检查 `.claude/hub/hub.yaml`（尤其是自动探测的测试命令），填写草稿并删除首行 `<!-- devflow:draft -->`，然后运行 `node scripts/devflow-gen.mjs`；之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
 
-### 2. 走一遍流程
+### 完整六阶段：走一遍流程
 
 以 `add-login` 为例（下文假设 slug 为 `add-login`）：
 
@@ -108,13 +124,14 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:review <slug> [--focus <方向>]... [--agents 0-4] [--no-subagents] [--focus-only] [--base <ref>] [--since <ref>]` | 先判定触发与风险画像，再按选中方向审查，输出阻断项与建议项；`--since` 用于增量复审 |
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
-| `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段 |
+| `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段；默认与 `--json` 附带适用性参考（仅静态启发式，不构成结论） |
 | `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
 | `/devflow:upstream [--stage <stage>] [--stack <name>] [--shared] [--all] [--to personal\|team\|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 把项目经验回灌到个人库、团队库或上游插件；`--stack` 回灌单个技术栈，`--all` 包含所有栈；默认只预览，`--apply` 才写入，`team` 加 `--pr` 提交并开 PR |
 | `/devflow:ship [--stage <stage>] [--stack <name>] [--shared] [--all] [--profile upstream\|team] [--plugin-root <模板库根>] [--dry-run] [--resume <branch>] [--no-pr]` | 上游回灌后提交到分支、推送并生成 PR；`--no-pr` 只推送不建 PR，`--profile team` 可推到团队库 |
 | `/devflow:sync [--dry-run] [--force] [--personal-library <path>] [--team-library <path>]` | 插件升级后按来源优先级同步阶段、共享与技术栈模板，手改内容自动三方合并 |
+| `/devflow:stack <add|list|update|restore|remove|status|lock|lint|cache> [...]` | 按需安装、更新、恢复或删除技术栈包；`add` 必须提供 `--repo`、`--from` 或 `DEVFLOW_STACK_REPO`，安装后需在 `hub.yaml` 声明 `stack` |
 
-命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
+命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` / `stack` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
 已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
@@ -128,6 +145,7 @@ devflow status --json
 devflow route --stage plan
 devflow route --detect
 devflow sync --dry-run
+devflow stack add java-spring --repo <url>
 devflow upstream --shared --to personal --apply
 devflow upstream --stack java-spring --to personal --apply
 devflow upstream --stage plan --to team --apply

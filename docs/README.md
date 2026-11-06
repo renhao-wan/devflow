@@ -39,6 +39,7 @@
 | [design.md](design.md) | 目标、分层、职责边界、阶段门禁、hooks、回灌、路由与安全边界 |
 | [comparison.md](comparison.md) | 与 BMAD、Spec Kit、OpenSpec 等同类方案的对比与定位 |
 | [value-and-limits.md](value-and-limits.md) | 价值来源、适用人群、当前限制与验证方法 |
+| [stack-packs-design.md](stack-packs-design.md) | 技术栈包的仓库格式、缓存与快照、安装事务、账本与 lock、命令与安全边界 |
 
 ## 安全
 

@@ -273,3 +273,18 @@ test('hub.yaml 损坏时 --force 先备份再重建', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('init 输出静态使用边界，不对当前项目下结论', () => {
+  const root = makeRoot();
+  try {
+    const init = run('hub-init.mjs', ['--root', root, '--no-draft'], root);
+    assert.equal(init.status, 0, init.stdout + init.stderr);
+    assert.match(init.stdout, /使用边界/);
+    assert.match(init.stdout, /--light/);
+    assert.match(init.stdout, /\/devflow:debug/);
+    // 固定文案，不因项目内容变成“当前项目适合/不适合”的结论。
+    assert.doesNotMatch(init.stdout, /当前项目(适合|不适合)/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

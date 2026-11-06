@@ -127,6 +127,8 @@ export function discoverSubprojects(root) {
 
   const walk = (dir, depth) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      // 不跟随符号链接/junction：避免把项目外的目录识别成子项目。
+      if (entry.isSymbolicLink()) continue;
       if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
       const child = join(dir, entry.name);
       const rel = relative(root, child).split(sep).join('/');
