@@ -897,14 +897,34 @@ test('stack add --ref <SHA> 直接解析 commit，不刷新分支', () => {
   }
 });
 
-test('list/status 不要求 hub.yaml 存在', () => {
+test('list/status 不要求 hub.yaml 存在，但会提示初始化', () => {
   const base = mkdtempSync(join(tmpdir(), 'devflow-stack-no-hub-'));
   try {
-    // 只读命令用于排查任意目录，不应在命令分派前强制 loadHub。
+    // 只读命令用于排查任意目录，不应在命令分派前强制 loadHub；未初始化时给提示。
     const list = run('hub-stack.mjs', ['list', '--root', base], base);
     assert.equal(list.status, 0, list.stderr + list.stdout);
+    assert.match(list.stdout, /尚未初始化.*\/devflow:init/);
     const status = run('hub-stack.mjs', ['status', '--root', base], base);
     assert.equal(status.status, 0, status.stderr + status.stdout);
+    assert.match(status.stdout, /尚未初始化.*\/devflow:init/);
+
+    // JSON 模式不能让提示污染 stdout。
+    const statusJson = run('hub-stack.mjs', ['status', '--root', base, '--json'], base);
+    assert.equal(statusJson.status, 0, statusJson.stderr + statusJson.stdout);
+    assert.deepEqual(JSON.parse(statusJson.stdout), []);
+    assert.match(statusJson.stderr, /尚未初始化.*\/devflow:init/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('stack lock 在未初始化目录拒绝写入并提示初始化', () => {
+  const base = mkdtempSync(join(tmpdir(), 'devflow-stack-lock-no-hub-'));
+  try {
+    const res = run('hub-stack.mjs', ['lock', '--root', base], base);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /\/devflow:init/);
+    assert.equal(existsSync(join(base, '.claude', 'hub', 'stack-lock.yaml')), false);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
