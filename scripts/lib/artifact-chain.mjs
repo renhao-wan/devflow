@@ -45,12 +45,11 @@ export function startFileFor(flow) {
   return chain.length ? chain[0] : null;
 }
 
-function stageIndex(chain, stage, flow) {
+function stageIndex(chain, stage) {
   if (stage === 'req') return chain.length ? 0 : -1;
   const file = `${stage}.md`;
-  const index = chain.indexOf(file);
   // 轻量流程的 plan 不在链上，indexOf 会返回 -1，由调用方给出更明确的错误。
-  return index;
+  return chain.indexOf(file);
 }
 
 /**
@@ -71,7 +70,7 @@ export function archivePlanFor(flow, from, { purge = false } = {}) {
   if (flow !== 'full' && stage === 'plan') {
     return { error: '轻量流程没有 plan 阶段；改 brief/debug 用 --from req，重跑测试用 --from test' };
   }
-  const index = stageIndex(chain, stage, flow);
+  const index = stageIndex(chain, stage);
   if (index < 0) return { error: `当前流程没有 ${stage} 阶段` };
 
   const selfArchived = stage === 'test' || stage === 'review'

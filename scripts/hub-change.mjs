@@ -2,7 +2,7 @@
 // 重开阶段：把指定阶段及其下游产物归档到 docs/devflow/<slug>/.archive/。
 // 默认只预览，--apply 才移动；不写任何阶段状态，回退后的阶段仍由产物存在性推导。
 import { existsSync, mkdirSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import {
   argValue, hasFlag, warnUnknownArgs, isMain, posix,
   isPathInside, isRealPathInside, readText, writeText,

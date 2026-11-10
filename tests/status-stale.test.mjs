@@ -169,18 +169,6 @@ test('轻量功能 brief 晚于 test 时提示', () => {
   }
 });
 
-test('plan 阶段不再提示 trace 缺口，避免刚开需求就被要求补验收映射', () => {
-  const root = makeRoot();
-  try {
-    writeTask(root, 'report', { 'req.md': REQ });
-    const text = run(root).stdout;
-    assert.match(text, /阶段：plan/);
-    assert.doesNotMatch(text, /验收跟踪/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test('implement 阶段的下一步同时给出 test 选项', () => {
   const root = makeRoot();
   try {

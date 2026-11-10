@@ -265,7 +265,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     }
   }
   for (const row of rows) {
-    if (row.trace && row.trace.gaps > 0 && !['done', 'req', 'plan'].includes(row.stage)) {
+    if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
       const ids = row.trace.gapIds.slice(0, 3).join('、');
       suggestions.push(`${row.slug}：验收跟踪 ${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${row.trace.gapIds.length > 3 ? ' 等' : ''}；补齐证据或运行 devflow trace --slug ${row.slug} --check`);
     }
@@ -373,7 +373,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  ${row.slug}`);
       console.log(`    阶段：${row.stage}${flow}${review}${triage}${stale}${gate}`);
       console.log(`    产物：${produced}${gap}`);
-      if (row.trace && row.trace.gaps > 0 && !['done', 'req', 'plan'].includes(row.stage)) {
+      if (row.trace && row.trace.gaps > 0 && row.stage !== 'done') {
         const ids = row.trace.gapIds.slice(0, 3).join('、');
         const more = row.trace.gapIds.length > 3 ? ' 等' : '';
         console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
