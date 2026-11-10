@@ -130,8 +130,9 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:ship [--stage <stage>] [--stack <name>] [--shared] [--all] [--profile upstream\|team] [--plugin-root <模板库根>] [--dry-run] [--resume <branch>] [--no-pr]` | 上游回灌后提交到分支、推送并生成 PR；`--no-pr` 只推送不建 PR，`--profile team` 可推到团队库 |
 | `/devflow:sync [--dry-run] [--force] [--personal-library <path>] [--team-library <path>]` | 插件升级后按来源优先级同步阶段、共享与技术栈模板，手改内容自动三方合并 |
 | `/devflow:stack <add|list|update|restore|remove|status|lock|lint|cache> [...]` | 按需安装、更新、恢复或删除技术栈包；`add` 必须提供 `--repo`、`--from` 或 `DEVFLOW_STACK_REPO`，安装后需在 `hub.yaml` 声明 `stack` |
+| `/devflow:clean [--apply] [--hub] [--docs] [--all] [--json]` | 清理工作区里的 devflow 产物；默认只预览，`--hub` 追加删除项目真源，`--docs` 追加删除任务记录，`--all` 两者都删；stack/trash 备份与回灌日志始终保留 |
 
-命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` / `stack` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
+命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` / `stack` / `clean` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
 已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令，不写任何状态。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
@@ -146,6 +147,9 @@ devflow route --stage plan
 devflow route --detect
 devflow sync --dry-run
 devflow stack add java-spring --repo <url>
+devflow stack remove java-spring --keep
+devflow clean
+devflow clean --hub --docs --apply
 devflow upstream --shared --to personal --apply
 devflow upstream --stack java-spring --to personal --apply
 devflow upstream --stage plan --to team --apply
@@ -239,12 +243,23 @@ devflow 管**阶段与门禁**（阶段顺序、产物路径、项目真源、�
 
 ## 卸载
 
+先清理项目产物，再卸载插件——清理命令由插件提供，卸载后不可用：
+
 ```bash
+devflow clean                        # 预览
+devflow clean --hub --docs --apply   # 确认后执行；按需去掉 --hub / --docs
 /plugin uninstall devflow
-rm -rf .claude/hub .claude/skills/devflow-* .claude/.hub-manifest.json .claude/.hub-sources.json .claude/.devflow-state.json scripts/devflow-*.mjs .devflow.json
 ```
 
-`.claude/` 下你自己写的其他技能不受影响。`.claude/hub/` 是项目真源，删除前请确认其中的规则已备份或不再需要。
+`clean` 会把删除项先移到 `.claude/.devflow-trash/<时间戳>/`，确认无需恢复后手动删除。`.claude/` 下你自己写的其他技能不受影响。`.claude/hub/` 是项目真源、`docs/devflow/` 是任务记录，只有显式加 `--hub` / `--docs` 才会删除。
+
+插件已卸载、只剩残留时，可手动兜底：
+
+```bash
+rm -rf .claude/hub .claude/skills/devflow-* .claude/.hub-manifest.json .claude/.hub-sources.json .claude/.hub-bases .claude/.stack-sources.json .claude/.stack-bases .claude/.stack-staging .claude/.devflow-state.json .claude/.ecosystem-state.json scripts/devflow-*.mjs .devflow.json
+```
+
+不要手动删除 `.claude/.stack-trash/` 与 `.claude/.devflow-trash/`，它们保存的是可恢复备份。
 
 ## 许可
 

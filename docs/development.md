@@ -6,7 +6,7 @@
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` / `check` / `trace` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` / `check` / `trace` / `stack` / `clean` | 透传给对应脚本 |
 | `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具；可生成规则草稿与自动声明单一技术栈 | `--root` `--force` `--no-draft` `--plugin-root` `--source-root` |
 | `scripts/hub-onboard.mjs` | 扫描项目并生成/更新 `.claude/hub/project-overview.md` | `--root` `--print` `--json` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
@@ -21,8 +21,9 @@
 | `scripts/mark-test.mjs` | 记录最近一次测试结果（退出码、耗时、命令）；`--gaps` 提示测试缺口；`--changed` 列出受影响的已存在测试 | `--root` `--command` `--exit-code` `--duration-ms` `--gaps` `--changed` `--base` `--json` |
 | `scripts/stage-check.mjs` | 校验 req / debug 产物的结构完整性，未通过时退出码 1 | `--root` `--stage` `--slug` `--json` |
 | `scripts/trace.mjs` | 输出验收项到 plan / test / review 的追踪矩阵；`--check` 存在缺口时退出码 1 | `--root` `--slug` `--check` `--json` |
+| `scripts/hub-clean.mjs` | 清理工作区 devflow 产物；默认预览，删除项先备份到 `.devflow-trash` 再移动 | `--root` `--apply` `--hub` `--docs` `--all` `--json` |
 
-项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`、`devflow-check.mjs`、`devflow-trace.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
+项目内初始化后会生成同名薄 loader：`scripts/devflow-gen.mjs`、`devflow-doctor.mjs`、`devflow-route.mjs`、`devflow-upstream.mjs`、`devflow-test.mjs`、`devflow-triage.mjs`、`devflow-check.mjs`、`devflow-trace.mjs`、`devflow-stack.mjs`、`devflow-clean.mjs`，它们指向插件内的真实脚本。loader 属于生成物，会被写进 `.gitignore`；换机器或重跑 `/devflow:init` 时自动重建。加载顺序为当前会话的 `CLAUDE_PLUGIN_ROOT` → `.devflow.json` 的 `pluginRoot` → `pluginSourceRoot`，任一可用即可。
 
 ## 目录结构
 
@@ -31,12 +32,12 @@
 ```
 .claude-plugin/        # plugin.json + marketplace.json
 bin/devflow            # 统一 CLI，参数透传给 scripts/
-skills/                # 十三个入口技能（req…sync、status、onboard）+ 七个通用技能
+skills/                # 入口技能（req…sync、status、onboard、stack、clean）+ 通用技能
 agents/                # 评审、测试、排障三个子代理
 hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
-scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test / review-triage
+scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test / review-triage / stack / clean
 scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态、技术栈映射、规则草稿与阶段列表
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
