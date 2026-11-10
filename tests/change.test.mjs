@@ -128,14 +128,46 @@ test('--from review 只归档审查记录与 triage', () => {
 test('--from req --purge 归档起点及下游，任务目录只剩归档', () => {
   const { root, dir } = makeTask();
   try {
-    change(root, { from: 'req', purge: true, apply: true });
+    const report = change(root, { from: 'req', purge: true, apply: true });
     for (const name of ['req.md', 'plan.md', 'test.md', 'review.md', 'review-triage.json']) {
       assert.equal(existsSync(join(dir, name)), false, name);
     }
     assert.equal(archiveDirs(dir).length, 1);
     assert.deepEqual(listCandidates(root), []);
+    // req.md 已归档，不能再提示“修改 req.md”。
+    assert.match(report.next, /\/devflow:req task/);
+    assert.doesNotMatch(report.next, /修改 req\.md/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--purge 后下一步指向重新生成被归档的阶段', () => {
+  const full = makeTask(['req.md', 'plan.md', 'test.md']);
+  try {
+    const report = change(full.root, { from: 'plan', purge: true, apply: true });
+    assert.match(report.next, /\/devflow:plan task/);
+    assert.doesNotMatch(report.next, /修改 plan\.md/);
+  } finally {
+    rmSync(full.root, { recursive: true, force: true });
+  }
+
+  const feature = makeTask(['brief.md', 'test.md']);
+  try {
+    const report = change(feature.root, { from: 'req', purge: true, apply: true });
+    assert.match(report.next, /\/devflow:req --light task/);
+    assert.doesNotMatch(report.next, /修改 brief\.md/);
+  } finally {
+    rmSync(feature.root, { recursive: true, force: true });
+  }
+
+  const bug = makeTask(['debug.md', 'test.md']);
+  try {
+    const report = change(bug.root, { from: 'req', purge: true, apply: true });
+    assert.match(report.next, /\/devflow:debug task/);
+    assert.doesNotMatch(report.next, /修改 debug\.md/);
+  } finally {
+    rmSync(bug.root, { recursive: true, force: true });
   }
 });
 

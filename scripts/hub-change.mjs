@@ -86,6 +86,13 @@ function rollback(moved, archiveDir, manifestFile, ops) {
 }
 
 function nextStep(plan, slug) {
+  // --purge 连同起点文档一起归档时，不能再提示“修改 x.md”；应重新生成该阶段。
+  if (plan.selfArchived && (plan.stage === 'req' || plan.stage === 'plan')) {
+    if (plan.stage === 'plan') return `/devflow:plan ${slug} 重新生成 plan.md`;
+    if (plan.flow === 'light-feature') return `/devflow:req --light ${slug} 重新生成 brief.md`;
+    if (plan.flow === 'light-bug') return `/devflow:debug ${slug} 重新生成 debug.md`;
+    return `/devflow:req ${slug} 重新生成 req.md`;
+  }
   if (plan.stage === 'req') {
     if (plan.flow === 'light-feature') return `修改 brief.md 后运行 /devflow:implement ${slug}`;
     if (plan.flow === 'light-bug') return `修改 debug.md 后运行 /devflow:test ${slug}`;
