@@ -91,9 +91,14 @@ test('plan 晚于 test 时提示下游可能过期', () => {
     assert.deepEqual(result.slugs[0].staleDownstream.map((item) => [item.upstream, item.downstream]), [
       ['plan.md', 'test.md'],
     ]);
+    assert.equal(result.slugs[0].staleDownstream[0].from, 'plan');
+    assert.equal(result.slugs[0].staleFrom, 'plan');
+    assert.equal(result.slugs[0].staleCommand, 'devflow change --slug report --from plan');
+    assert.ok(result.suggestions.some((line) => line.includes('devflow change --slug report --from plan')));
     const text = run(root).stdout;
     assert.match(text, /下游可能过期/);
     assert.match(text, /plan\.md 晚于 test\.md/);
+    assert.match(text, /预览归档：devflow change --slug report --from plan（确认后加 --apply）/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -107,7 +112,9 @@ test('req 晚于 plan 时提示 plan 及下游可能过期', () => {
     touch(join(dir, 'req.md'), 3_000_000);
     const result = json(root);
     assert.deepEqual(result.slugs[0].staleDownstream.map((item) => item.upstream), ['req.md']);
-    assert.match(run(root).stdout, /req\.md 及下游可能需要重跑/);
+    assert.equal(result.slugs[0].staleFrom, 'req');
+    assert.equal(result.slugs[0].staleCommand, 'devflow change --slug report --from req');
+    assert.match(run(root).stdout, /req\.md 晚于 plan\.md/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -125,6 +132,10 @@ test('test 晚于 review 时提示 review 可能过期', () => {
     touch(join(dir, 'test.md'), 3_000_000);
     const result = json(root);
     assert.deepEqual(result.slugs[0].staleDownstream.map((item) => item.downstream), ['review.md']);
+    // test 刚更新，只归档旧 review；不能建议 --from test 把测试证据一起归档。
+    assert.equal(result.slugs[0].staleFrom, 'review');
+    assert.equal(result.slugs[0].staleCommand, 'devflow change --slug report --from review');
+    assert.match(run(root).stdout, /test\.md 晚于 review\.md/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -164,6 +175,32 @@ test('轻量功能 brief 晚于 test 时提示', () => {
     touch(join(dir, 'brief.md'), 3_000_000);
     const result = json(root);
     assert.deepEqual(result.slugs[0].staleDownstream.map((item) => item.upstream), ['brief.md']);
+    assert.equal(result.slugs[0].staleFrom, 'req');
+    assert.equal(result.slugs[0].staleCommand, 'devflow change --slug quick --from req');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('多组过期只推荐链上最早起点，避免归档刚更新的产物', () => {
+  const root = makeRoot();
+  try {
+    const dir = writeTask(root, 'report', {
+      'req.md': REQ, 'plan.md': PLAN, 'test.md': TEST, 'review.md': REVIEW,
+    });
+    touch(join(dir, 'review.md'), 1_000_000);
+    touch(join(dir, 'test.md'), 2_000_000);
+    touch(join(dir, 'plan.md'), 3_000_000);
+    touch(join(dir, 'req.md'), 4_000_000);
+
+    const report = json(root);
+    assert.equal(report.slugs[0].staleDownstream.length, 3);
+    assert.equal(report.slugs[0].staleFrom, 'req');
+    assert.equal(report.slugs[0].staleCommand, 'devflow change --slug report --from req');
+    const text = run(root).stdout;
+    assert.match(text, /另有 2 项过期关系/);
+    assert.match(text, /--from req/);
+    assert.doesNotMatch(text, /--from review/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

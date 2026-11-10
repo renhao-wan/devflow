@@ -96,6 +96,8 @@ export function archivePlanFor(flow, from, { purge = false } = {}) {
 /**
  * 只比较链上相邻两项：输出可解释，并会随着用户重跑逐步引导到更下游。
  * mtimes 是文件名到毫秒时间戳的映射；缺失或为 0 的项直接跳过。
+ * from 是该过期关系最小的归档起点：注意 test.md 对应 review，
+ * 因为 test 晚于 review 时只需归档旧审查，不能把刚更新的测试记录一起归档。
  */
 export function staleDownstream(chain, mtimes = {}, { tolerance = STALE_TOLERANCE_MS } = {}) {
   const stale = [];
@@ -106,10 +108,33 @@ export function staleDownstream(chain, mtimes = {}, { tolerance = STALE_TOLERANC
     const down = Number(mtimes[downstream]) || 0;
     if (!up || !down) continue;
     if (up - down > tolerance) {
-      stale.push({ upstream, downstream, upstreamAt: up, downstreamAt: down });
+      stale.push({
+        upstream,
+        downstream,
+        upstreamAt: up,
+        downstreamAt: down,
+        from: changeFromFor(upstream),
+      });
     }
   }
   return stale;
+}
+
+/** 上游产物对应的最小归档起点；light 流程的 brief/debug 统一回落到 req。 */
+export function changeFromFor(upstream) {
+  const file = String(upstream ?? '');
+  if (file === 'req.md' || file === 'brief.md' || file === 'debug.md') return 'req';
+  if (file === 'plan.md') return 'plan';
+  // test 晚于 review 时只归档 review；--from test 会连测试记录一起归档。
+  if (file === 'test.md') return 'review';
+  return null;
+}
+
+/** 过期关系的稳定指纹；用于 --ack 后判断产物是否又发生了变化。 */
+export function staleKey(entries = []) {
+  return entries
+    .map((entry) => `${entry.upstream}@${entry.upstreamAt}>${entry.downstream}@${entry.downstreamAt}`)
+    .join('|');
 }
 
 /** 标题规范化：忽略空白、标点、大小写与轻量后缀，只用于“是否像同一个任务”的保守判断。 */

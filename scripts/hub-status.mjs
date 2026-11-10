@@ -7,7 +7,7 @@ import { readText, isMain, projectRoot, argValue, hasFlag, posix, warnUnknownArg
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
-import { isTaskDir } from './lib/slug.mjs';
+import { isTaskDir, validSlug } from './lib/slug.mjs';
 import { summarizeTrace, traceFor } from './lib/trace.mjs';
 import {
   ARTIFACTS, flowOf, chainOf, staleDownstream, duplicateGroups,
@@ -235,7 +235,13 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       downstream: entry.downstream,
       upstreamAt: new Date(entry.upstreamAt).toISOString(),
       downstreamAt: new Date(entry.downstreamAt).toISOString(),
+      from: entry.from,
     }));
+    // 多组过期只推荐链上最早一条：它归档后的范围自然覆盖后面的过期项。
+    const firstStale = staleArtifacts[0] || null;
+    const staleCommand = firstStale?.from && validSlug(item.slug)
+      ? `devflow change --slug ${item.slug} --from ${firstStale.from}`
+      : null;
     return {
       slug: item.slug,
       stage,
@@ -247,6 +253,8 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
         : null,
       triageStale,
       staleDownstream: staleArtifacts,
+      staleFrom: firstStale?.from ?? null,
+      staleCommand,
       reviewGate: reviewGate
         ? { ok: reviewGate.ok, errors: reviewGate.errors, warnings: reviewGate.warnings }
         : null,
@@ -289,6 +297,12 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     if (row.reviewGate && !row.reviewGate.ok) {
       suggestions.push(`${row.slug}：审查报告未通过门禁（${row.reviewGate.errors[0]}）；运行 /devflow:review ${row.slug} 补全后重跑 devflow status`);
     }
+  }
+  for (const row of rows) {
+    if (!row.staleCommand) continue;
+    const first = row.staleDownstream[0];
+    const more = row.staleDownstream.length > 1 ? `（另有 ${row.staleDownstream.length - 1} 项过期关系）` : '';
+    suggestions.push(`${row.slug}：${first.upstream} 晚于 ${first.downstream}，下游证据可能过期${more}；预览归档：${row.staleCommand}（确认后加 --apply）`);
   }
   for (const group of duplicates) {
     suggestions.push(`疑似重复任务：${group.slugs.join('、')} 的标题相同（${group.title}）；确认是否应合并到一个 slug，避免维护两套产物`);
@@ -398,11 +412,15 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
       }
       const staleItems = row.staleDownstream || [];
-      for (const item of staleItems.slice(0, 2)) {
-        console.log(`    下游可能过期：${item.upstream} 晚于 ${item.downstream}；${item.upstream} 及下游可能需要重跑`);
-      }
-      if (staleItems.length > 2) {
-        console.log(`    下游可能过期：另有 ${staleItems.length - 2} 项`);
+      if (staleItems.length) {
+        const first = staleItems[0];
+        console.log(`    下游可能过期：${first.upstream} 晚于 ${first.downstream}`);
+        if (row.staleCommand) {
+          console.log(`    预览归档：${row.staleCommand}（确认后加 --apply）`);
+        }
+        if (staleItems.length > 1) {
+          console.log(`    另有 ${staleItems.length - 1} 项过期关系，按最早起点归档即可覆盖`);
+        }
       }
       console.log(`    下一步：${row.next}`);
       if (row.planDrift && !row.planDrift.skipped) {
@@ -448,6 +466,8 @@ export async function main(argv = process.argv.slice(2)) {
     if (!report.slugs.length && s.startsWith('未发现进行中的任务')) return false;
     // 路由未配置时已由上面一行说明，不再重复提示。
     if (!report.routing.configured && s.includes('ecosystem.yaml')) return false;
+    // 过期关系已在任务行内连同命令展示，底部不再重复。
+    if (s.includes('下游证据可能过期')) return false;
     return true;
   });
   for (const item of visibleSuggestions) console.log(`  提示：${item}`);
