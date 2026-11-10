@@ -812,6 +812,89 @@ test('load-hub 在无 hub 时静默', () => {
   }
 });
 
+function writeStaleTask(root, slug, { planAt = 3_000_000, testAt = 2_000_000 } = {}) {
+  const dir = join(root, 'docs', 'devflow', slug);
+  mkdirSync(dir, { recursive: true });
+  for (const name of ['req.md', 'plan.md', 'test.md']) {
+    writeFileSync(join(dir, name), `# ${name}\n`);
+  }
+  for (const [name, at] of [['req.md', 1_000_000], ['test.md', testAt], ['plan.md', planAt]]) {
+    utimesSync(join(dir, name), new Date(at), new Date(at));
+  }
+  return dir;
+}
+
+function loadHubContext(root) {
+  return JSON.parse(runHook('load-hub.mjs', {}, { CLAUDE_PROJECT_DIR: root }).stdout)
+    .hookSpecificOutput.additionalContext;
+}
+
+test('load-hub 注入未确认的下游过期提示', () => {
+  const root = makeRoot();
+  try {
+    writeStaleTask(root, 'report');
+    const ctx = loadHubContext(root);
+    assert.match(ctx, /下游可能过期：report 的 plan\.md 晚于 test\.md/);
+    assert.match(ctx, /devflow change --slug report --from plan/);
+    assert.match(ctx, /devflow status --slug report --ack/);
+    // 只提示，绝不自动归档。
+    assert.doesNotMatch(ctx, /--apply 已执行|已归档/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 在产物正常或只有归档时省略过期提示', () => {
+  const root = makeRoot();
+  try {
+    writeStaleTask(root, 'report', { planAt: 1_500_000, testAt: 2_000_000 });
+    assert.doesNotMatch(loadHubContext(root), /下游可能过期/);
+
+    // 已归档任务只剩 .archive，不参与过期检测。
+    const archived = join(root, 'docs', 'devflow', 'old-task', '.archive', '20260101-000000-000');
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, 'manifest.json'), '{}');
+    assert.doesNotMatch(loadHubContext(root), /old-task/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 读取 --ack 指纹抑制提示，产物再变化后恢复', () => {
+  const root = makeRoot();
+  try {
+    const dir = writeStaleTask(root, 'report');
+    const status = resolve(import.meta.dirname, '..', 'scripts', 'hub-status.mjs');
+    const ack = spawnSync(NODE, [status, '--root', root, '--slug', 'report', '--ack'], { encoding: 'utf8' });
+    assert.equal(ack.status, 0, ack.stderr);
+    assert.doesNotMatch(loadHubContext(root), /下游可能过期/);
+
+    // 指纹包含产物 mtime：plan.md 再写一次，确认失效，提示恢复。
+    utimesSync(join(dir, 'plan.md'), new Date(4_000_000), new Date(4_000_000));
+    assert.match(loadHubContext(root), /下游可能过期：report 的 plan\.md 晚于 test\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('load-hub 多任务时只展开前三个并提示其余', () => {
+  const root = makeRoot();
+  try {
+    writeStaleTask(root, 'one', { planAt: 3_000_000 });
+    writeStaleTask(root, 'two', { planAt: 3_100_000 });
+    writeStaleTask(root, 'three', { planAt: 3_200_000 });
+    writeStaleTask(root, 'four', { planAt: 3_300_000 });
+    const ctx = loadHubContext(root);
+    assert.match(ctx, /下游可能过期（4 个任务，只提示不改阶段）/);
+    assert.equal((ctx.match(/^  - (one|two|three|four)：/gm) || []).length, 3);
+    assert.match(ctx, /另有 1 个任务，运行 devflow status 查看/);
+    // 最近变动的任务优先展示。
+    assert.match(ctx, /^  - four：/m);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('guard 回显命令时脱敏环境变量凭据', () => {
   const command = 'DB_PASSWORD=hunter2 API_TOKEN=abc123 git push --force origin main';
   const out = JSON.parse(runHook('guard-dangerous.mjs', {

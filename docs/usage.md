@@ -51,8 +51,8 @@
   - `review`：等价于 `review-triage --check`，校验结论、未关闭阻断项与画像一致性。
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
-- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会追加同样的 warning，但不影响退出码；需要归档重做时见下文「修改已完成阶段与重开（change）」。
-- 确认是 `git checkout`、复制文件等造成的误报时，运行 `devflow status --slug <slug> --ack` 记录当前过期指纹。状态文件只保存 mtime 组合，不移动产物；任一产物再次写入、增删，指纹失效，提示自动恢复。`--ack` 同时抑制 status、statusline 与 check 的过期提示，多任务时必须显式指定 `--slug`。与 `--json` 组合时只输出确认结果（`acked`、`from`、`count`），不输出完整状态报告。
+- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会追加同样的 warning，但不影响退出码；会话启动的 `SessionStart` 钩子同样注入未确认的过期摘要，最多展开 3 个任务，只提示、不自动归档。需要归档重做时见下文「修改已完成阶段与重开（change）」。
+- 确认是 `git checkout`、复制文件等造成的误报时，运行 `devflow status --slug <slug> --ack` 记录当前过期指纹。状态文件只保存 mtime 组合，不移动产物；任一产物再次写入、增删，指纹失效，提示自动恢复。`--ack` 同时抑制 status、statusline、check 与会话启动的过期提示，多任务时必须显式指定 `--slug`。与 `--json` 组合时只输出确认结果（`acked`、`from`、`count`），不输出完整状态报告。
 
 ### 验收追踪（AC ID）
 
@@ -365,7 +365,7 @@ devflow doctor --check-remote
 
 AI **不直接读取个人库、团队库或上游库**；三个库只在 `init` / `sync` 时作为来源被读取。落到项目后，读取时机如下：
 
-1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
+1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览、投影漂移与未确认的下游过期摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
 2. **进入阶段**：加载插件入口 `skills/<stage>/SKILL.md`；入口先读项目投影 `.claude/skills/devflow-<stage>/SKILL.md`，再按投影指令读取 `.claude/hub/stages/<stage>/SKILL.md`。
 3. **执行阶段**：`references/`、`templates/` 按需读取，相对路径以对应 `SKILL.md` 所在目录为基准。
 4. **共享规则与子项目例外**：投影只列出 `_shared/` 文件路径，执行阶段按路径读取正文；`overrides/<sub>/<stage>.md` 的读取指令写在投影里。

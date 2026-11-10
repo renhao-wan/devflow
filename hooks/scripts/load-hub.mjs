@@ -1,10 +1,75 @@
 #!/usr/bin/env node
 // SessionStart：注入 hub 摘要，让模型一开始就知道本项目的流程与漂移状态。
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readStdin, findHubRoot } from './lib.mjs';
 import { parseYaml, contentHash } from '../../scripts/lib/common.mjs';
 import { scanFacts } from '../../scripts/lib/overview.mjs';
+import {
+  ARTIFACTS, flowOf, chainOf, staleDownstream,
+} from '../../scripts/lib/artifact-chain.mjs';
+import { ackOf, isStaleAcked, readStateFile } from '../../scripts/lib/state-file.mjs';
+import { isTaskDir, validSlug } from '../../scripts/lib/slug.mjs';
+
+const STALE_SHOWN = 3;
+
+/** 只读扫描任务产物，返回未确认的下游过期任务；与 status 共用同一套链规则与 ack 指纹。 */
+function staleTasks(root) {
+  const docs = join(root, 'docs', 'devflow');
+  if (!existsSync(docs)) return [];
+  const state = readStateFile(root);
+  const tasks = [];
+  for (const entry of readdirSync(docs, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !validSlug(entry.name)) continue;
+    const dir = join(docs, entry.name);
+    // 只有 test.md/review.md 的目录不是任务，与 status 的扫描口径一致。
+    if (!isTaskDir(dir)) continue;
+    const files = ARTIFACTS.filter((name) => existsSync(join(dir, name)));
+    if (!files.length) continue;
+    const mtimes = {};
+    for (const name of files) {
+      try { mtimes[name] = statSync(join(dir, name)).mtimeMs; } catch { mtimes[name] = 0; }
+    }
+    const entries = staleDownstream(chainOf(flowOf(files)), mtimes);
+    if (!entries.length) continue;
+    // 用户在 status 里确认过且产物未再变化时，不再重复提示。
+    if (isStaleAcked(entries, ackOf(state, entry.name))) continue;
+    const first = entries[0];
+    if (!first.from) continue;
+    tasks.push({
+      slug: entry.name,
+      upstream: first.upstream,
+      downstream: first.downstream,
+      from: first.from,
+      more: entries.length - 1,
+      latest: Math.max(...files.map((name) => mtimes[name] || 0)),
+    });
+  }
+  // 最近变动的任务排在前面，多任务时只展示前几条，避免会话启动注入过长。
+  return tasks.sort((a, b) => b.latest - a.latest || a.slug.localeCompare(b.slug));
+}
+
+function staleLines(tasks) {
+  if (!tasks.length) return [];
+  const shown = tasks.slice(0, STALE_SHOWN);
+  const commandOf = (task) => `devflow change --slug ${task.slug} --from ${task.from}`;
+  if (tasks.length === 1) {
+    const task = tasks[0];
+    const more = task.more ? `（另有 ${task.more} 项过期关系）` : '';
+    return [
+      `- 下游可能过期：${task.slug} 的 ${task.upstream} 晚于 ${task.downstream}${more}；`
+      + `预览归档：${commandOf(task)}（确认后加 --apply；误报用 devflow status --slug ${task.slug} --ack）`,
+    ];
+  }
+  const lines = [`- 下游可能过期（${tasks.length} 个任务，只提示不改阶段）：`];
+  for (const task of shown) {
+    const more = task.more ? `（另有 ${task.more} 项）` : '';
+    lines.push(`  - ${task.slug}：${task.upstream} 晚于 ${task.downstream}${more}；预览归档：${commandOf(task)}`);
+  }
+  if (tasks.length > shown.length) lines.push(`  - 另有 ${tasks.length - shown.length} 个任务，运行 devflow status 查看`);
+  lines.push('  确认误报用 devflow status --slug <slug> --ack；归档需先预览再加 --apply。');
+  return lines;
+}
 
 await readStdin();
 try {
@@ -73,6 +138,8 @@ try {
     lines.push(`- 项目概览：${stackText}；${subprojectPaths.length} 个子项目；${facts.entrypoints.length} 个入口；详见 .claude/hub/project-overview.md（启发式，以代码为准）。`);
   }
   if (drift.length) lines.push(`- 投影漂移：${drift.join('、')}，运行 node scripts/devflow-gen.mjs`);
+  // 过期扫描失败只丢这一段提示，不影响 hub 摘要注入。
+  try { lines.push(...staleLines(staleTasks(root))); } catch { /* ignore */ }
   lines.push('- 流程：req → plan → implement → test → review；test 或 implement 失败时进入 debug，修复后回到 test。');
   lines.push('- 单一真源：先读 .claude/skills/devflow-<stage>/SKILL.md（项目投影），再按其中的指令读 .claude/hub/stages/<stage>/SKILL.md；改动后重新生成技能。');
 

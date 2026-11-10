@@ -135,7 +135,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` / `stack` / `clean` / `change` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
-已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它默认只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令；`--ack` 只写过期提示的确认指纹。上游产物比下游新时，`status` 会提示“下游可能过期”，只提示、不改变阶段；误报可用 `--ack` 确认，需要真正重做时用 `/devflow:change` 把指定阶段及下游归档到 `.archive/`，也可用 `--list` / `--restore` 查看与恢复。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
+已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它默认只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令；`--ack` 只写过期提示的确认指纹。上游产物比下游新时，`status` 会提示“下游可能过期”，只提示、不改变阶段；误报可用 `--ack` 确认，需要真正重做时用 `/devflow:change` 把指定阶段及下游归档到 `.archive/`，也可用 `--list` / `--restore` 查看与恢复。会话启动时 `SessionStart` 钩子也会注入未确认的过期摘要（最多 3 个任务），同样只提示、不归档。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
 插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
 

@@ -14,7 +14,7 @@ devflow 通过 Claude Code hooks 提供尽力而为的安全门禁与状态提�
 | `UserPromptSubmit` | `prompt-reminder.mjs` | 有未验证改动时注入一次提醒，从不阻止 |
 | `PostToolUse(Agent/Task)` | `subagent-note.mjs` | devflow 子代理结束后向主上下文注入核对提醒，同时显示给用户，从不阻止 |
 | `Stop` | `check-tests.mjs` | 有改动但未验证通过、或 hub 源改动未重新生成时提醒，从不阻止 |
-| `SessionStart` | `load-hub.mjs` | 注入阶段、子项目与投影漂移摘要 |
+| `SessionStart` | `load-hub.mjs` | 注入阶段、子项目、投影漂移与未确认的下游过期摘要 |
 
 ## 生成物写保护
 
