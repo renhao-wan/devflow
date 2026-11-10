@@ -13,6 +13,9 @@ import {
   ARTIFACTS, flowOf, chainOf, staleDownstream, duplicateGroups,
 } from './lib/artifact-chain.mjs';
 import {
+  ackOf, isStaleAcked, readStateFile, writeStaleAck,
+} from './lib/state-file.mjs';
+import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
 
@@ -38,18 +41,6 @@ const GAP = {
   review: 'review.md',
   done: null,
 };
-
-function readState(root) {
-  const file = join(root, '.claude', '.devflow-state.json');
-  if (!existsSync(file)) return {};
-  try {
-    const data = JSON.parse(readText(file));
-    // 手改或写入中断可能留下 null / 数组，按空状态处理，避免读取属性时崩溃。
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  } catch {
-    return {};
-  }
-}
 
 function mtimeOf(file) {
   try { return statSync(file).mtimeMs; } catch { return 0; }
@@ -184,7 +175,7 @@ function stageOf(files, testsPending, reviewRequired = false, substantive = new 
 }
 
 export function buildStatus(root, { wanted = null, drift = true } = {}) {
-  const state = readState(root);
+  const state = readStateFile(root);
   const initialized = existsSync(join(root, '.claude', 'hub', 'hub.yaml'));
 
   const allSlugs = scanSlugs(root);
@@ -230,7 +221,10 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
     const planDrift = changes ? planDriftFor(root, item.slug, { changes }) : null;
     const trace = summarizeTrace(fullTrace);
-    const staleArtifacts = staleDownstream(chainOf(flow), item.mtimes).map((entry) => ({
+    const staleEntries = staleDownstream(chainOf(flow), item.mtimes);
+    // --ack 存的是整条链的过期指纹；产物再变化时 key 不同，提示自动恢复。
+    const staleAcked = isStaleAcked(staleEntries, ackOf(state, item.slug));
+    const staleArtifacts = staleEntries.map((entry) => ({
       upstream: entry.upstream,
       downstream: entry.downstream,
       upstreamAt: new Date(entry.upstreamAt).toISOString(),
@@ -253,6 +247,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
         : null,
       triageStale,
       staleDownstream: staleArtifacts,
+      staleAcked,
       staleFrom: firstStale?.from ?? null,
       staleCommand,
       reviewGate: reviewGate
@@ -299,7 +294,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     }
   }
   for (const row of rows) {
-    if (!row.staleCommand) continue;
+    if (!row.staleCommand || row.staleAcked) continue;
     const first = row.staleDownstream[0];
     const more = row.staleDownstream.length > 1 ? `（另有 ${row.staleDownstream.length - 1} 项过期关系）` : '';
     suggestions.push(`${row.slug}：${first.upstream} 晚于 ${first.downstream}，下游证据可能过期${more}；预览归档：${row.staleCommand}（确认后加 --apply）`);
@@ -358,11 +353,60 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
   return { report };
 }
 
+/**
+ * 确认当前任务的过期提示，写入 .devflow-state.json。
+ * 只记录指纹，不移动任何产物；产物再变化时指纹失效，提示会重新出现。
+ */
+export function ackStale(root, { wanted = null } = {}) {
+  if (wanted && !validSlug(wanted)) throw new Error(`非法的 slug：${wanted}`);
+  const all = scanSlugs(root);
+  if (wanted && !all.some((item) => item.slug === wanted)) {
+    if (scanArchived(root).includes(wanted)) {
+      throw new Error(`任务已归档：${wanted}（恢复产物后再确认过期提示）`);
+    }
+    throw new Error(`未找到任务：${wanted}（查找 docs/devflow/${wanted}/）`);
+  }
+  // 多任务时不替用户选一个，避免把其他任务的过期提示一起压掉。
+  if (!wanted && all.length > 1) {
+    throw new Error('存在多个任务；--ack 需要显式指定 --slug');
+  }
+  const item = wanted ? all.find((row) => row.slug === wanted) : all[0];
+  if (!item) return { slug: null, acked: false, reason: '没有可确认的任务' };
+
+  const flow = flowOf(item.files);
+  const entries = staleDownstream(chainOf(flow), item.mtimes);
+  if (!entries.length) {
+    return { slug: item.slug, acked: false, reason: '当前没有下游过期提示' };
+  }
+  const first = entries[0];
+  const ack = writeStaleAck(root, item.slug, entries, { from: first.from });
+  return {
+    slug: item.slug,
+    acked: true,
+    from: first.from,
+    count: entries.length,
+    key: ack.key,
+  };
+}
+
 export async function main(argv = process.argv.slice(2)) {
-  warnUnknownArgs(argv, ['--root', '--json', '--slug']);
+  warnUnknownArgs(argv, ['--root', '--json', '--slug', '--ack']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const wanted = argValue(argv, '--slug', null);
+
+  if (hasFlag(argv, '--ack')) {
+    const acked = ackStale(root, { wanted });
+    if (json) {
+      console.log(JSON.stringify(acked, null, 2));
+      return acked;
+    }
+    if (acked.acked) {
+      console.log(`[OK]   已确认 ${acked.slug} 的过期提示（${acked.count} 项）；产物再变化会重新提示`);
+    } else {
+      console.log(`[INFO] ${acked.reason}`);
+    }
+  }
 
   const result = buildStatus(root, { wanted });
   if (result.missing) {
@@ -412,7 +456,7 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
       }
       const staleItems = row.staleDownstream || [];
-      if (staleItems.length) {
+      if (staleItems.length && !row.staleAcked) {
         const first = staleItems[0];
         console.log(`    下游可能过期：${first.upstream} 晚于 ${first.downstream}`);
         if (row.staleCommand) {

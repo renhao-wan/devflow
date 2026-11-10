@@ -8,6 +8,7 @@ import {
 } from './markdown.mjs';
 import { detectFlow } from './review.mjs';
 import { chainOf, staleDownstream } from './artifact-chain.mjs';
+import { ackOf, isStaleAcked, readStateFile } from './state-file.mjs';
 import { planDriftFor } from './plan-drift.mjs';
 import { checkReviewReport } from './review-gate.mjs';
 import { traceFor } from './trace.mjs';
@@ -434,7 +435,11 @@ function staleWarnings(root, slug, flow, stage, warnings) {
   if (anchor < 0) return;
   const dir = join(root, 'docs', 'devflow', slug);
   const mtimes = Object.fromEntries(chain.map((file) => [file, mtimeOf(join(dir, file))]));
-  const entries = staleDownstream(chain, mtimes)
+  const all = staleDownstream(chain, mtimes);
+  if (!all.length) return;
+  // 确认记录与 status 共用整条链的指纹；先判断再按阶段过滤，避免过滤后的 key 不一致。
+  if (isStaleAcked(all, ackOf(readStateFile(root), slug))) return;
+  const entries = all
     .filter((entry) => chain.indexOf(entry.downstream) <= anchor);
   if (!entries.length) return;
   const first = entries[0];
