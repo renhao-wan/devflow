@@ -5,6 +5,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isPathInside, readText } from './common.mjs';
+import { ENTRY_ARTIFACTS, flowOf } from './artifact-chain.mjs';
 
 export const DIRECTIONS = [
   'correctness',
@@ -459,11 +460,7 @@ export function readReviewMarker(root, slug) {
 
 export function detectFlow(root, slug) {
   const dir = join(root, 'docs', 'devflow', slug);
-  const has = (name) => existsSync(join(dir, name));
-  if (has('req.md') || has('plan.md')) return 'full';
-  if (has('brief.md')) return 'light-feature';
-  if (has('debug.md')) return 'light-bug';
-  return 'unknown';
+  return flowOf(ENTRY_ARTIFACTS.filter((name) => existsSync(join(dir, name))));
 }
 
 /** 大仓库的 diff 可能超过默认 1MB；超出时 spawnSync 会以 ENOBUFS 失败，这里放宽并显式提示。 */

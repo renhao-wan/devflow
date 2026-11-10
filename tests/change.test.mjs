@@ -186,6 +186,10 @@ test('--from implement 明确报错而不是静默忽略', () => {
 test('没有可归档文件时输出无需归档并退出 0', () => {
   const { root, dir } = makeTask(['req.md', 'plan.md']);
   try {
+    const preview = change(root, { from: 'plan' });
+    assert.equal(preview.noop, true);
+    assert.equal(preview.applied, false);
+
     const report = change(root, { from: 'plan', apply: true });
     assert.equal(report.noop, true);
     assert.equal(report.applied, true);

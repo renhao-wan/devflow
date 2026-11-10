@@ -6,6 +6,9 @@
 /** 任务目录里可能出现的阶段产物；顺序与完整流程一致。 */
 export const ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md', 'test.md', 'review.md'];
 
+/** 能单独构成任务入口的产物；slug 解析用这一份，避免与流程识别漂移。 */
+export const ENTRY_ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md'];
+
 /** 各流程的阶段产物链；review-triage.json 是 review.md 的附属，不单独入链。 */
 export const FLOWS = {
   full: ['req.md', 'plan.md', 'test.md', 'review.md'],

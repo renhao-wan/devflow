@@ -170,7 +170,7 @@ export function runChange({
 
   if (!existing.length) {
     report.noop = true;
-    report.applied = true;
+    report.applied = apply;
     render(out, report, { apply });
     return report;
   }
