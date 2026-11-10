@@ -45,13 +45,13 @@ test('子代理提醒注册到 PostToolUse(Agent/Task)', () => {
 
 test('阶段入口技能均带 name 与 description，危险命令禁止模型自动调用', () => {
   const entries = ['req', 'plan', 'implement', 'test', 'review', 'debug',
-    'init', 'doctor', 'status', 'upstream', 'ship', 'sync', 'clean'];
+    'init', 'doctor', 'status', 'upstream', 'ship', 'sync', 'clean', 'change'];
   for (const name of entries) {
     const fm = parseFrontmatter(read(`skills/${name}/SKILL.md`));
     assert.equal(fm.name, name, `${name} 的 name 应为 ${name}`);
     assert.ok(fm.description, `${name} 缺少 description`);
   }
-  for (const name of ['init', 'upstream', 'ship', 'sync', 'clean']) {
+  for (const name of ['init', 'upstream', 'ship', 'sync', 'clean', 'change']) {
     const fm = parseFrontmatter(read(`skills/${name}/SKILL.md`));
     assert.equal(fm['disable-model-invocation'], 'true', `${name} 应禁止模型自动调用`);
   }

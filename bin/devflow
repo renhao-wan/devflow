@@ -47,6 +47,8 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow test --gaps
   devflow test --changed
   devflow test --command "npm test" --exit-code 0 --duration-ms 1200
+  devflow change --slug add-login --from plan
+  devflow change --slug add-login --from req --purge --apply
 
 所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
 
