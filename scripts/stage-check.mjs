@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// 阶段产物门禁：devflow check --stage req|debug [--slug <slug>] [--json]
-// 只校验结构是否完整；未通过时退出码为 1。
+// 阶段产物门禁：devflow check --stage req|plan|implement|test|review|debug [--slug <slug>] [--json]
+// 只校验结构完整性与引用一致性；未通过时退出码为 1。
 import { argValue, hasFlag, isMain, projectRoot, warnUnknownArgs } from './lib/common.mjs';
 import { MISSING, resolveSlug } from './lib/slug.mjs';
-import { checkStage } from './lib/stage-gate.mjs';
+import { STAGES, checkStage } from './lib/stage-gate.mjs';
 
 export function main(argv = process.argv.slice(2)) {
-  warnUnknownArgs(argv, ['--root', '--stage', '--slug', '--json']);
+  warnUnknownArgs(argv, ['--root', '--stage', '--slug', '--json', '--strict']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const stage = argValue(argv, '--stage', null);
-  if (!stage) throw new Error('--stage 必填，可选 req、debug');
-  if (!['req', 'debug'].includes(stage)) throw new Error(`未知阶段：${stage}；可选 req、debug`);
+  if (!stage) throw new Error(`--stage 必填，可选 ${STAGES.join('、')}`);
+  if (!STAGES.includes(stage)) throw new Error(`未知阶段：${stage}；可选 ${STAGES.join('、')}`);
 
   const wanted = argValue(argv, '--slug', null);
   const slug = resolveSlug(root, wanted);
@@ -21,7 +21,7 @@ export function main(argv = process.argv.slice(2)) {
     return null;
   }
 
-  const result = checkStage(root, slug, stage);
+  const result = checkStage(root, slug, stage, { strict: hasFlag(argv, '--strict') });
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else {

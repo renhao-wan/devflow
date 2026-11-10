@@ -24,6 +24,24 @@ export function section(text, title) {
   return body.join('\n');
 }
 
+/** 读取 `### 标题` 的正文，到下一个 `##` 或 `###` 为止；不存在时返回 null。 */
+export function subsection(text, title) {
+  const SUBHEADING = /^\s{0,3}###\s+(.+?)\s*#*\s*$/;
+  const lines = String(text ?? '').split(/\r?\n/);
+  const wanted = headingKey(title);
+  const start = lines.findIndex((line) => {
+    const m = SUBHEADING.exec(line);
+    return m && headingKey(m[1]) === wanted;
+  });
+  if (start < 0) return null;
+  const body = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (HEADING.test(lines[i]) || SUBHEADING.test(lines[i])) break;
+    body.push(lines[i]);
+  }
+  return body.join('\n');
+}
+
 /** 读取 `- 字段：值` 形式的行；值可换成下一行起的缩进子条目。 */
 export function bulletValue(body, label) {
   const lines = String(body ?? '').split(/\r?\n/);

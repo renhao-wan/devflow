@@ -37,6 +37,7 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 - [ ] 本地构建/类型检查通过（若项目有）。
 - [ ] 没有遗留调试代码、临时开关、被注释掉的旧实现。
 - [ ] `plan.md`（或轻量功能的 `brief.md` 实施记录）与实际改动一致。
+- [ ] 已运行 `devflow check --stage implement --slug <slug>`（未设置 CLI 时用 `node scripts/devflow-check.mjs --stage implement`）核对计划与 diff；默认只提示漂移，需要阻断时加 `--strict`。
 
 ## 产出
 

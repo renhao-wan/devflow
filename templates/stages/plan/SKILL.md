@@ -68,6 +68,7 @@ description: 方案设计阶段：基于已确认需求调研已有实现，给�
 - [ ] 有回滚方案。
 - [ ] 需求中的每条验收标准都能映射到某个任务或测试；任务拆分的「验收项」列覆盖全部验收 ID。
 - [ ] 涉及新增依赖、新子系统或许可证不明时，已获得用户明确确认并在 `plan.md` 留痕；未确认不得进入 implement。
+- [ ] 已运行 `devflow check --stage plan --slug <slug>`（未设置 CLI 时用 `node scripts/devflow-check.mjs --stage plan`），退出码 0；它校验核心段落、任务表必填列、验收 ID 覆盖与悬空引用。
 
 ## 产出
 

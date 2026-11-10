@@ -19,7 +19,7 @@
 | `scripts/hub-ship.mjs` | 回灌 + 分支 + 提交 + 推送 + PR（上游或团队 profile） | `--stage` `--stack` `--shared` `--all` `--plugin-root` `--profile` `--base` `--dry-run` `--resume` `--no-pr` |
 | `scripts/hub-sync.mjs` | 按来源优先级同步阶段、共享与技术栈模板 | `--dry-run` `--force` `--no-gen` `--plugin-root` `--personal-library` `--team-library` |
 | `scripts/mark-test.mjs` | 记录最近一次测试结果（退出码、耗时、命令）；`--gaps` 提示测试缺口；`--changed` 列出受影响的已存在测试 | `--root` `--command` `--exit-code` `--duration-ms` `--gaps` `--changed` `--base` `--json` |
-| `scripts/stage-check.mjs` | 校验 req / debug 产物的结构完整性，未通过时退出码 1 | `--root` `--stage` `--slug` `--json` |
+| `scripts/stage-check.mjs` | 六阶段产物门禁：必填项与 AC 引用一致性，未通过时退出码 1 | `--root` `--stage req\|plan\|implement\|test\|review\|debug` `--slug` `--json` `--strict` |
 | `scripts/trace.mjs` | 输出验收项到 plan / test / review 的追踪矩阵；`--check` 存在缺口时退出码 1 | `--root` `--slug` `--check` `--json` |
 | `scripts/hub-clean.mjs` | 清理工作区 devflow 产物；默认预览，删除项先备份到 `.devflow-trash` 再移动 | `--root` `--apply` `--hub` `--docs` `--all` `--json` |
 
