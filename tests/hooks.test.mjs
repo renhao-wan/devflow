@@ -562,6 +562,19 @@ test('track-changes 忽略生成投影', () => {
   }
 });
 
+test('track-changes 不把 .gitignore 改动算作待测代码', () => {
+  const root = makeRoot();
+  try {
+    runHook('track-changes.mjs', {
+      tool_name: 'Edit',
+      tool_input: { file_path: join(root, '.gitignore') },
+    }, { CLAUDE_PROJECT_DIR: root });
+    assert.equal(existsSync(join(root, '.claude', '.devflow-state.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('check-tests 在改动未验证时提醒', () => {
   const root = makeRoot();
   try {
