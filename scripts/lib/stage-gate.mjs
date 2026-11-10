@@ -4,9 +4,12 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
 import {
-  bulletValue, checkboxes, meaningful, section, tableDataRows, tableRows,
+  bulletValue, checkboxes, meaningful, section, subsection, tableDataRows, tableHeader, tableRows,
 } from './markdown.mjs';
 import { detectFlow } from './review.mjs';
+import { planDriftFor } from './plan-drift.mjs';
+import { checkReviewReport } from './review-gate.mjs';
+import { traceFor } from './trace.mjs';
 
 // 模板自带的说明句不算“已填写”。
 const TEMPLATE_NOISE = [
@@ -186,39 +189,263 @@ export function checkDebug(text) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
-/** 按任务流程选择校验对象：轻量功能看 brief.md，其余看 req.md。 */
-export function checkStage(root, slug, stage) {
+export const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
+
+const PLAN_SECTIONS = ['现状', '方案', '任务拆分', '测试策略', '回滚', '风险'];
+
+function cellOf(row, index) {
+  return index >= 0 ? String(row[index] || '').trim() : '';
+}
+
+function columnOf(header, ...patterns) {
+  if (!header) return -1;
+  return header.findIndex((value) => patterns.some((pattern) => pattern.test(value)));
+}
+
+/** 任务表/改动表的行级必填项；验收项只在验收来源使用显式 AC ID 时强制。 */
+function checkTaskTable(errors, warnings, body, title, { requireAc = true } = {}) {
+  const header = tableHeader(body);
+  const rows = tableRows(body);
+  if (!header || rows.length === 0) {
+    errors.push(`「${title}」表格没有数据行`);
+    return;
+  }
+  const taskColumn = columnOf(header, /任务/, /改动/);
+  const verifyColumn = columnOf(header, /验证/);
+  const acColumn = columnOf(header, /验收项|验收 ID/);
+  const fileColumn = columnOf(header, /涉及文件/, /文件/);
+  if (verifyColumn < 0) errors.push(`「${title}」缺少「验证方式」列`);
+  if (acColumn < 0 && requireAc) errors.push(`「${title}」缺少「验收项」列`);
+  rows.forEach((row, index) => {
+    const label = `「${title}」第 ${index + 1} 行`;
+    // AC-1 这类纯 ID 会被 meaningful 判为空，验收项列只要求有文本。
+    const hasText = (value) => String(value || '').trim().length > 0;
+    if (taskColumn >= 0 && !meaningful(cellOf(row, taskColumn))) errors.push(`${label}缺少任务描述`);
+    if (verifyColumn >= 0 && !meaningful(cellOf(row, verifyColumn))) errors.push(`${label}缺少验证方式`);
+    if (acColumn >= 0 && requireAc && !hasText(cellOf(row, acColumn))) errors.push(`${label}缺少验收项`);
+    if (fileColumn >= 0 && !hasText(cellOf(row, fileColumn))) warnings.push(`${label}未写涉及文件`);
+  });
+}
+
+function acceptanceGaps(trace) {
+  return (trace.items || [])
+    .filter((item) => !(item.plan || []).length)
+    .map((item) => item.id);
+}
+
+export function checkPlan(root, slug, { trace = null } = {}) {
+  const errors = [];
+  const warnings = [];
+  const file = join(root, 'docs', 'devflow', slug, 'plan.md');
+  if (!existsSync(file)) return { ok: false, errors: ['缺少 plan.md'], warnings };
+
+  const text = readText(file);
+  const t = trace || traceFor(root, slug);
+  const requireAc = !t.skipped && t.explicitIds === true;
+
+  for (const title of PLAN_SECTIONS) requireSection(errors, text, title);
+
+  const research = section(text, '调研与复用判断');
+  if (research === null) {
+    errors.push('缺少「## 调研与复用判断」段落');
+  } else {
+    const log = subsection(research, '检索记录');
+    if (log === null) {
+      errors.push('缺少「### 检索记录」小节');
+    } else {
+      const prose = log.split(/\r?\n/).filter((line) => !/^\s*\|/.test(line)).join('\n');
+      if (tableDataRows(log) === 0 && !hasContent(prose) && !/未触发/.test(log)) {
+        errors.push('「检索记录」为空（未调研请写“未触发（原因）”）');
+      }
+    }
+  }
+
+  const tasks = section(text, '任务拆分');
+  if (tasks !== null) checkTaskTable(errors, warnings, tasks, '任务拆分', { requireAc });
+
+  if (!t.skipped) {
+    for (const id of t.references?.plan || []) {
+      errors.push(`任务表引用了未定义的验收 ID ${id}`);
+    }
+    const gaps = acceptanceGaps(t);
+    if (gaps.length) {
+      const message = `任务表未覆盖验收项 ${gaps.join('、')}`;
+      if (t.explicitIds) errors.push(message);
+      else warnings.push(`${message}（旧产物无显式 AC ID，仅提示）`);
+    }
+  } else {
+    warnings.push(`无法核对验收覆盖：${t.reason || '缺少验收来源'}`);
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 轻量功能的 plan 与 req 合并为 brief.md，只核对「改动范围与测试计划」。 */
+function checkBriefPlan(root, slug) {
+  const errors = [];
+  const warnings = [];
+  const file = join(root, 'docs', 'devflow', slug, 'brief.md');
+  if (!existsSync(file)) return { ok: false, errors: ['缺少 brief.md'], warnings };
+
+  const text = readText(file);
+  const body = requireSection(errors, text, '改动范围与测试计划');
+  if (body !== null) {
+    const t = traceFor(root, slug);
+    const requireAc = !t.skipped && t.explicitIds === true;
+    checkTaskTable(errors, warnings, body, '改动范围与测试计划', { requireAc });
+    if (!t.skipped) {
+      for (const id of t.references?.plan || []) {
+        errors.push(`改动范围与测试计划引用了未定义的验收 ID ${id}`);
+      }
+      const gaps = acceptanceGaps(t);
+      if (gaps.length) {
+        const message = `改动范围与测试计划未覆盖验收项 ${gaps.join('、')}`;
+        if (t.explicitIds) errors.push(message);
+        else warnings.push(`${message}（旧产物无显式 AC ID，仅提示）`);
+      }
+    }
+  }
+  warnings.push('轻量功能没有独立 plan.md，已按 brief.md 的改动范围与测试计划核对');
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+export function checkTest(root, slug, { trace = null } = {}) {
+  const errors = [];
+  const warnings = [];
+  const file = join(root, 'docs', 'devflow', slug, 'test.md');
+  if (!existsSync(file)) return { ok: false, errors: ['缺少 test.md'], warnings };
+
+  const text = readText(file);
+  for (const label of ['命令', '范围']) {
+    const item = bulletValue(text, label);
+    if (!item.found || !meaningful(item.value)) errors.push(`缺少「${label}」`);
+  }
+  for (const label of ['环境', '时间']) {
+    const item = bulletValue(text, label);
+    if (!item.found || !meaningful(item.value)) warnings.push(`缺少「${label}」`);
+  }
+
+  const results = requireSection(errors, text, '结果');
+  if (results !== null && tableDataRows(results) === 0) errors.push('「结果」表格没有数据行');
+
+  const coverage = section(text, '覆盖');
+  if (coverage === null) {
+    warnings.push('缺少「## 覆盖」段落');
+  } else {
+    for (const label of ['正常路径', '边界', '错误路径']) {
+      const item = bulletValue(coverage, label);
+      if (!item.found || !meaningful(item.value)) warnings.push(`「覆盖」缺少「${label}」`);
+    }
+  }
+
+  const acceptance = requireSection(errors, text, '验收覆盖');
+  if (acceptance !== null) {
+    const header = tableHeader(acceptance);
+    const rows = tableRows(acceptance);
+    if (!header || rows.length === 0) errors.push('「验收覆盖」表格没有数据行');
+    else if (columnOf(header, /结论/, /结果/, /状态/) < 0) errors.push('「验收覆盖」缺少「结论」列');
+  }
+
+  const t = trace || traceFor(root, slug);
+  if (!t.skipped) {
+    for (const id of t.references?.test || []) {
+      errors.push(`验收覆盖引用了未定义的验收 ID ${id}`);
+    }
+    const missing = (t.items || []).filter((item) => !item.test).map((item) => item.id);
+    if (missing.length) errors.push(`「验收覆盖」缺少 ${missing.join('、')}`);
+    for (const warning of t.warnings || []) {
+      if (warning.startsWith('无法识别的测试结论')) warnings.push(warning);
+    }
+  } else {
+    warnings.push(`无法核对验收覆盖：${t.reason || '缺少验收来源'}`);
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * 实现阶段没有独立产物：核对计划声明文件与实际 diff。
+ * 默认只提示，--strict 才把漂移计为错误；无法统计时跳过，避免把“读不到”当成通过或失败。
+ */
+export function checkImplement(root, slug, { strict = false, drift = null } = {}) {
+  const errors = [];
+  const warnings = [];
+  const result = drift || planDriftFor(root, slug);
+  if (result.skipped) {
+    warnings.push(`无法核对计划漂移：${result.reason}`);
+    return { ok: true, skipped: true, errors, warnings };
+  }
+
+  const target = strict ? errors : warnings;
+  for (const file of result.unplannedChanged) target.push(`计划外改动：${file}`);
+  for (const file of result.plannedButUnchanged) target.push(`计划未改动：${file}`);
+
+  if (detectFlow(root, slug) === 'light-feature') {
+    const file = join(root, 'docs', 'devflow', slug, 'brief.md');
+    if (existsSync(file)) {
+      const body = section(readText(file), '实施记录');
+      if (body === null || !hasContent(body)) {
+        warnings.push('「实施记录」为空，建议补实际改动与差异');
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+function readTriage(root, slug) {
+  const file = join(root, 'docs', 'devflow', slug, 'review-triage.json');
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readText(file));
+  } catch {
+    return null;
+  }
+}
+
+export function checkReview(root, slug, { trace = null } = {}) {
+  return checkReviewReport(root, slug, { triage: readTriage(root, slug), trace });
+}
+
+/** 按任务流程选择校验对象：req 看 req/brief，plan 看 plan/brief，其余按阶段产物。 */
+export function checkStage(root, slug, stage, options = {}) {
   const dir = join(root, 'docs', 'devflow', slug);
   const flow = detectFlow(root, slug);
+  const wrap = (result) => ({ stage, slug, flow, ...result });
 
   if (stage === 'req') {
     if (flow === 'light-feature') {
       const file = join(dir, 'brief.md');
-      if (!existsSync(file)) return { ok: false, stage, slug, flow, errors: ['缺少 brief.md'], warnings: [] };
-      return { stage, slug, flow, ...checkReq(readText(file), { light: true }) };
+      if (!existsSync(file)) return wrap({ ok: false, errors: ['缺少 brief.md'], warnings: [] });
+      return wrap(checkReq(readText(file), { light: true }));
     }
     const file = join(dir, 'req.md');
     if (!existsSync(file)) {
       const hint = flow === 'light-bug'
         ? '轻量修复请使用 --stage debug；升级为完整流程时先补 req.md'
         : '请先创建 req.md';
-      return {
-        ok: false,
-        stage,
-        slug,
-        flow,
-        errors: [`缺少 req.md（${hint}）`],
-        warnings: [],
-      };
+      return wrap({ ok: false, errors: [`缺少 req.md（${hint}）`], warnings: [] });
     }
-    return { stage, slug, flow, ...checkReq(readText(file), { light: false }) };
+    return wrap(checkReq(readText(file), { light: false }));
   }
+
+  if (stage === 'plan') {
+    if (flow === 'light-feature') return wrap(checkBriefPlan(root, slug));
+    if (flow === 'light-bug') {
+      return wrap({ ok: true, errors: [], warnings: ['轻量修复没有 plan 阶段，修复后直接进入 test'] });
+    }
+    return wrap(checkPlan(root, slug, options));
+  }
+
+  if (stage === 'implement') return wrap(checkImplement(root, slug, options));
+  if (stage === 'test') return wrap(checkTest(root, slug, options));
+  if (stage === 'review') return wrap(checkReview(root, slug, options));
 
   if (stage === 'debug') {
     const file = join(dir, 'debug.md');
-    if (!existsSync(file)) return { ok: false, stage, slug, flow, errors: ['缺少 debug.md'], warnings: [] };
-    return { stage, slug, flow, ...checkDebug(readText(file)) };
+    if (!existsSync(file)) return wrap({ ok: false, errors: ['缺少 debug.md'], warnings: [] });
+    return wrap(checkDebug(readText(file)));
   }
 
-  throw new Error(`未知阶段：${stage}；可选 req、debug`);
+  throw new Error(`未知阶段：${stage}；可选 ${STAGES.join('、')}`);
 }

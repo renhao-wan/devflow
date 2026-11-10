@@ -165,14 +165,16 @@ function classifyTest(raw) {
   // 「通过 / 未覆盖（原因）」这类模板选项行不是结论。
   if (isOptionPlaceholder(value, TEST_RESULT_OPTIONS)) return null;
   if (/^(未覆盖|未通过|失败|不适用)/i.test(value) || /^fail/i.test(value)) return 'uncovered';
+  // “部分通过”不是完整覆盖，按未覆盖处理，避免被后面的“通过”兜底误判。
+  if (/^部分(?:通过|完成)/.test(value)) return 'uncovered';
   if (/^(通过|已覆盖|成功)/.test(value) || /^(pass|covered)/i.test(value)) return 'covered';
   if (/未覆盖|未通过|失败|不适用|\bfail(?:ed|ure)?\b/i.test(value)) return 'uncovered';
   if (/通过|已覆盖|成功|\bpass(?:ed)?\b|\bcovered\b/i.test(value)) return 'covered';
   return 'unknown';
 }
 
-/** 解析 test.md 的「验收覆盖」表。 */
-function parseTestCoverage(text) {
+/** 解析 test.md 的「验收覆盖」表；无「验收项」列时按行序回退到验收项。 */
+function parseTestCoverage(text, items = []) {
   if (!text) return { available: false, byId: {}, warnings: [] };
   const body = section(text, '验收覆盖');
   if (body === null) return { available: false, byId: {}, warnings: ['缺少「## 验收覆盖」小节'] };
@@ -182,15 +184,25 @@ function parseTestCoverage(text) {
     return { available: false, byId: {}, warnings: ['「验收覆盖」表格没有数据行'] };
   }
   const idColumn = columnIndex(header, ID_COLUMN);
-  if (idColumn < 0) return { available: false, byId: {}, warnings: ['「验收覆盖」缺少「验收项」列'] };
   const evidenceColumn = columnIndex(header, /证据/, /测试/, /实现/);
   const resultColumn = columnIndex(header, /结论/, /结果/, /状态/);
+  const positional = idColumn < 0;
 
   const byId = {};
   const warnings = [];
-  for (const row of rows) {
-    const ids = idsIn(row[idColumn]);
-    if (!ids.length) continue;
+  rows.forEach((row, index) => {
+    let ids;
+    if (positional) {
+      const item = items[index];
+      if (!item) {
+        warnings.push('「验收覆盖」行数多于验收项，多余行已忽略');
+        return;
+      }
+      ids = [item.id];
+    } else {
+      ids = idsIn(row[idColumn]);
+      if (!ids.length) return;
+    }
     const result = classifyTest(cell(row, resultColumn));
     if (result === 'unknown') warnings.push(`无法识别的测试结论：${cell(row, resultColumn)}`);
     for (const id of ids) {
@@ -201,6 +213,9 @@ function parseTestCoverage(text) {
         covered: result === 'covered',
       };
     }
+  });
+  if (positional && rows.length < items.length) {
+    warnings.push(`「验收覆盖」缺少 ${items.length - rows.length} 条验收项`);
   }
   return { available: true, byId, warnings };
 }
@@ -284,6 +299,7 @@ export function buildTrace({ flow, source, texts = {} }) {
   }
 
   const assigned = assignIds(acceptance.items);
+  const explicitIds = assigned.items.some((item) => item.explicit);
   const warnings = [...acceptance.warnings, ...assigned.warnings];
   if (!assigned.items.length) {
     return {
@@ -302,14 +318,22 @@ export function buildTrace({ flow, source, texts = {} }) {
   const plan = source === 'debug'
     ? { available: false, byId: {}, warnings: [] }
     : parsePlanCoverage(texts.plan || '', { title: planTitle });
-  const test = parseTestCoverage(texts.test || '');
+  const test = parseTestCoverage(texts.test || '', assigned.items);
   const review = parseReviewCoverage(texts.review || '', assigned.items);
   warnings.push(...plan.warnings, ...test.warnings, ...review.warnings);
 
   const known = new Set(assigned.items.map((item) => item.id));
-  for (const [sourceMap, label] of [[plan.byId, '任务表'], [test.byId, '测试覆盖'], [review.byId, '验收对照']]) {
+  const references = { plan: [], test: [], review: [] };
+  for (const [key, sourceMap, label] of [
+    ['plan', plan.byId, '任务表'],
+    ['test', test.byId, '测试覆盖'],
+    ['review', review.byId, '验收对照'],
+  ]) {
     for (const id of Object.keys(sourceMap)) {
-      if (!known.has(id)) warnings.push(`${label}引用了未定义的验收 ID ${id}`);
+      if (!known.has(id)) {
+        warnings.push(`${label}引用了未定义的验收 ID ${id}`);
+        references[key].push(id);
+      }
     }
   }
 
@@ -358,6 +382,8 @@ export function buildTrace({ flow, source, texts = {} }) {
     flow,
     source,
     skipped: false,
+    explicitIds,
+    references,
     items,
     totals,
     missing,
