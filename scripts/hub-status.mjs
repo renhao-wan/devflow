@@ -10,7 +10,7 @@ import { planDriftFor } from './lib/plan-drift.mjs';
 import { isTaskDir } from './lib/slug.mjs';
 import { summarizeTrace, traceFor } from './lib/trace.mjs';
 import {
-  ARTIFACTS, flowOf, chainOf, staleDownstream,
+  ARTIFACTS, flowOf, chainOf, staleDownstream, duplicateGroups,
 } from './lib/artifact-chain.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
@@ -68,6 +68,18 @@ function hasSubstance(file) {
   }
 }
 
+// 只取需求/轻量功能的一级标题；debug.md 的标题是通用“排障记录”，不适合做重复判断。
+function titleOf(dir, files) {
+  const file = files.includes('req.md') ? 'req.md' : files.includes('brief.md') ? 'brief.md' : null;
+  if (!file) return null;
+  try {
+    const line = readText(join(dir, file)).split(/\r?\n/).find((item) => /^#\s+\S/.test(item));
+    return line ? line.replace(/^#\s+/, '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function scanSlugs(root) {
   const docs = join(root, 'docs', 'devflow');
   if (!existsSync(docs)) return [];
@@ -81,7 +93,7 @@ function scanSlugs(root) {
     const substantive = new Set(files.filter((name) => hasSubstance(join(dir, name))));
     const mtimes = Object.fromEntries(files.map((name) => [name, mtimeOf(join(dir, name))]));
     const latest = Math.max(mtimeOf(dir), ...files.map((name) => mtimeOf(join(dir, name))));
-    slugs.push({ slug: entry.name, files, substantive, latest, mtimes });
+    slugs.push({ slug: entry.name, files, substantive, latest, mtimes, title: titleOf(dir, files) });
   }
   return slugs.sort((a, b) => b.latest - a.latest);
 }
@@ -175,7 +187,8 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
   const state = readState(root);
   const initialized = existsSync(join(root, '.claude', 'hub', 'hub.yaml'));
 
-  let slugs = scanSlugs(root);
+  const allSlugs = scanSlugs(root);
+  let slugs = allSlugs;
   if (wanted) {
     slugs = slugs.filter((s) => s.slug === wanted);
     if (!slugs.length) {
@@ -183,6 +196,8 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       return { missing: true };
     }
   }
+  // 重复检测基于全部任务：按 --slug 查询单个任务时也要能发现另一套。
+  const duplicates = duplicateGroups(allSlugs);
 
   // 只读一次 diff，供所有任务复用；非 git 或读取失败时返回 null，不影响阶段推导。
   let changes = null;
@@ -275,6 +290,9 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       suggestions.push(`${row.slug}：审查报告未通过门禁（${row.reviewGate.errors[0]}）；运行 /devflow:review ${row.slug} 补全后重跑 devflow status`);
     }
   }
+  for (const group of duplicates) {
+    suggestions.push(`疑似重复任务：${group.slugs.join('、')} 的标题相同（${group.title}）；确认是否应合并到一个 slug，避免维护两套产物`);
+  }
   // 投影时间戳晚于最近一次阶段源改动时视为已生成，不再反复提示。
   const lastHubChange = Date.parse(state.lastHubChangeAt || '');
   const hubGenerated = mtimeOf(join(root, '.claude', '.hub-manifest.json')) >= lastHubChange
@@ -313,6 +331,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     inferred: Boolean(activeSlug && !wanted),
     slugs: rows,
     archived: scanArchived(root),
+    duplicates,
     state: { testsPending, hubPending: Boolean(state.hubPending), lastTest },
     routing: {
       configured: eco.exists,
@@ -399,6 +418,14 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (report.activeSlug && !wanted && report.slugs.length === 1) {
       console.log(`  未传 --slug 时默认使用：${report.activeSlug}`);
+    }
+  }
+  if (report.duplicates.length) {
+    for (const group of report.duplicates.slice(0, 2)) {
+      console.log(`  疑似重复任务：${group.slugs.join('、')}（标题：${group.title}）；确认是否合并到一个 slug`);
+    }
+    if (report.duplicates.length > 2) {
+      console.log(`  疑似重复任务：另有 ${report.duplicates.length - 2} 组`);
     }
   }
   if (report.archived.length) {

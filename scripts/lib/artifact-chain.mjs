@@ -111,3 +111,35 @@ export function staleDownstream(chain, mtimes = {}, { tolerance = STALE_TOLERANC
   }
   return stale;
 }
+
+/** 标题规范化：忽略空白、标点、大小写与轻量后缀，只用于“是否像同一个任务”的保守判断。 */
+export function normalizeTitle(title) {
+  return String(title ?? '')
+    .replace(/[（(]\s*轻量功能\s*[)）]\s*$/u, '')
+    .replace(/[\s\p{P}\p{S}]/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * 找出标题规范化后完全相同的任务。
+ * 只做精确匹配，避免相似度算法在正常任务间制造噪声；占位标题直接跳过。
+ */
+export function duplicateGroups(entries = []) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const raw = String(entry.title ?? '').trim();
+    if (!raw || /^<[^>]+>$/.test(raw)) continue;
+    const key = normalizeTitle(raw);
+    if (key.length < 2) continue;
+    if (!groups.has(key)) groups.set(key, { titles: [], slugs: [] });
+    groups.get(key).titles.push(raw);
+    groups.get(key).slugs.push(entry.slug);
+  }
+  return [...groups.values()]
+    .filter((group) => group.slugs.length > 1)
+    .map((group) => ({
+      // 取最短的原始标题作为展示值，避免结果依赖扫描顺序，也去掉“（轻量功能）”这类后缀。
+      title: [...group.titles].sort((a, b) => a.length - b.length || a.localeCompare(b))[0],
+      slugs: [...group.slugs].sort(),
+    }));
+}
