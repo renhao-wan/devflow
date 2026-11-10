@@ -503,3 +503,21 @@ node scripts/devflow-doctor.mjs
 ```
 
 优先使用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。如果未安装 CLI，可改成 `node "<插件根>/scripts/statusline.mjs"`，但 `<插件根>` 需要换成实际插件目录；插件升级或切换安装方式后该路径可能失效，届时重新配置。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
+
+## 清理项目产物（clean）
+
+```bash
+devflow clean                  # 预览，不删除任何文件
+devflow clean --apply          # 删除可再生生成物
+devflow clean --hub --apply    # 追加删除 .claude/hub
+devflow clean --docs --apply   # 追加删除 docs/devflow
+devflow clean --all --apply    # 删除整个工作区的 devflow 产物
+```
+
+默认档删除九类 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
+
+`--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
+
+删除项先移入 `.claude/.devflow-trash/<时间戳>/`，中途失败会逆序回滚，`.gitignore` 也会恢复原文。成功后备份目录会出现在 `git status`，确认无需恢复后手动删除。命令只清理当前 hub 根，多根工作区里独立初始化的仓库需要分别进入对应根目录运行；未发现任何 devflow 锚点时成功退出，不会按当前目录猜测路径。
+
+卸载顺序：先 `devflow clean`，再 `/plugin uninstall devflow`。插件卸载后清理命令不可用。
