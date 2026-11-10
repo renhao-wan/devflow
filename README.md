@@ -125,17 +125,17 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 | `/devflow:debug <问题>` | 系统化排障，先复现后修复；独立小 bug 产出 `debug.md` |
 | `/devflow:doctor [--json]` | 体检版本、投影、资源、hooks、测试状态 |
 | `/devflow:onboard [--print] [--json]` | 扫描技术栈、目录、子项目、入口与 CI，生成 `project-overview.md`；重扫只刷新自动段；默认与 `--json` 附带适用性参考（仅静态启发式，不构成结论） |
-| `/devflow:status [--slug <slug>] [--json]` | 只读查看进度、产物缺口与下一步命令 |
+| `/devflow:status [--slug <slug>] [--json] [--ack]` | 默认只读查看进度、产物缺口与下一步命令；`--ack` 记录当前过期提示的指纹（唯一写状态的操作） |
 | `/devflow:upstream [--stage <stage>] [--stack <name>] [--shared] [--all] [--to personal\|team\|upstream] [--pr] [--apply] [--revert <id>] [--force] [--plugin-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 把项目经验回灌到个人库、团队库或上游插件；`--stack` 回灌单个技术栈，`--all` 包含所有栈；默认只预览，`--apply` 才写入，`team` 加 `--pr` 提交并开 PR |
 | `/devflow:ship [--stage <stage>] [--stack <name>] [--shared] [--all] [--profile upstream\|team] [--plugin-root <模板库根>] [--dry-run] [--resume <branch>] [--no-pr]` | 上游回灌后提交到分支、推送并生成 PR；`--no-pr` 只推送不建 PR，`--profile team` 可推到团队库 |
 | `/devflow:sync [--dry-run] [--force] [--personal-library <path>] [--team-library <path>]` | 插件升级后按来源优先级同步阶段、共享与技术栈模板，手改内容自动三方合并 |
 | `/devflow:stack <add|list|update|restore|remove|status|lock|lint|cache> [...]` | 按需安装、更新、恢复或删除技术栈包；`add` 必须提供 `--repo`、`--from` 或 `DEVFLOW_STACK_REPO`，安装后需在 `hub.yaml` 声明 `stack` |
 | `/devflow:clean [--apply] [--hub] [--docs] [--all] [--json]` | 清理工作区里的 devflow 产物；默认只预览，`--hub` 追加删除项目真源，`--docs` 追加删除任务记录，`--all` 两者都删；stack/trash 备份与回灌日志始终保留 |
-| `/devflow:change --slug <slug> --from <req\|plan\|test\|review> [--purge] [--apply] [--json]` | 重开阶段：`req` / `plan` 保留该阶段文档供修改、归档下游；`test` / `review` 归档该阶段记录及下游；默认只预览，`--apply` 才移动 |
+| `/devflow:change --slug <slug> --from <req\|plan\|test\|review> [--purge] [--apply] [--json]` 或 `--slug <slug> --list` / `--restore <归档目录名\|latest> [--force]` | 重开阶段：`req` / `plan` 保留该阶段文档供修改、归档下游；`test` / `review` 归档该阶段记录及下游；默认只预览，`--apply` 才移动。`--list` 查看归档，`--restore` 恢复；目标已存在时默认拒绝，`--force` 才覆盖并先备份 |
 
 命令与技能已统一：这些入口实际是 `skills/<name>/SKILL.md`，斜杠调用方式不变。`init` / `onboard` / `upstream` / `ship` / `sync` / `stack` / `clean` / `change` 标了 `disable-model-invocation`，只能由用户显式触发，避免模型自行改写工作区或插件仓库。
 
-已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令，不写任何状态。上游产物比下游新时，`status` 会提示“下游可能过期”，只提示、不改变阶段；需要真正重做时用 `/devflow:change` 把指定阶段及下游归档到 `.archive/`。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
+已产出的阶段文件就是进度记录：完整任务依次是 `req.md → plan.md → test.md → review.md`，小功能用 `brief.md` 替代前两份，小 bug 从 `debug.md` 开始。不确定当前进度时先运行 `/devflow:status`，它默认只读扫描 `docs/devflow/`，报告每个任务的阶段、流程类型、缺口和建议的下一步命令；`--ack` 只写过期提示的确认指纹。上游产物比下游新时，`status` 会提示“下游可能过期”，只提示、不改变阶段；误报可用 `--ack` 确认，需要真正重做时用 `/devflow:change` 把指定阶段及下游归档到 `.archive/`，也可用 `--list` / `--restore` 查看与恢复。只有一个任务时工作流命令可省略 slug；存在多个任务时会列出候选，不会替你选择，也不使用 `latest` 兜底。
 
 插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
 
@@ -144,6 +144,7 @@ devflow init
 devflow gen
 devflow doctor --json
 devflow status --json
+devflow status --slug add-login --ack
 devflow route --stage plan
 devflow route --detect
 devflow sync --dry-run
@@ -153,6 +154,8 @@ devflow clean
 devflow clean --hub --docs --apply
 devflow change --slug add-login --from plan
 devflow change --slug add-login --from req --purge --apply
+devflow change --slug add-login --list
+devflow change --slug add-login --restore latest --apply
 devflow upstream --shared --to personal --apply
 devflow upstream --stack java-spring --to personal --apply
 devflow upstream --stage plan --to team --apply

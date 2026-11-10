@@ -52,6 +52,7 @@
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
 - 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会追加同样的 warning，但不影响退出码；需要归档重做时见下文「修改已完成阶段与重开（change）」。
+- 确认是 `git checkout`、复制文件等造成的误报时，运行 `devflow status --slug <slug> --ack` 记录当前过期指纹。状态文件只保存 mtime 组合，不移动产物；任一产物再次写入、增删，指纹失效，提示自动恢复。`--ack` 同时抑制 status、statusline 与 check 的过期提示，多任务时必须显式指定 `--slug`。与 `--json` 组合时只输出确认结果（`acked`、`from`、`count`），不输出完整状态报告。
 
 ### 验收追踪（AC ID）
 
@@ -540,6 +541,23 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 - `--from test` 归档后 `status` 可能显示 `implement`，这是“缺少测试证据”的产物含义；按 `change` 输出的下一步运行 `/devflow:test` 即可。
 - `clean --docs` 会连同 `.archive` 一起删除；需要长期保留归档时，先复制到项目外。
 - 归档目录默认由 `init` 写入的 `.gitignore` 忽略（`docs/devflow/*/.archive/`）；旧项目重跑 `/devflow:init` 更新规则。需要保留某次归档时用 `git add -f`。
+
+归档只移动流程文档，不改动源码或 git 工作区。实现是否需要调整，取决于新需求/新方案与实际 diff 的差距：旧代码仍满足新方案时直接重跑 test / review；不满足时才回到 implement 修改受影响部分。
+
+查看与恢复归档：
+
+```bash
+devflow change --slug <slug> --list                    # 列出归档、来源阶段与文件
+devflow change --slug <slug> --restore latest          # 预览最新一份的恢复
+devflow change --slug <slug> --restore <归档目录名> --apply  # 执行恢复
+devflow change --slug <slug> --restore latest --apply --force  # 覆盖当前同名产物
+```
+
+- `--list` 只读，`--restore` 默认预览，`--apply` 才移动文件；两者都需要显式 `--slug`，因此已归档任务（只剩 `.archive/`）也能恢复。
+- 恢复只接受 `manifest.json` 白名单中的产物，任何路径、未知文件名或跨任务 manifest 都会被拒绝。
+- 目标位置已有同名文件时默认整体拒绝，不移动任何文件；加 `--force` 才覆盖，并先把当前文件备份到归档目录下的 `replaced-<时间戳>/`，仍可从备份找回。
+- 恢复中途失败会逆序回滚已移动的文件与备份；归档目录和 `manifest.json` 保留，便于再次查看。
+- 恢复完成后按输出的 `devflow status --slug <slug>` 重新确认阶段与下一步；恢复旧产物不会自动改变代码。
 
 常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
 
