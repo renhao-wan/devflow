@@ -103,7 +103,11 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 
 阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。审查 triage 的 `review-triage.json` 也落在同一目录，属于判定快照而非进度状态，可随时重新生成。
 
-- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
+- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
+- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
+- 上游产物比下游新时，`status` 按相邻产物链比较 mtime 并提示“下游可能过期”。这是只读启发式，不改变阶段、不阻断，`git checkout` 或批量复制造成的误报由用户判断。
+- 需要真正重做时用 `/devflow:change`：把指定阶段及下游产物移动到 `docs/devflow/<slug>/.archive/<时间戳>/`，不改写 `.devflow-state.json`，也不持久化重开标记。归档后阶段仍由剩余产物推导，因此 `--from test` 可能显示 `implement`，下一步以命令输出为准。
+- 归档目录以点开头，`listCandidates` / `isTaskDir` / `scanSlugs` 天然忽略；只有 `.archive`、没有入口产物的目录由 `status` 单独列为“已归档任务”，不参与流程解析。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
 - 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
 - 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。

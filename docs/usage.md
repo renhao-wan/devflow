@@ -51,6 +51,7 @@
   - `review`：等价于 `review-triage --check`，校验结论、未关闭阻断项与画像一致性。
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
+- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”；需要归档重做时用 `devflow change`，见下文「修改已完成阶段与重开（change）」。
 
 ### 验收追踪（AC ID）
 
@@ -511,6 +512,36 @@ node scripts/devflow-doctor.mjs
 
 优先使用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。如果未安装 CLI，可改成 `node "<插件根>/scripts/statusline.mjs"`，但 `<插件根>` 需要换成实际插件目录；插件升级或切换安装方式后该路径可能失效，届时重新配置。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
 
+## 修改已完成阶段与重开（change）
+
+阶段由产物存在性推导，直接修改 `req.md` / `plan.md` 不会自动删除下游。`devflow status` 会沿 `req/brief/debug → plan → test → review` 比较相邻产物的修改时间，上游更晚时提示“某产物及下游可能需要重跑”。它只是启发式：`git checkout`、复制文件、批量 `touch` 都可能改变 mtime 造成误报，提示不改变阶段、不阻断流程，也不替代 `devflow check`。
+
+需要真正重做时用 `devflow change`：
+
+```bash
+devflow change --slug <slug> --from plan          # 预览，不移动文件
+devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triage
+```
+
+`--from` 的含义：
+
+| 写法 | 归档 | 保留 |
+| --- | --- | --- |
+| `--from req` | `plan.md`、`test.md`、`review.md`、`review-triage.json` | 起点文档（`req.md` / `brief.md` / `debug.md`） |
+| `--from plan` | `test.md`、`review.md`、`review-triage.json` | `req.md`、`plan.md` |
+| `--from test` | `test.md`、`review.md`、`review-triage.json` | 起点文档与 `plan.md` |
+| `--from review` | `review.md`、`review-triage.json` | 起点文档、`plan.md`、`test.md` |
+
+- `req` / `plan` 是设计文档，默认保留供修改；`test` / `review` 是执行记录，默认归档自身后重新生成。`brief`、`debug` 可作为 `req` 的别名。
+- `--purge` 只对 `req` / `plan` 生效，连该阶段自身一起归档。`--from req --purge` 后任务目录只剩 `.archive/`，`devflow status` 会把它列为“已归档任务”；重新开始时运行 `/devflow:req <slug>`。
+- 归档目录是 `docs/devflow/<slug>/.archive/<时间戳>/`，内有 `manifest.json` 记录回退阶段、流程与文件。`.archive` 不参与阶段推断，也不会被 `status` / `trace` / `check` 当成任务产物。
+- 归档 `review.md` 时一并归档 `review-triage.json`，避免留下过期审查快照。`.devflow-state.json` 的最近测试记录不会自动清除，阶段仍以产物为准。
+- `--from test` 归档后 `status` 可能显示 `implement`，这是“缺少测试证据”的产物含义；按 `change` 输出的下一步运行 `/devflow:test` 即可。
+- `clean --docs` 会连同 `.archive` 一起删除；需要长期保留归档时，先复制到项目外。
+- 归档目录会出现在 `git status`。是否提交由用户决定；不自动加入 `.gitignore`。
+
+常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
+
 ## 清理项目产物（clean）
 
 ```bash
@@ -523,7 +554,7 @@ devflow clean --all --apply    # 删除整个工作区的 devflow 产物
 
 默认档删除九类 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
 
-`--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
+`--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`--docs` 也会删除各任务下的 `.archive/` 归档目录，需要保留归档时先复制出去。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
 
 删除项先移入 `.claude/.devflow-trash/<时间戳>/`，中途失败会逆序回滚，`.gitignore` 也会恢复原文。成功后备份目录会出现在 `git status`，确认无需恢复后手动删除。命令只清理当前 hub 根，多根工作区里独立初始化的仓库需要分别进入对应根目录运行；未发现任何 devflow 锚点时成功退出，不会按当前目录猜测路径。
 

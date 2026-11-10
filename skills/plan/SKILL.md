@@ -31,3 +31,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
 9. 需要逐条与用户确认方案时，先征得同意再 `EnterPlanMode`；plan mode 内不改代码、不写文件，写 `plan.md` 前先 `ExitPlanMode`，批准后再写。无法使用或用户拒绝时，直接按 SKILL 产出 `plan.md`，不阻塞流程。
 10. 写入 `docs/devflow/<slug>/plan.md`，并报告实际 slug、写入路径、任务数、最大风险、复用结论与未验证项。写完后运行 `node scripts/devflow-check.mjs --root . --stage plan --slug <slug>`（插件根可用时用 `devflow check --stage plan`）；退出码非 0 表示核心段落、任务表必填列、验收覆盖或 AC 引用有问题，按输出补齐后重跑。
 11. 方案确认后进入实现阶段：`/devflow:implement <实际 slug>`。
+12. 计划变更后重跑受影响的实现与测试；需要归档下游时用 `devflow change --slug <slug> --from plan --apply`，它会保留 `plan.md` 并归档 test/review 与 triage。

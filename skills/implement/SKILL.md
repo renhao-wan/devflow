@@ -29,3 +29,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Agent, AskUserQuestion, Skil
 8. 可选：任务跨多回合时，提示用户运行 `/goal` 设置本阶段完成条件（任务全部完成、测试真实通过、计划与改动一致；模板见 `.claude/hub/stages/implement/SKILL.md`）。插件不会自动设置 goal；goal 不替代门禁；需求或计划尚未确认时不要建议启用。
 9. 可选：实验性改动失败时可用 `/rewind` 回到检查点（会丢弃当前会话改动，先确认范围）；需要隔离并行工作时用 `/worktree`，不把实验代码留在主工作区。
 10. 实现完成且自测通过后进入测试阶段：`/devflow:test <实际 slug>`。
+11. 计划变化时先更新 `plan.md`；需要从计划重做时用 `devflow change --slug <slug> --from plan --apply`。只是代码完成后重跑测试，不属于回退。

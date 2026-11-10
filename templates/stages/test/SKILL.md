@@ -69,3 +69,4 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - 环境缺失导致无法运行时，明确报告缺失项，而不是猜测结果。
 - 不把普通小 bug 默认推进 review；轻量修复是否需要 review 由 test 阶段的 triage 按实际 diff 判定，`debug.md` 顶部的 `review: required` 是显式要求并优先于跳过结论。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 测试记录更新后 review 必须重跑；需要归档旧测试与审查时用 `devflow change --slug <slug> --from test --apply`，随后按输出运行 `/devflow:test`。

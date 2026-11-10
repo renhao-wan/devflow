@@ -32,3 +32,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill, Bash(ls:*)
    - 写完产物后运行 `node scripts/devflow-check.mjs --root . --stage req --slug <slug>`（插件根可用时用 `devflow check --stage req`）；退出码非 0 表示目标、验收、本次不做、约束或影响面等结构缺失，按输出补齐后重跑。
 6. 最后用一段话报告：实际 slug、任务目录 `docs/devflow/<实际 slug>/`、目标、验收标准数量、本次不做的项、技术约束、影响面、遗留待确认项。
 7. 完成后进入下一阶段：轻量功能 `/devflow:implement <实际 slug>`；完整流程 `/devflow:plan <实际 slug>`（把 `<实际 slug>` 替换为本次生成的 slug）。
+8. 需求变更后运行 `devflow status` 查看下游过期提示；需要重做下游时用 `devflow change --slug <slug> --from req --apply`（保留 `req.md` / `brief.md` / `debug.md` 供修改，归档 plan/test/review）。

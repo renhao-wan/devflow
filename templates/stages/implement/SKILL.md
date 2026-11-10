@@ -57,3 +57,4 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 - 不提交密钥、内网地址、个人路径。
 - 实验性改动失败时可用 `/rewind` 回到检查点，但它会丢弃当前会话改动，先确认范围；需要隔离并行工作时用 `/worktree`。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 计划变化先更新 `plan.md`；需要从计划重做时用 `devflow change --slug <slug> --from plan --apply`。只是代码完成后重跑测试不属于回退。

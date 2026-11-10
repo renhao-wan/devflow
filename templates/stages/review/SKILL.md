@@ -117,3 +117,4 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 - 核对复用判断时以许可证原文、官方文档与仓库代码为准，不轻信搜索摘要或二手博客。
 - 不绕过 triage 的上限与排除理由；用户方向优先，但也要说明放弃了哪些方向。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 对审查结论不满意时用 `devflow change --slug <slug> --from review --apply` 重审；实现或测试发生变化先回到 implement/test。
