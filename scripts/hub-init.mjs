@@ -19,6 +19,7 @@ import { detectWorkspaceStacks } from './lib/stacks.mjs';
 import { planDrafts, renderProjectBasicsDraft } from './lib/drafts.mjs';
 import { generateOverview, OVERVIEW_FILE } from './lib/overview.mjs';
 import { LOADERS, loaderSource } from './lib/loaders.mjs';
+import { gitignoreBlock } from './lib/managed-artifacts.mjs';
 
 const STAGES = ['req', 'plan', 'implement', 'test', 'review', 'debug'];
 
@@ -121,21 +122,7 @@ function writeSourceManifest(root, version, files) {
   }, null, 2)}\n`);
 }
 
-const GITIGNORE_BLOCK = `# >>> devflow (generated, do not commit)
-${Object.keys(LOADERS).map((file) => `scripts/${file}`).join('\n')}
-.claude/skills/devflow-*/
-.claude/.hub-manifest.json
-.claude/.hub-sources.json
-.claude/.hub-bases/
-.claude/.stack-sources.json
-.claude/.stack-bases/
-.claude/.stack-staging/
-.claude/.stack-trash/
-.claude/.devflow-state.json
-.claude/.ecosystem-state.json
-.devflow.json
-# <<< devflow
-`;
+const GITIGNORE_BLOCK = gitignoreBlock();
 
 /** 用标记块替换而非追加，规则变更时可原地升级。 */
 function upsertGitignore(root) {

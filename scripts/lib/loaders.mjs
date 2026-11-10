@@ -12,6 +12,7 @@ export const LOADERS = {
   'devflow-check.mjs': 'stage-check',
   'devflow-trace.mjs': 'trace',
   'devflow-stack.mjs': 'hub-stack',
+  'devflow-clean.mjs': 'hub-clean',
 };
 
 export function loaderSource(name) {

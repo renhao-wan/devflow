@@ -21,6 +21,8 @@ const LOADERS = new Set([
   'scripts/devflow-triage.mjs',
   'scripts/devflow-check.mjs',
   'scripts/devflow-trace.mjs',
+  'scripts/devflow-stack.mjs',
+  'scripts/devflow-clean.mjs',
 ]);
 
 const ECOSYSTEM_STATE = '.claude/.ecosystem-state.json';
