@@ -17,6 +17,7 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow init
   devflow gen
   devflow doctor --json
+  devflow status --slug add-login --ack
   devflow route --stage plan
   devflow route --detect
   devflow sync --dry-run
@@ -49,6 +50,8 @@ ${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc
   devflow test --command "npm test" --exit-code 0 --duration-ms 1200
   devflow change --slug add-login --from plan
   devflow change --slug add-login --from req --purge --apply
+  devflow change --slug add-login --list
+  devflow change --slug add-login --restore latest --apply
 
 所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
 
