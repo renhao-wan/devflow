@@ -450,7 +450,7 @@ node scripts/devflow-gen.mjs
 node scripts/devflow-doctor.mjs
 ```
 
-`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与七个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
+`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
 
 ## init 草稿与规则落位
 
@@ -538,7 +538,7 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 - 归档 `review.md` 时一并归档 `review-triage.json`，避免留下过期审查快照。`.devflow-state.json` 的最近测试记录不会自动清除，阶段仍以产物为准。
 - `--from test` 归档后 `status` 可能显示 `implement`，这是“缺少测试证据”的产物含义；按 `change` 输出的下一步运行 `/devflow:test` 即可。
 - `clean --docs` 会连同 `.archive` 一起删除；需要长期保留归档时，先复制到项目外。
-- 归档目录会出现在 `git status`。是否提交由用户决定；不自动加入 `.gitignore`。
+- 归档目录默认由 `init` 写入的 `.gitignore` 忽略（`docs/devflow/*/.archive/`）；旧项目重跑 `/devflow:init` 更新规则。需要保留某次归档时用 `git add -f`。
 
 常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
 
@@ -552,7 +552,7 @@ devflow clean --docs --apply   # 追加删除 docs/devflow
 devflow clean --all --apply    # 删除整个工作区的 devflow 产物
 ```
 
-默认档删除九类 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
+默认档删除全部 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
 
 `--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`--docs` 也会删除各任务下的 `.archive/` 归档目录，需要保留归档时先复制出去。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
 

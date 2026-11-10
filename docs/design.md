@@ -107,7 +107,7 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 - 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
 - 上游产物比下游新时，`status` 按相邻产物链比较 mtime 并提示“下游可能过期”。这是只读启发式，不改变阶段、不阻断，`git checkout` 或批量复制造成的误报由用户判断。
 - 需要真正重做时用 `/devflow:change`：把指定阶段及下游产物移动到 `docs/devflow/<slug>/.archive/<时间戳>/`，不改写 `.devflow-state.json`，也不持久化重开标记。归档后阶段仍由剩余产物推导，因此 `--from test` 可能显示 `implement`，下一步以命令输出为准。
-- 归档目录以点开头，`listCandidates` / `isTaskDir` / `scanSlugs` 天然忽略；只有 `.archive`、没有入口产物的目录由 `status` 单独列为“已归档任务”，不参与流程解析。
+- 归档目录以点开头，`listCandidates` / `isTaskDir` / `scanSlugs` 天然忽略；只有 `.archive`、没有入口产物的目录由 `status` 单独列为“已归档任务”，不参与流程解析。`init` 生成的 `.gitignore` 块包含 `docs/devflow/*/.archive/`，归档默认不进入版本库；需要留档时用 `git add -f`。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
 - 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
 - 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。

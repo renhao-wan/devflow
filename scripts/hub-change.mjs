@@ -114,7 +114,7 @@ function render(out, report, { apply }) {
   out(`[INFO] 保留：${report.keep.length ? report.keep.join('、') : '（无）'}`);
   if (apply) {
     out('[OK] 归档完成');
-    out('[INFO] 归档目录会出现在 git status；确认无需恢复后提交或删除');
+    out('[INFO] 归档目录默认由 .gitignore 忽略；需要保留时用 git add -f，旧项目重跑 /devflow:init 生效');
     if (report.unrecognized) {
       out('[WARN] 任务目录已无入口产物，将不再出现在 devflow status；重新开始时运行 /devflow:req <slug>');
     }

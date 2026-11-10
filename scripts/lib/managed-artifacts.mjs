@@ -50,6 +50,7 @@ export const GITIGNORE_PATHS = [
   '.claude/.devflow-state.json',
   '.claude/.ecosystem-state.json',
   '.devflow.json',
+  'docs/devflow/*/.archive/',
 ];
 
 export function gitignoreBlock() {

@@ -74,7 +74,7 @@ devflow 的价值来自留下可追溯的需求、计划、测试与审查记录
 3. 在 `scripts/` 放一组薄 loader（`devflow-gen` / `devflow-doctor` / `devflow-route` / `devflow-upstream` / `devflow-test` / `devflow-triage` / `devflow-check` / `devflow-trace` / `devflow-stack` / `devflow-clean` / `devflow-change`）。loader 是生成物，会写进 `.gitignore`，换机器或重跑 init 时自动重建。
 4. 生成规则草稿：`_shared/project-basics.md`，单栈时还有 `stacks/<stack>/_shared.md`。草稿里的 `TODO:` 是占位，不是规则；默认只生成、不补全，需要智能补全时用 `/devflow:init --draft`。
 5. 生成 `.claude/skills/devflow-*` 投影。
-6. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物与 loader。
+6. 写入 `.gitignore` 片段（用标记块原地更新，重复运行不会叠加），忽略生成物、loader 与任务归档 `docs/devflow/*/.archive/`。
 
 初始化后可以直接用 `/devflow:req --light <需求>`（小功能）或 `/devflow:req <需求>`（完整流程）开始，规则草稿不阻塞流程。需要时再检查 `.claude/hub/hub.yaml`（尤其是自动探测的测试命令），填写草稿并删除首行 `<!-- devflow:draft -->`，然后运行 `node scripts/devflow-gen.mjs`；之后新增规则不确定放哪时，用 `devflow-rule-placement`。看到 `.claude/skills/devflow-*` 投影即表示初始化成功。探测规则与需要人工复核的场景见 [usage.md](docs/usage.md#多根工作区)。
 
