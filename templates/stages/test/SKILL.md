@@ -46,6 +46,7 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - [ ] 手动验证项（如有）已列出，且没有伪装成自动化结果。
 - [ ] 轻量修复的回归测试与 `debug.md` 记录一致（命令、修复前失败、修复后通过）。
 - [ ] 轻量修复已运行 triage 并记录 `trigger`；`skipped` 时写明基线检查结论，其他触发进入 review。轻量功能与完整任务不依赖 triage，也不得因普通小 bug 的默认行为被无必要地推进 review。
+- [ ] 已运行 `devflow check --stage test --slug <slug>`（未设置 CLI 时用 `node scripts/devflow-check.mjs --stage test`），退出码 0；它校验测试命令、结果表、验收覆盖与 AC 引用。
 
 ## 产出
 

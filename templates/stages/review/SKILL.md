@@ -103,7 +103,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 
 轻量功能与轻量修复可以写短：范围、触发与画像、验收对照、阻断项、结论即可；其余小节写“不适用”。`trigger=skipped` 时也要写清基线检查结论与跳过依据。未启用子代理时，该小节写“未启用（maxAgents=0 或用户要求）”。
 
-写完后运行门禁自检：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --check`）。退出码非 0 表示结论未勾选、仍有未关闭阻断项，或画像字段与 `review-triage.json` 不一致（增量复审还需补齐「增量复审」小节）；按输出补全后重跑。`devflow status` 也用同一门禁判断任务能否离开 review。
+写完后运行门禁自检：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs --root . --slug <slug> --check`），或统一入口 `devflow check --stage review --slug <slug>`，两者校验同一份报告。退出码非 0 表示结论未勾选、仍有未关闭阻断项，或画像字段与 `review-triage.json` 不一致（增量复审还需补齐「增量复审」小节）；按输出补全后重跑。`devflow status` 也用同一门禁判断任务能否离开 review。
 
 ## 技术栈规范
 

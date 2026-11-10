@@ -163,6 +163,10 @@ devflow triage --slug add-login --check
 devflow triage --slug add-login --since v1.2.0
 devflow triage --escalate
 devflow check --stage req --slug add-login
+devflow check --stage plan --slug add-login
+devflow check --stage implement --slug add-login
+devflow check --stage test --slug add-login
+devflow check --stage review --slug add-login
 devflow check --stage debug --json
 devflow trace --slug add-login
 devflow trace --slug add-login --check
