@@ -50,7 +50,7 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 
 ## 产出
 
-- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`），骨架见 `templates/test-report.template.md`。
+- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`），骨架见 `templates/test-report.template.md`。每次重跑整份覆盖该文件，不追加历史运行记录；旧记录用 `devflow change --slug <slug> --from test` 归档。
 - 记录要求见 `references/evidence.md`：没有实际执行的结果不得写成通过。
 - `.claude/.devflow-state.json` 中的最近一次测试记录（状态、退出码、耗时与命令）。
 - 轻量修复未标记 `review: required` 时，`test.md` 就是该任务的最终产物。

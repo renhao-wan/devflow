@@ -35,7 +35,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Agent, 
 9. 按画像派子代理：`selected` 是应审方向全集，实际派单数不超过 `maxAgents`；`assignments` 是分组派单，`deferred` 是未派单、需主上下文补查的方向。分组为 A 正确性+并发、B 安全+依赖、C 验收与回归+测试质量、D 数据与迁移、E 可维护性。调用 `devflow:devflow-code-reviewer` 子代理（旧版本可能显示为 `devflow-code-reviewer`，以 `/agents` 列表为准），再合并判断；子代理结论也要自己核实。`maxAgents=0` 时自己按 `selected` 审一遍，并覆盖 `deferred`。
    - 内置命令可选：当前版本提供 `/code-review` 时可作第二视角，结论需自己核实；`/security-review`、`/ultrareview` 可能外发代码，必须先获用户明确同意，未同意不执行；`/simplify` 若应用修改，回到 implement 并重新 test。命令不可用时跳过并记录“未使用”。
 10. 每条问题给出 `文件:行号`、触发条件、建议；区分阻断项与建议项。
-11. 结论写入 `docs/devflow/<slug>/review.md`；轻量任务可写短（范围、触发与画像、验收对照、阻断项、结论）。
+11. 结论写入 `docs/devflow/<slug>/review.md`；轻量任务可写短（范围、触发与画像、验收对照、阻断项、结论）。重跑时整份覆盖 `review.md`，增量复审写在同一文件的「增量复审」小节，不新建第二份报告；旧版本用 `devflow change --slug <slug> --from review` 归档。
 12. 运行门禁自检 `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug> --check`（未设置插件根时用 `node scripts/devflow-triage.mjs ... --check`），或统一入口 `node scripts/devflow-check.mjs --root . --stage review --slug <slug>`；两者校验同一份报告。退出码非 0 时按输出补全报告后重跑，`devflow status` 也用同一门禁判断任务能否离开 review。
 13. 报告时先给出实际 slug 与 `docs/devflow/<实际 slug>/review.md` 路径，再列触发结果、风险等级、选中/排除方向与阻断项；没有阻断项也要说明检查过哪些维度、验收标准的收敛结果与复用判断的核对结果。
 14. 无阻断项后提交或交付；若改过 `.claude/hub/stages/`，运行 `/devflow:upstream --stage <stage>` 回灌到个人库、团队库或上游插件。

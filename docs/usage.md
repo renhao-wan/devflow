@@ -542,6 +542,14 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 
 常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
 
+## 重跑与疑似重复任务
+
+阶段命令（`/devflow:req`、`/devflow:plan`、`/devflow:test`、`/devflow:review`、`/devflow:debug`）重跑时**整份覆盖**同名产物，不新建 `req-2.md`、`plan-2.md` 之类的第二份，也不在文件末尾追加历史记录。版本历史由 `devflow change` 归档承担：需要保留旧内容时先归档（`--from req --purge`、`--from plan --purge`），再重新生成。`review.md` 的增量复审写在同一个文件的「增量复审」小节，不另起文件。
+
+`req` 是唯一会从需求描述重新生成 slug 的入口，最容易产生“同一件事两套产物”。写之前先运行 `devflow status --json`，对照已有任务的 `slugs[].title` 与 `duplicates`；标题相同或高度相似时先确认“更新已有 slug / 新建”，不静默生成第二个。其他阶段只接受已有 slug，不会创建新任务目录。
+
+`devflow status` 会按规范化标题（忽略空白、标点、大小写与“（轻量功能）”后缀）找出标题相同的多个 slug，在控制台与 JSON 的 `duplicates` 中提示“疑似重复任务”，并给出合并建议。它只提示、不自动合并；确认后保留一个 slug，另一个先用 `devflow change --slug <slug> --from req --purge --apply` 归档，再按需删除只剩 `.archive/` 的空目录（或运行 `devflow clean --docs --apply` 一并清理）。
+
 ## 清理项目产物（clean）
 
 ```bash

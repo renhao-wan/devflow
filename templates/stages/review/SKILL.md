@@ -83,7 +83,7 @@ triage 从任务产物与 diff 推断，不靠主观感觉：
 
 ## 产出
 
-写入 `docs/devflow/<slug>/review.md`，骨架见 `templates/review.template.md`，问题分级见 `references/severity.md`。triage 结果同时保留在 `docs/devflow/<slug>/review-triage.json`：
+写入 `docs/devflow/<slug>/review.md`，骨架见 `templates/review.template.md`，问题分级见 `references/severity.md`。重跑时整份覆盖该文件；增量复审写在同一文件的「增量复审」小节，不新建第二份报告，旧版本用 `devflow change --slug <slug> --from review` 归档。triage 结果同时保留在 `docs/devflow/<slug>/review-triage.json`：
 
 ```md
 # 审查记录
