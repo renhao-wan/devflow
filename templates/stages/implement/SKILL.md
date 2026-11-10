@@ -12,6 +12,8 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 
 ## 执行步骤
 
+开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明哪份产物更新、会归档哪些文件，用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续实现并在报告中记录“证据可能过期”。
+
 1. **一次一个任务**：按计划顺序推进，不顺手重构无关代码。
 2. **测试先行**：能写测试的场景，先写一个会失败的测试，确认失败原因正确；步骤见 `devflow-tdd` 技能（已安装 superpowers 时也可用其 TDD 技法，门禁以本阶段为准）。
 3. **最小实现**：让它变绿即可，再考虑清理；清理也必须让测试保持绿。

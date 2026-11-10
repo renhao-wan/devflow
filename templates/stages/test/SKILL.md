@@ -13,6 +13,8 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 
 ## 执行步骤
 
+开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明会归档哪些文件并用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续测试并在报告中记录“证据可能过期”。
+
 1. **确定命令**：优先使用 `hub.yaml` 中该子项目的 `testCommand`；没有则用 `defaults.testCommand`。
 2. **先跑全量**：确认基线；记录通过/失败数量。可用 `devflow:devflow-test-runner` 子代理执行并汇总（旧版本可能显示为 `devflow-test-runner`，以 `/agents` 列表为准），但报告需自己核对。
 3. **跑针对性用例**：覆盖本次改动的正常路径、边界、错误路径。可先运行 `node scripts/devflow-test.mjs --changed`（或 `devflow test --changed`）列出可能受影响的已存在测试；它只按文件命名与目录约定提示，不执行测试、不阻断，无法映射的源码文件会标为 `[UNMAPPED]`，这类改动优先跑全量。

@@ -51,7 +51,7 @@
   - `review`：等价于 `review-triage --check`，校验结论、未关闭阻断项与画像一致性。
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
-- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”；需要归档重做时用 `devflow change`，见下文「修改已完成阶段与重开（change）」。
+- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会追加同样的 warning，但不影响退出码；需要归档重做时见下文「修改已完成阶段与重开（change）」。
 
 ### 验收追踪（AC ID）
 
@@ -499,7 +499,7 @@ node scripts/devflow-doctor.mjs
 
 ## statusline（可选）
 
-`scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`。在用户或项目 `settings.json` 中配置：
+`scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`；有任务产物可能过期时在阶段后显示 `过期`，多任务时显示 `N 个任务 · 过期`。`--json` 对应字段为 `stale` 与 `staleFrom`。在用户或项目 `settings.json` 中配置：
 
 ```json
 {
@@ -533,6 +533,7 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 | `--from review` | `review.md`、`review-triage.json` | 起点文档、`plan.md`、`test.md` |
 
 - `req` / `plan` 是设计文档，默认保留供修改；`test` / `review` 是执行记录，默认归档自身后重新生成。`brief`、`debug` 可作为 `req` 的别名。
+- 过期提示给出的归档起点与 `--from` 一致：`req` / `brief` / `debug` 晚于下游时用 `--from req`；`plan` 晚于下游时用 `--from plan`；`test` 晚于 `review` 时用 `--from review`，只归档旧审查，不会把刚更新的测试记录一起归档。多条过期只按链上最早一条给命令。
 - `--purge` 只对 `req` / `plan` 生效，连该阶段自身一起归档。`--from req --purge` 后任务目录只剩 `.archive/`，`devflow status` 会把它列为“已归档任务”；重新开始时运行 `/devflow:req <slug>`。
 - 归档目录是 `docs/devflow/<slug>/.archive/<时间戳>/`，内有 `manifest.json` 记录回退阶段、流程与文件。`.archive` 不参与阶段推断，也不会被 `status` / `trace` / `check` 当成任务产物。
 - 归档 `review.md` 时一并归档 `review-triage.json`，避免留下过期审查快照。`.devflow-state.json` 的最近测试记录不会自动清除，阶段仍以产物为准。
@@ -547,6 +548,8 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 阶段命令（`/devflow:req`、`/devflow:plan`、`/devflow:test`、`/devflow:review`、`/devflow:debug`）重跑时**整份覆盖**同名产物，不新建 `req-2.md`、`plan-2.md` 之类的第二份，也不在文件末尾追加历史记录。版本历史由 `devflow change` 归档承担：需要保留旧内容时先归档（`--from req --purge`、`--from plan --purge`），再重新生成。`review.md` 的增量复审写在同一个文件的「增量复审」小节，不另起文件。
 
 `req` 是唯一会从需求描述重新生成 slug 的入口，最容易产生“同一件事两套产物”。写之前先运行 `devflow status --json`，对照已有任务的 `slugs[].title` 与 `duplicates`；标题相同或高度相似时先确认“更新已有 slug / 新建”，不静默生成第二个。其他阶段只接受已有 slug，不会创建新任务目录。
+
+阶段入口（`implement` / `test` / `review`）开始前也会运行 `devflow status --slug <slug>`；发现下游可能过期时先询问是否归档，未确认则继续并在报告中记录“证据可能过期”。检测只提示，不会自动执行 `change --apply`。
 
 `devflow status` 会按规范化标题（忽略空白、标点、大小写与“（轻量功能）”后缀）找出标题相同的多个 slug，在控制台与 JSON 的 `duplicates` 中提示“疑似重复任务”，并给出合并建议。它只提示、不自动合并；确认后保留一个 slug，另一个先用 `devflow change --slug <slug> --from req --purge --apply` 归档，再按需删除只剩 `.archive/` 的空目录（或运行 `devflow clean --docs --apply` 一并清理）。
 

@@ -19,6 +19,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Agent, AskUserQuestion, Skil
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
 2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md`、`docs/devflow/*/brief.md` 与 `docs/devflow/*/debug.md`，按 slug 去重：只有一个候选就采用；多个时用 `AskUserQuestion` 让用户选择，不要自行挑选，也不要用 `latest` 代替；无法提问时列出候选并等待回复。没有候选时提示先运行 `/devflow:status` 或确认 slug。同一 slug 存在多套产物时按完整流程优先（`plan.md` > `brief.md` > `debug.md`）。若目录有 `req.md` 却缺 `plan.md`，返回 `/devflow:plan`，不要用 `brief.md` 冒充计划。
 3. 先跑全量测试，记录真实结果（通过/失败数量、失败用例）；可用 `devflow:devflow-test-runner` 子代理执行并汇总（旧版本可能显示为 `devflow-test-runner`，以 `/agents` 列表为准），但报告需自己核对。
+   - 开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明会归档哪些文件并用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续测试并在报告中记录“证据可能过期”。
 4. 针对本次改动补测正常路径、边界、错误路径；测试文件缺失时补齐。可先运行 `node scripts/devflow-test.mjs --changed` 列出可能受影响的已存在测试（只提示、不执行、不阻断；`[UNMAPPED]` 的源码文件优先跑全量）。轻量修复的回归测试须与 `debug.md` 记录的「命令 / 修复前失败输出 / 修复后通过输出」一致。
 5. 运行测试缺口提示（只提示，不阻断）：
 

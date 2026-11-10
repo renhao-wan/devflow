@@ -14,6 +14,8 @@ description: 审查阶段：以缺陷为导向检查改动，关注正确性、�
 
 ## 执行步骤
 
+开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明哪份产物更新并用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续审查并在报告中记录“证据可能过期”。
+
 1. **看全量 diff**：先看范围，确认没有意外文件、无关改动、生成物。
 2. **运行 triage**：`node "${CLAUDE_PLUGIN_ROOT}/scripts/review-triage.mjs" --root . --slug <slug> --write`；未设置 `CLAUDE_PLUGIN_ROOT` 时用项目内 loader `node scripts/devflow-triage.mjs --root . --slug <slug> --write`（loader 由 init 生成，旧项目未重建时先运行 `/devflow:init`）。它读取任务产物与 git 改动，输出 `trigger`（mandatory / required / auto / user / skipped）、风险等级 `level`、选中与排除方向、子代理上限与分组。
    - 用户指定方向时优先：`--focus security`（可重复或用逗号分隔）。只审这些方向，其余明确记为让位。
