@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.8.0
+
+### 增强
+
+- 新增 `devflow change` / `/devflow:change`：按阶段归档及下游产物到 `docs/devflow/<slug>/.archive/<时间戳>/`，默认只预览，`--apply` 才移动；`--purge` 支持连起点文档一起归档，重开后按剩余产物推导阶段
+- 新增归档查看与恢复：`change --list` 只读列出归档与 manifest；`change --restore <归档目录名|latest>` 默认预览，`--apply` 恢复。只接受 manifest 白名单产物，目标已存在时默认整体拒绝，`--force` 覆盖前先备份到 `replaced-<时间戳>/`，失败逆序回滚
+- 上游产物比下游新时，`status`、`statusline` 与阶段门禁提示“下游可能过期”，并给出可执行的预览归档起点；多条过期只推荐链上最早一条，`test` 晚于 `review` 时只归档旧审查，不连带刚更新的测试记录
+- 新增 `status --ack`：把整条链的过期指纹写入 `.devflow-state.json`，不移动产物；产物再变化时确认自动失效，同时抑制 status、statusline、check 与会话启动提示
+- `SessionStart` 钩子注入未确认的下游过期摘要，最多展开 3 个任务，只提示、不自动归档
+- `status` 检测标题规范化后相同的多个任务并提示合并，避免同一需求维护两套 slug 与产物
+- `change`、`restore` 使用任务锁串行化并发操作，`manifest.json` 原子写入；未传 `--root` 时从子目录向上查找项目根
+
+### 修复
+
+- 修复 `--from req --purge` 未归档其他流程残留入口产物（如完整任务里的 `debug.md`）导致任务被重新识别为轻量流程的问题
+- 修复 `status --json` 缺少 `slugs[].title`，导致 req 阶段无法按文档判断重复任务的问题
+- 修复恢复过程中目标存在、备份失败或归档损坏时的清理与回滚边界，并补充缺失/损坏 manifest 的单项降级
+- 修复轻量流程 plan/implement 阶段错误承诺过期 warning 的文档表述；这两个阶段没有更早的链上产物，只在实际影响当前阶段输入时提示
+
+### 变更
+
+- 插件版本升至 `1.8.0`；测试补充阶段回退与归档恢复、过期检测与确认失效、会话启动提示、并发归档与状态文件损坏等回归用例
+
 ## 1.7.0
 
 ### 增强
