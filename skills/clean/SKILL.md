@@ -23,7 +23,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-clean.mjs" --root "${CLAUDE_PROJECT_DIR:
 规则：
 
 1. 默认只预览，不删除任何文件。用户参数里若含 `--apply`，预览阶段必须去掉它。
-2. 向用户展示将删除与保留的清单，说明档位：默认只删可再生生成物；`--hub` 追加 `.claude/hub/`（项目真源，含手写规则）；`--docs` 追加 `docs/devflow/`（任务记录）；`--all` 两者都删。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
+2. 向用户展示将删除与保留的清单，说明档位：默认只删可再生生成物；`--hub` 追加 `.claude/hub/`（项目真源，含手写规则）；`--docs` 追加 `docs/devflow/`（任务记录，含 change 生成的 `.archive/` 归档）；`--all` 两者都删。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
 3. `--hub`、`--docs`、`--all` 删除的是不可再生数据，执行前必须向用户确认；确认后才在预览命令上追加 `--apply`。
 4. 删除项会先移到 `.claude/.devflow-trash/<时间戳>/`，输出中给出路径。执行结束后提醒用户：该目录会出现在 `git status`，确认无需恢复后手动删除。
 5. 清理后 devflow 对该项目不再生效。若要彻底卸载插件，顺序必须是**先运行本命令，再执行 `/plugin uninstall devflow`**；插件卸载后本命令不可用。

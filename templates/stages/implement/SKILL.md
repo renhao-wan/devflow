@@ -12,6 +12,8 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 
 ## 执行步骤
 
+开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明哪份产物更新、会归档哪些文件，用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续实现并在报告中记录“证据可能过期”。
+
 1. **一次一个任务**：按计划顺序推进，不顺手重构无关代码。
 2. **测试先行**：能写测试的场景，先写一个会失败的测试，确认失败原因正确；步骤见 `devflow-tdd` 技能（已安装 superpowers 时也可用其 TDD 技法，门禁以本阶段为准）。
 3. **最小实现**：让它变绿即可，再考虑清理；清理也必须让测试保持绿。
@@ -57,3 +59,4 @@ description: 实现阶段：按计划小步改动，先写失败测试再写实�
 - 不提交密钥、内网地址、个人路径。
 - 实验性改动失败时可用 `/rewind` 回到检查点，但它会丢弃当前会话改动，先确认范围；需要隔离并行工作时用 `/worktree`。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 计划变化先更新 `plan.md`；需要从计划重做时用 `devflow change --slug <slug> --from plan --apply`。只是代码完成后重跑测试不属于回退。

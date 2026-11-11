@@ -13,6 +13,8 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 
 ## 执行步骤
 
+开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明会归档哪些文件并用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续测试并在报告中记录“证据可能过期”。
+
 1. **确定命令**：优先使用 `hub.yaml` 中该子项目的 `testCommand`；没有则用 `defaults.testCommand`。
 2. **先跑全量**：确认基线；记录通过/失败数量。可用 `devflow:devflow-test-runner` 子代理执行并汇总（旧版本可能显示为 `devflow-test-runner`，以 `/agents` 列表为准），但报告需自己核对。
 3. **跑针对性用例**：覆盖本次改动的正常路径、边界、错误路径。可先运行 `node scripts/devflow-test.mjs --changed`（或 `devflow test --changed`）列出可能受影响的已存在测试；它只按文件命名与目录约定提示，不执行测试、不阻断，无法映射的源码文件会标为 `[UNMAPPED]`，这类改动优先跑全量。
@@ -50,7 +52,7 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 
 ## 产出
 
-- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`），骨架见 `templates/test-report.template.md`。
+- 测试结果报告（写入对话与 `docs/devflow/<slug>/test.md`），骨架见 `templates/test-report.template.md`。每次重跑整份覆盖该文件，不追加历史运行记录；旧记录用 `devflow change --slug <slug> --from test` 归档。
 - 记录要求见 `references/evidence.md`：没有实际执行的结果不得写成通过。
 - `.claude/.devflow-state.json` 中的最近一次测试记录（状态、退出码、耗时与命令）。
 - 轻量修复未标记 `review: required` 时，`test.md` 就是该任务的最终产物。
@@ -69,3 +71,4 @@ description: 测试阶段：运行项目测试并记录结果，覆盖正常、�
 - 环境缺失导致无法运行时，明确报告缺失项，而不是猜测结果。
 - 不把普通小 bug 默认推进 review；轻量修复是否需要 review 由 test 阶段的 triage 按实际 diff 判定，`debug.md` 顶部的 `review: required` 是显式要求并优先于跳过结论。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 测试记录更新后 review 必须重跑；需要归档旧测试与审查时用 `devflow change --slug <slug> --from test --apply`，随后按输出运行 `/devflow:test`。

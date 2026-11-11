@@ -64,6 +64,8 @@ description: 需求澄清阶段：把模糊诉求变成可验证的需求，明�
 - 默认写入 `docs/devflow/<slug>/req.md`，骨架见 `templates/req.template.md`。
 - `--light` 写入 `docs/devflow/<slug>/brief.md`，骨架见 `templates/brief.template.md`；后续直接进入 implement，不再单独写 plan。
 - `<slug>` 只用小写字母、数字和连字符（`[a-z0-9-]+`），不得包含 `/`、`\` 或 `..`。
+- 重跑时整份覆盖同名产物，不追加多份历史；需要保留旧版本时先用 `devflow change --slug <slug> --from req --purge` 归档自身与下游。
+- 参数是已有任务时复用其 slug；新需求写前运行 `devflow status --json`，标题与已有任务相同或高度相似时先确认“更新已有 / 新建”，不静默创建第二套任务。
 
 完整模式结构：
 
@@ -94,4 +96,6 @@ description: 需求澄清阶段：把模糊诉求变成可验证的需求，明�
 - 轻量模式一旦命中硬触发，先写 `## 升级判断` 并停止；不带着风险继续实现。
 - 轻量模式不切换 workflow 类工具；需要完整规格流程时先去掉 `--light`。
 - 目标目录已有 `req.md` / `plan.md` 时，不用 `--light` 覆盖或追加；提示用户改用完整流程或新 slug。
+- 已存在同标题的另一个 slug 时，先询问是更新还是新建；不要为了“区分版本”自动加后缀，版本历史由 `devflow change` 归档承担。
 - 发现可复用的项目规则时，用 `devflow-rule-placement` 判断落位；不直接改 `.claude/skills/devflow-*` 投影。
+- 需求变更后运行 `devflow status` 查看下游过期提示；需要重做下游时用 `devflow change --slug <slug> --from req --apply`，它保留起点文档并归档 plan/test/review。

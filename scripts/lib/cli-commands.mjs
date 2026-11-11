@@ -19,4 +19,5 @@ export const COMMANDS = {
   trace: ['trace.mjs', '查看验收项到 plan / test / review 的追踪矩阵（--check 缺失时退出 1）'],
   stack: ['hub-stack.mjs', '按需安装、更新、恢复与删除技术栈包（--from 本地目录或 --repo 远程仓库）'],
   clean: ['hub-clean.mjs', '清理工作区里的 devflow 产物（默认只预览，--apply 执行）'],
+  change: ['hub-change.mjs', '重开阶段：归档指定阶段及其下游产物；--list/--restore 查看与恢复归档（默认只预览，--apply 执行）'],
 };

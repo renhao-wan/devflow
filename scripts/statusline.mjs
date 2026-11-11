@@ -77,6 +77,7 @@ function summarize(report) {
   if (!report?.slugs?.length) return 'devflow · 无进行中任务';
   if (!report.activeSlug && report.slugs.length > 1) {
     const parts = [`${report.slugs.length} 个任务`];
+    if (report.slugs.some((row) => row.staleDownstream?.length && !row.staleAcked)) parts.push('过期');
     if (report.state?.testsPending) parts.push('待测试');
     if (report.state?.hubPending) parts.push('投影待生成');
     return formatLine(parts);
@@ -84,6 +85,8 @@ function summarize(report) {
 
   const active = report.slugs.find((row) => row.slug === report.activeSlug) || report.slugs[0];
   const parts = [active.slug, active.stage];
+  // 过期标记紧跟阶段，避免长 slug 截断时把可操作信号裁掉；已确认的提示不再显示。
+  if (active.staleDownstream?.length && !active.staleAcked) parts.push('过期');
   if (FLOW_LABEL[active.flow]) parts.push(FLOW_LABEL[active.flow]);
   if (report.state?.testsPending) parts.push('待测试');
   if (active.reviewRequired && active.stage !== 'done') parts.push('需补审查');
@@ -102,6 +105,8 @@ function compact(report) {
     stage: active?.stage ?? null,
     flow: active?.flow ?? null,
     count: rows.length,
+    stale: rows.some((row) => row.staleDownstream?.length && !row.staleAcked),
+    staleFrom: active && !active.staleAcked ? active.staleFrom : null,
     testsPending: Boolean(report?.state?.testsPending),
     reviewRequired: Boolean(active?.reviewRequired),
     hubPending: Boolean(report?.state?.hubPending),

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -38,6 +38,54 @@ test('statusline 输出单行阶段与待测试状态', () => {
     assert.match(r.stdout, /test/);
     assert.match(r.stdout, /待测试/);
     assert.equal(r.stdout.trim().split('\n').length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline 单任务标记下游过期并给出归档起点', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-stale-'));
+  try {
+    const dir = makeTask(root, 'add-login', ['req.md', 'plan.md', 'test.md']);
+    const set = (name, ms) => {
+      const time = new Date(ms);
+      utimesSync(join(dir, name), time, time);
+    };
+    set('req.md', 1_000_000);
+    set('test.md', 2_000_000);
+    set('plan.md', 3_000_000);
+
+    const text = run(['--root', root]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /add-login · review · 过期/);
+    assert.ok(text.stdout.trim().length <= 80, text.stdout);
+
+    const json = run(['--root', root, '--json']);
+    const report = JSON.parse(json.stdout);
+    assert.equal(report.stale, true);
+    assert.equal(report.staleFrom, 'plan');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('statusline 多任务时只给全局过期标记', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devflow-statusline-stale-multi-'));
+  try {
+    const dir = makeTask(root, 'stale-task', ['req.md', 'plan.md', 'test.md']);
+    const time = (ms) => new Date(ms);
+    utimesSync(join(dir, 'req.md'), time(1_000_000), time(1_000_000));
+    utimesSync(join(dir, 'test.md'), time(2_000_000), time(2_000_000));
+    utimesSync(join(dir, 'plan.md'), time(3_000_000), time(3_000_000));
+    makeTask(root, 'fresh-task', ['req.md', 'plan.md']);
+
+    const text = run(['--root', root]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /2 个任务 · 过期/);
+
+    const report = JSON.parse(run(['--root', root, '--json']).stdout);
+    assert.equal(report.stale, true);
+    assert.equal(report.staleFrom, null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

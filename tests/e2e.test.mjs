@@ -489,6 +489,15 @@ test('init 写入的 .gitignore 忽略 loader 且重复运行不会叠加片段'
     assert.match(gitignore, /scripts\/devflow-triage\.mjs/);
     assert.match(gitignore, /scripts\/devflow-check\.mjs/);
     assert.match(gitignore, /scripts\/devflow-trace\.mjs/);
+    assert.match(gitignore, /docs\/devflow\/\*\/\.archive\//);
+
+    // 归档默认不进版本库，但任务产物本身仍应正常纳入版本控制。
+    assert.equal(spawnSync('git', ['init', '-q'], { cwd: root }).status, 0);
+    mkdirSync(join(root, 'docs', 'devflow', 'demo', '.archive', '20260101-000000-000'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'devflow', 'demo', '.archive', '20260101-000000-000', 'manifest.json'), '{}\n');
+    writeFileSync(join(root, 'docs', 'devflow', 'demo', 'req.md'), '# req\n');
+    assert.equal(spawnSync('git', ['check-ignore', '-q', 'docs/devflow/demo/.archive/20260101-000000-000/manifest.json'], { cwd: root }).status, 0);
+    assert.equal(spawnSync('git', ['check-ignore', '-q', 'docs/devflow/demo/req.md'], { cwd: root }).status, 1);
 
     assert.equal(run('hub-init.mjs', ['--root', root], root).status, 0);
     assert.equal(run('hub-init.mjs', ['--root', root, '--force'], root).status, 0);

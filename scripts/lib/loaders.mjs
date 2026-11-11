@@ -13,6 +13,7 @@ export const LOADERS = {
   'devflow-trace.mjs': 'trace',
   'devflow-stack.mjs': 'hub-stack',
   'devflow-clean.mjs': 'hub-clean',
+  'devflow-change.mjs': 'hub-change',
 };
 
 export function loaderSource(name) {

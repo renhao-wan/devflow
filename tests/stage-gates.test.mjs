@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -470,6 +470,106 @@ test('CLI 支持六个阶段并返回正确退出码', () => {
     const unknown = runCli(root, ['--slug', slug, '--stage', 'nope']);
     assert.equal(unknown.status, 1);
     assert.match(unknown.stderr, /req.*plan.*implement.*test.*review.*debug/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function setTimes(dir, times) {
+  for (const [name, ms] of Object.entries(times)) {
+    const time = new Date(ms);
+    utimesSync(join(dir, name), time, time);
+  }
+}
+
+test('check --stage test 对上游过期给出不阻断的归档建议', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFull(root, dir);
+    setTimes(dir, {
+      'req.md': 1_000_000, 'plan.md': 3_000_000, 'test.md': 2_000_000, 'review.md': 4_000_000,
+    });
+    const result = checkStage(root, slug, 'test');
+    assert.equal(result.ok, true);
+    assert.ok(result.warnings.some((w) => w.includes('plan.md 晚于 test.md')));
+    assert.ok(result.warnings.some((w) => w.includes('devflow change --slug task --from plan')));
+    assert.equal(result.errors.length, 0);
+
+    const cli = runCli(root, ['--slug', slug, '--stage', 'test']);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /\[WARN\].*--from plan/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check --stage review 只归档 review，不把刚更新的 test 算进去', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFull(root, dir);
+    setTimes(dir, {
+      'req.md': 1_000_000, 'plan.md': 1_500_000, 'review.md': 2_000_000, 'test.md': 3_000_000,
+    });
+    const result = checkStage(root, slug, 'review');
+    assert.equal(result.ok, true);
+    const warning = result.warnings.find((w) => w.includes('晚于'));
+    assert.ok(warning);
+    assert.ok(warning.includes('--from review'));
+    assert.ok(!warning.includes('--from test'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check --stage plan 与 implement 也能发现上游过期', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFull(root, dir);
+    setTimes(dir, {
+      'req.md': 3_000_000, 'plan.md': 2_000_000, 'test.md': 1_000_000, 'review.md': 4_000_000,
+    });
+    const plan = checkStage(root, slug, 'plan');
+    assert.equal(plan.ok, true);
+    assert.ok(plan.warnings.some((w) => w.includes('req.md 晚于 plan.md') && w.includes('--from req')));
+
+    const implement = checkStage(root, slug, 'implement');
+    assert.ok(implement.warnings.some((w) => w.includes('req.md 晚于 plan.md')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('时间顺序正常时 check 不提示过期', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFull(root, dir);
+    setTimes(dir, {
+      'req.md': 1_000_000, 'plan.md': 1_100_000, 'test.md': 1_200_000, 'review.md': 1_300_000,
+    });
+    for (const stage of ['plan', 'implement', 'test', 'review']) {
+      const result = checkStage(root, slug, stage);
+      assert.equal(result.warnings.some((w) => w.includes('晚于')), false, stage);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('轻量流程的 plan/implement 没有更早上游，只在 test 阶段提示过期', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFileSync(join(dir, 'brief.md'), '# 轻量\n\n## 目标\n\n导出按钮可用。\n');
+    writeFileSync(join(dir, 'test.md'), '# 测试报告\n');
+    setTimes(dir, { 'brief.md': 3_000_000, 'test.md': 2_000_000 });
+
+    // plan 在轻量流程里就是 brief，没有更早的链上产物；implement 同理。
+    for (const stage of ['plan', 'implement']) {
+      const result = checkStage(root, slug, stage);
+      assert.equal(result.warnings.some((w) => w.includes('晚于')), false, stage);
+    }
+    const testStage = checkStage(root, slug, 'test');
+    assert.ok(testStage.warnings.some((w) => w.includes('brief.md 晚于 test.md')));
+    assert.ok(testStage.warnings.some((w) => w.includes('--from req')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

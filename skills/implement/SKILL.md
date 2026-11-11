@@ -19,6 +19,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Agent, AskUserQuestion, Skil
    - `error`：停止并报告命令输出中的原因，不要继续本阶段。
 2. 未提供 slug 时，扫描 `docs/devflow/*/plan.md` 与 `docs/devflow/*/brief.md`，按 slug 去重：只有一个候选就采用；多个时用 `AskUserQuestion` 让用户选择，不要自行挑选，也不要用 `latest` 代替；无法提问时列出候选并等待回复；没有候选时提示先运行 `/devflow:req`（小改动加 `--light`）。目录有 `req.md` 却缺 `plan.md` 时，提示先运行 `/devflow:plan <slug>`，不得用 `brief.md` 或实现阶段代替计划。
 3. 完整读取 `docs/devflow/<slug>/plan.md` 与 `req.md`；轻量功能改读 `brief.md`（含验收标准与测试计划）。计划缺失时先回到 `/devflow:plan`（轻量功能回到 `/devflow:req --light`）。
+   - 开始前运行 `devflow status --slug <slug>`（未安装 CLI 时用 `node "${CLAUDE_PLUGIN_ROOT}/scripts/hub-status.mjs" --root "${CLAUDE_PROJECT_DIR:-.}" --slug <slug>`）。若提示下游可能过期，说明哪份产物更新、会归档哪些文件，用 `AskUserQuestion` 确认是否先运行 `devflow change ...`；未确认时不归档，继续实现并在报告中记录“证据可能过期”。
 4. 按任务顺序推进，一次一个任务：
    - 能写测试的，先写失败测试并确认失败原因，再写最小实现；方法可用 `devflow-tdd` 技能，已安装 superpowers 时也可用其 TDD 技能，门禁仍以本阶段为准。
    - 不夹带无关改动，不顺手重构。
@@ -29,3 +30,4 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Task, Agent, AskUserQuestion, Skil
 8. 可选：任务跨多回合时，提示用户运行 `/goal` 设置本阶段完成条件（任务全部完成、测试真实通过、计划与改动一致；模板见 `.claude/hub/stages/implement/SKILL.md`）。插件不会自动设置 goal；goal 不替代门禁；需求或计划尚未确认时不要建议启用。
 9. 可选：实验性改动失败时可用 `/rewind` 回到检查点（会丢弃当前会话改动，先确认范围）；需要隔离并行工作时用 `/worktree`，不把实验代码留在主工作区。
 10. 实现完成且自测通过后进入测试阶段：`/devflow:test <实际 slug>`。
+11. 计划变化时先更新 `plan.md`；需要从计划重做时用 `devflow change --slug <slug> --from plan --apply`。只是代码完成后重跑测试，不属于回退。

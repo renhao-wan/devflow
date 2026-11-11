@@ -72,7 +72,7 @@ description: 排障阶段：先复现再定位，用最小实验验证假设，�
 ## 产出
 
 - 修复代码与回归测试。
-- 简短记录：现象、根因、修复方式、验证方式、结论（`fixed` / `partial` / `unresolved`）；如做了已知问题检索，记录查询词、来源与本地验证结果。独立小 bug 必须写入 `docs/devflow/<slug>/debug.md`；已有任务可写对话，但建议落盘以便 review。骨架见 `templates/debug-report.template.md`。
+- 简短记录：现象、根因、修复方式、验证方式、结论（`fixed` / `partial` / `unresolved`）；如做了已知问题检索，记录查询词、来源与本地验证结果。独立小 bug 必须写入 `docs/devflow/<slug>/debug.md`；已有任务可写对话，但建议落盘以便 review。骨架见 `templates/debug-report.template.md`。重跑时整份覆盖该文件，不追加第二份排障记录；旧记录用 `devflow change --slug <slug> --from req --purge` 归档。
 - 需要独立 review 时，在 `debug.md` 顶部前 10 行写 `review: required`（小写、无引号最稳妥）；`devflow status` 与审查 triage 都会识别该标记。`trigger` 的优先级为：用户指定方向/数量 > `review: required` > diff 风险信号 > 跳过。该标记只用于安全、数据、认证/权限/并发等不触发升级的风险修复；公共接口/迁移/依赖变更应升级完整流程，而不是只补 review。
 
 ## 技术栈规范

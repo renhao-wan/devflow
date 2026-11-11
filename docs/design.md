@@ -95,7 +95,7 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 | UserPromptSubmit | 有未验证改动时注入一次提醒 |
 | PostToolUse(Agent/Task) | devflow 子代理结束时向主上下文注入核对提醒，并显示给用户 |
 | Stop | 有代码改动未测试，或 hub 源改动未重新生成时提醒 |
-| SessionStart | 注入当前子项目和测试命令 |
+| SessionStart | 注入当前子项目、测试命令与未确认的下游过期摘要 |
 
 完整事件、生成物写保护与 deny/ask 清单见 [hooks.md](hooks.md)。
 
@@ -103,7 +103,14 @@ triage 是纯函数加 git 读取，不调用模型；模型只负责在给定�
 
 阶段产物 `docs/devflow/<slug>/{req,plan,brief,debug,test,review}.md` 是唯一进度记录，不额外持久化 `currentStage` 或 `currentSlug`，避免状态与真实产物不一致。审查 triage 的 `review-triage.json` 也落在同一目录，属于判定快照而非进度状态，可随时重新生成。
 
-- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；不配置时仍用 `/devflow:status`。
+- `/devflow:status` 只读扫描产物，推导每个任务所处阶段、缺口与下一步命令；存在多个任务时列出候选，不擅自选择。
+- 可选 `scripts/statusline.mjs` 复用同一推导，输出单行 `slug · stage · 待测试/需补审查`；有任务产物可能过期时显示 `过期`，`--json` 对应 `stale` / `staleFrom`。
+- 上游产物比下游新时，`status` 按相邻产物链比较 mtime 并提示“下游可能过期”，同时给出预览命令 `devflow change --slug <slug> --from <阶段>`；`check --stage plan|implement|test|review` 只在该过期关系的上游是当前阶段输入时追加 warning（轻量流程的 plan/implement 没有更早的链上产物，因此不提示），不影响退出码。`SessionStart` 的 `load-hub` 复用同一套链规则与确认指纹，在会话启动时注入未确认的过期摘要，最多展开 3 个任务；扫描失败只丢这段提示，不影响 hub 摘要。归档起点由过期关系的上游决定，`test` 晚于 `review` 时映射为 `review`，只归档旧审查；多条过期只按链上最早一条给命令。检测保持只读，不自动执行 `change --apply`，`git checkout` 或批量复制造成的误报由用户判断。
+- 误报可用 `status --ack` 确认：只把整条链的 `staleKey`（上游/下游文件名与 mtime 组合）写入 `.devflow-state.json` 的 `staleAcks[slug]`，不移动产物。status、statusline、check 与会话启动提示读取同一指纹；任一产物再次写入或增删都会改变 key，确认自动失效。多任务时 `--ack` 必须显式指定 slug，避免一次压掉所有任务的提示；status 默认仍只读，只有 `--ack` 写状态文件。
+- 阶段重跑整份覆盖同名产物，不追加历史；版本保留交给 `change` 归档。只有 `req` 会从需求描述重新生成 slug，因此入口先读 `status --json` 的 `slugs[].title` / `duplicates`，标题相同或高度相似时先让用户选择“更新 / 新建”。`status` 用 `normalizeTitle`（去空白、标点、大小写与“（轻量功能）”后缀）与 `duplicateGroups` 检测同标题的多个 slug，只提示合并，不自动改动产物。
+- 需要真正重做时用 `/devflow:change`：把指定阶段及下游产物移动到 `docs/devflow/<slug>/.archive/<时间戳>/`，不改写 `.devflow-state.json`，也不持久化重开标记。归档后阶段仍由剩余产物推导，因此 `--from test` 可能显示 `implement`，下一步以命令输出为准。`--from req --purge` 会补齐同目录下其他流程残留的入口产物，确保任务真正归档。扫描、移动与 manifest 写入在任务锁内完成，manifest 使用原子写入，避免并发 change/restore 或进程中断留下半完成状态。
+- 归档可追溯与恢复：`change --list` 读取各归档的 `manifest.json`，`change --restore <时间戳|latest>` 默认预览、`--apply` 执行。恢复只接受 manifest 白名单中的产物，拒绝路径、未知文件名与跨任务 manifest；目标已存在时默认整体拒绝，`--force` 才覆盖，并先把当前文件移到归档目录下的 `replaced-<时间戳>/`。移动中途失败会逆序回滚恢复与备份；归档目录与 manifest 保留。恢复只动文档，不回退源码。
+- 归档目录以点开头，`listCandidates` / `isTaskDir` / `scanSlugs` 天然忽略；只有 `.archive`、没有入口产物的目录由 `status` 单独列为“已归档任务”，不参与流程解析。`list` / `restore` 因此不依赖入口产物解析，必须显式指定 `--slug`。`init` 生成的 `.gitignore` 块包含 `docs/devflow/*/.archive/`，归档默认不进入版本库；需要留档时用 `git add -f`。
 - 只有一个任务时，工作流命令可以省略 slug；多个任务必须显式指定，不使用 `latest` 兜底。
 - 每个阶段入口末尾写明下一阶段命令，但不会自动调用；`init` / `upstream` / `ship` / `sync` 仍禁止模型自动触发。
 - 这种方式把“连续性”放在产物与文档约定上，不引入状态机；代价是需要用户确认 slug，收益是不会产生脏状态。

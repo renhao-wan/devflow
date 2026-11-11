@@ -1,12 +1,14 @@
 // req / debug 产物的结构门禁：只做确定性的“是否写了、写全了”检查，
 // 不判断需求是否合理或根因是否正确。退出码由 CLI 负责。
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readText } from './common.mjs';
 import {
   bulletValue, checkboxes, meaningful, section, subsection, tableDataRows, tableHeader, tableRows,
 } from './markdown.mjs';
 import { detectFlow } from './review.mjs';
+import { chainOf, staleDownstream } from './artifact-chain.mjs';
+import { ackOf, isStaleAcked, readStateFile } from './state-file.mjs';
 import { planDriftFor } from './plan-drift.mjs';
 import { checkReviewReport } from './review-gate.mjs';
 import { traceFor } from './trace.mjs';
@@ -407,11 +409,53 @@ export function checkReview(root, slug, { trace = null } = {}) {
   return checkReviewReport(root, slug, { triage: readTriage(root, slug), trace });
 }
 
+const STALE_LABELS = {
+  plan: '方案可能未反映最新上游',
+  implement: '实现可能基于过期计划',
+  test: '测试可能未覆盖最新上游',
+  review: '审查可能未覆盖最新上游或测试',
+};
+
+function mtimeOf(file) {
+  try { return statSync(file).mtimeMs; } catch { return 0; }
+}
+
+/**
+ * 过期只作 warning：mtime 是启发式，不进入 ok 判定，也不受 --strict 影响。
+ * anchor 是当前阶段依赖的最后一个链上产物，只提示会影响该阶段的过期关系。
+ */
+function staleWarnings(root, slug, flow, stage, warnings) {
+  const label = STALE_LABELS[stage];
+  if (!label) return;
+  const chain = chainOf(flow);
+  const anchorFile = stage === 'implement' ? 'plan.md' : `${stage}.md`;
+  let anchor = chain.indexOf(anchorFile);
+  // 轻量流程没有 plan：implement 依赖链首的 brief/debug，没有更早的上游。
+  if (stage === 'implement' && anchor < 0) anchor = 0;
+  if (anchor < 0) return;
+  const dir = join(root, 'docs', 'devflow', slug);
+  const mtimes = Object.fromEntries(chain.map((file) => [file, mtimeOf(join(dir, file))]));
+  const all = staleDownstream(chain, mtimes);
+  if (!all.length) return;
+  // 确认记录与 status 共用整条链的指纹；先判断再按阶段过滤，避免过滤后的 key 不一致。
+  if (isStaleAcked(all, ackOf(readStateFile(root), slug))) return;
+  const entries = all
+    .filter((entry) => chain.indexOf(entry.downstream) <= anchor);
+  if (!entries.length) return;
+  const first = entries[0];
+  const more = entries.length > 1 ? `（另有 ${entries.length - 1} 项过期关系）` : '';
+  warnings.push(`${first.upstream} 晚于 ${first.downstream}，${label}${more}；预览归档：devflow change --slug ${slug} --from ${first.from}（确认后加 --apply）`);
+}
+
 /** 按任务流程选择校验对象：req 看 req/brief，plan 看 plan/brief，其余按阶段产物。 */
 export function checkStage(root, slug, stage, options = {}) {
   const dir = join(root, 'docs', 'devflow', slug);
   const flow = detectFlow(root, slug);
-  const wrap = (result) => ({ stage, slug, flow, ...result });
+  const wrap = (result) => {
+    const checked = { stage, slug, flow, ...result };
+    staleWarnings(root, slug, flow, stage, checked.warnings);
+    return checked;
+  };
 
   if (stage === 'req') {
     if (flow === 'light-feature') {

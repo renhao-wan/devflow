@@ -7,13 +7,17 @@ import { readText, isMain, projectRoot, argValue, hasFlag, posix, warnUnknownArg
 import { checkReviewReport } from './lib/review-gate.mjs';
 import { collectChanges } from './lib/review.mjs';
 import { planDriftFor } from './lib/plan-drift.mjs';
-import { isTaskDir } from './lib/slug.mjs';
+import { isTaskDir, validSlug } from './lib/slug.mjs';
 import { summarizeTrace, traceFor } from './lib/trace.mjs';
+import {
+  ARTIFACTS, flowOf, chainOf, staleDownstream, duplicateGroups,
+} from './lib/artifact-chain.mjs';
+import {
+  ackOf, isStaleAcked, readStateFile, writeStaleAck,
+} from './lib/state-file.mjs';
 import {
   isStale, listAvailableTools, loadEcosystem, loadState,
 } from './lib/ecosystem.mjs';
-
-const ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md', 'test.md', 'review.md'];
 
 const FLOW_LABEL = {
   'light-feature': '轻量功能',
@@ -23,7 +27,7 @@ const FLOW_LABEL = {
 const NEXT = {
   req: (slug) => `/devflow:req <需求描述>（slug：${slug}）`,
   plan: (slug) => `/devflow:plan ${slug}`,
-  implement: (slug) => `/devflow:implement ${slug}`,
+  implement: (slug) => `继续实现：/devflow:implement ${slug}；代码已完成可直接 /devflow:test ${slug}`,
   test: (slug) => `/devflow:test ${slug}`,
   review: (slug) => `/devflow:review ${slug}`,
   done: () => '提交或交付；若改过阶段规则，运行 /devflow:upstream --stage <stage> 回灌',
@@ -37,18 +41,6 @@ const GAP = {
   review: 'review.md',
   done: null,
 };
-
-function readState(root) {
-  const file = join(root, '.claude', '.devflow-state.json');
-  if (!existsSync(file)) return {};
-  try {
-    const data = JSON.parse(readText(file));
-    // 手改或写入中断可能留下 null / 数组，按空状态处理，避免读取属性时崩溃。
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  } catch {
-    return {};
-  }
-}
 
 function mtimeOf(file) {
   try { return statSync(file).mtimeMs; } catch { return 0; }
@@ -67,6 +59,18 @@ function hasSubstance(file) {
   }
 }
 
+// 只取需求/轻量功能的一级标题；debug.md 的标题是通用“排障记录”，不适合做重复判断。
+function titleOf(dir, files) {
+  const file = files.includes('req.md') ? 'req.md' : files.includes('brief.md') ? 'brief.md' : null;
+  if (!file) return null;
+  try {
+    const line = readText(join(dir, file)).split(/\r?\n/).find((item) => /^#\s+\S/.test(item));
+    return line ? line.replace(/^#\s+/, '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function scanSlugs(root) {
   const docs = join(root, 'docs', 'devflow');
   if (!existsSync(docs)) return [];
@@ -78,18 +82,25 @@ function scanSlugs(root) {
     if (!isTaskDir(dir)) continue;
     const files = ARTIFACTS.filter((name) => existsSync(join(dir, name)));
     const substantive = new Set(files.filter((name) => hasSubstance(join(dir, name))));
+    const mtimes = Object.fromEntries(files.map((name) => [name, mtimeOf(join(dir, name))]));
     const latest = Math.max(mtimeOf(dir), ...files.map((name) => mtimeOf(join(dir, name))));
-    slugs.push({ slug: entry.name, files, substantive, latest });
+    slugs.push({ slug: entry.name, files, substantive, latest, mtimes, title: titleOf(dir, files) });
   }
   return slugs.sort((a, b) => b.latest - a.latest);
 }
 
-function flowOf(files) {
-  const has = (name) => files.includes(name);
-  if (has('req.md') || has('plan.md')) return 'full';
-  if (has('brief.md')) return 'light-feature';
-  if (has('debug.md')) return 'light-bug';
-  return 'unknown';
+/** 只有 .archive、没有入口产物的目录是已归档任务；正常任务目录里的归档不重复计入。 */
+function scanArchived(root) {
+  const docs = join(root, 'docs', 'devflow');
+  if (!existsSync(docs)) return [];
+  const archived = [];
+  for (const entry of readdirSync(docs, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const dir = join(docs, entry.name);
+    if (isTaskDir(dir)) continue;
+    if (existsSync(join(dir, '.archive'))) archived.push(entry.name);
+  }
+  return archived.sort();
 }
 
 // 优先读取审查 triage 结果；没有时回退 debug.md 的 review: required 标记。
@@ -104,10 +115,15 @@ function triageOf(root, slug) {
   }
 }
 
-/** triage 快照早于 debug.md 时可能已过期，只提示重跑，不改变阶段判定。 */
+/** triage 快照与调试记录或审查报告不一致时可能已过期，只提示重跑，不改变阶段判定。 */
 function triageIsStale(root, slug) {
   const dir = join(root, 'docs', 'devflow', slug);
-  return mtimeOf(join(dir, 'debug.md')) > mtimeOf(join(dir, 'review-triage.json'));
+  const triage = mtimeOf(join(dir, 'review-triage.json'));
+  if (!triage) return false;
+  const debug = mtimeOf(join(dir, 'debug.md'));
+  const review = mtimeOf(join(dir, 'review.md'));
+  // debug 更新说明排查记录变了；triage 晚于 review 说明重跑 triage 后没有重写审查报告。
+  return Boolean((debug && debug > triage) || (review && triage > review));
 }
 
 // 只读 debug.md 前 10 行判断是否需要独立 review；读取失败按普通小 bug 处理。
@@ -159,14 +175,20 @@ function stageOf(files, testsPending, reviewRequired = false, substantive = new 
 }
 
 export function buildStatus(root, { wanted = null, drift = true } = {}) {
-  const state = readState(root);
+  const state = readStateFile(root);
   const initialized = existsSync(join(root, '.claude', 'hub', 'hub.yaml'));
 
-  let slugs = scanSlugs(root);
+  const allSlugs = scanSlugs(root);
+  let slugs = allSlugs;
   if (wanted) {
     slugs = slugs.filter((s) => s.slug === wanted);
-    if (!slugs.length) return { missing: true };
+    if (!slugs.length) {
+      if (scanArchived(root).includes(wanted)) return { archived: true, slug: wanted };
+      return { missing: true };
+    }
   }
+  // 重复检测基于全部任务：按 --slug 查询单个任务时也要能发现另一套。
+  const duplicates = duplicateGroups(allSlugs);
 
   // 只读一次 diff，供所有任务复用；非 git 或读取失败时返回 null，不影响阶段推导。
   let changes = null;
@@ -199,8 +221,24 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     const gap = stage === 'review' && item.files.includes('review.md') ? null : GAP[stage];
     const planDrift = changes ? planDriftFor(root, item.slug, { changes }) : null;
     const trace = summarizeTrace(fullTrace);
+    const staleEntries = staleDownstream(chainOf(flow), item.mtimes);
+    // --ack 存的是整条链的过期指纹；产物再变化时 key 不同，提示自动恢复。
+    const staleAcked = isStaleAcked(staleEntries, ackOf(state, item.slug));
+    const staleArtifacts = staleEntries.map((entry) => ({
+      upstream: entry.upstream,
+      downstream: entry.downstream,
+      upstreamAt: new Date(entry.upstreamAt).toISOString(),
+      downstreamAt: new Date(entry.downstreamAt).toISOString(),
+      from: entry.from,
+    }));
+    // 多组过期只推荐链上最早一条：它归档后的范围自然覆盖后面的过期项。
+    const firstStale = staleArtifacts[0] || null;
+    const staleCommand = firstStale?.from && validSlug(item.slug)
+      ? `devflow change --slug ${item.slug} --from ${firstStale.from}`
+      : null;
     return {
       slug: item.slug,
+      title: item.title,
       stage,
       flow,
       reviewRequired,
@@ -208,6 +246,11 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       reviewTriage: flow === 'light-bug' && triage
         ? { trigger: triage.trigger, level: triage.level ?? null, stale: triageStale }
         : null,
+      triageStale,
+      staleDownstream: staleArtifacts,
+      staleAcked,
+      staleFrom: firstStale?.from ?? null,
+      staleCommand,
       reviewGate: reviewGate
         ? { ok: reviewGate.ok, errors: reviewGate.errors, warnings: reviewGate.warnings }
         : null,
@@ -251,6 +294,15 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       suggestions.push(`${row.slug}：审查报告未通过门禁（${row.reviewGate.errors[0]}）；运行 /devflow:review ${row.slug} 补全后重跑 devflow status`);
     }
   }
+  for (const row of rows) {
+    if (!row.staleCommand || row.staleAcked) continue;
+    const first = row.staleDownstream[0];
+    const more = row.staleDownstream.length > 1 ? `（另有 ${row.staleDownstream.length - 1} 项过期关系）` : '';
+    suggestions.push(`${row.slug}：${first.upstream} 晚于 ${first.downstream}，下游证据可能过期${more}；预览归档：${row.staleCommand}（确认后加 --apply）`);
+  }
+  for (const group of duplicates) {
+    suggestions.push(`疑似重复任务：${group.slugs.join('、')} 的标题相同（${group.title}）；确认是否应合并到一个 slug，避免维护两套产物`);
+  }
   // 投影时间戳晚于最近一次阶段源改动时视为已生成，不再反复提示。
   const lastHubChange = Date.parse(state.lastHubChangeAt || '');
   const hubGenerated = mtimeOf(join(root, '.claude', '.hub-manifest.json')) >= lastHubChange
@@ -288,6 +340,8 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
     activeSlug,
     inferred: Boolean(activeSlug && !wanted),
     slugs: rows,
+    archived: scanArchived(root),
+    duplicates,
     state: { testsPending, hubPending: Boolean(state.hubPending), lastTest },
     routing: {
       configured: eco.exists,
@@ -300,15 +354,69 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
   return { report };
 }
 
+/**
+ * 确认当前任务的过期提示，写入 .devflow-state.json。
+ * 只记录指纹，不移动任何产物；产物再变化时指纹失效，提示会重新出现。
+ */
+export function ackStale(root, { wanted = null } = {}) {
+  if (wanted && !validSlug(wanted)) throw new Error(`非法的 slug：${wanted}`);
+  const all = scanSlugs(root);
+  if (wanted && !all.some((item) => item.slug === wanted)) {
+    if (scanArchived(root).includes(wanted)) {
+      throw new Error(`任务已归档：${wanted}（恢复产物后再确认过期提示）`);
+    }
+    throw new Error(`未找到任务：${wanted}（查找 docs/devflow/${wanted}/）`);
+  }
+  // 多任务时不替用户选一个，避免把其他任务的过期提示一起压掉。
+  if (!wanted && all.length > 1) {
+    throw new Error('存在多个任务；--ack 需要显式指定 --slug');
+  }
+  const item = wanted ? all.find((row) => row.slug === wanted) : all[0];
+  if (!item) return { slug: null, acked: false, reason: '没有可确认的任务' };
+
+  const flow = flowOf(item.files);
+  const entries = staleDownstream(chainOf(flow), item.mtimes);
+  if (!entries.length) {
+    return { slug: item.slug, acked: false, reason: '当前没有下游过期提示' };
+  }
+  const first = entries[0];
+  const ack = writeStaleAck(root, item.slug, entries, { from: first.from });
+  return {
+    slug: item.slug,
+    acked: true,
+    from: first.from,
+    count: entries.length,
+    key: ack.key,
+  };
+}
+
 export async function main(argv = process.argv.slice(2)) {
-  warnUnknownArgs(argv, ['--root', '--json', '--slug']);
+  warnUnknownArgs(argv, ['--root', '--json', '--slug', '--ack']);
   const root = argValue(argv, '--root', projectRoot());
   const json = hasFlag(argv, '--json');
   const wanted = argValue(argv, '--slug', null);
 
+  if (hasFlag(argv, '--ack')) {
+    const acked = ackStale(root, { wanted });
+    if (json) {
+      console.log(JSON.stringify(acked, null, 2));
+      return acked;
+    }
+    if (acked.acked) {
+      console.log(`[OK]   已确认 ${acked.slug} 的过期提示（${acked.count} 项）；产物再变化会重新提示`);
+    } else {
+      console.log(`[INFO] ${acked.reason}`);
+    }
+  }
+
   const result = buildStatus(root, { wanted });
   if (result.missing) {
     console.error(`[ERR] 未找到任务：${wanted}（查找 docs/devflow/${wanted}/）`);
+    process.exitCode = 1;
+    return null;
+  }
+  if (result.archived) {
+    console.error(`[ERR] 任务已归档：${wanted}（查看 docs/devflow/${wanted}/.archive/；重新开始时运行 /devflow:req ${wanted}）`);
     process.exitCode = 1;
     return null;
   }
@@ -337,7 +445,7 @@ export async function main(argv = process.argv.slice(2)) {
       const flow = FLOW_LABEL[row.flow] ? `  模式：${FLOW_LABEL[row.flow]}` : '';
       const review = row.reviewRequired && row.stage !== 'done' ? '，需补审查' : '';
       const triage = row.reviewTriage?.trigger === 'skipped' ? '，审查已跳过（triage）' : '';
-      const stale = row.reviewTriage?.stale ? '，triage 可能过期，建议重跑' : '';
+      const stale = row.triageStale ? '，triage 可能过期，建议重跑' : '';
       const gate = row.reviewGate && !row.reviewGate.ok ? '，审查报告未通过门禁' : '';
       const gap = row.gap ? `（缺少 ${row.gap}）` : '';
       console.log(`  ${row.slug}`);
@@ -347,6 +455,17 @@ export async function main(argv = process.argv.slice(2)) {
         const ids = row.trace.gapIds.slice(0, 3).join('、');
         const more = row.trace.gapIds.length > 3 ? ' 等' : '';
         console.log(`    验收跟踪：${row.trace.covered}/${row.trace.total} 已覆盖，缺口 ${ids}${more}`);
+      }
+      const staleItems = row.staleDownstream || [];
+      if (staleItems.length && !row.staleAcked) {
+        const first = staleItems[0];
+        console.log(`    下游可能过期：${first.upstream} 晚于 ${first.downstream}`);
+        if (row.staleCommand) {
+          console.log(`    预览归档：${row.staleCommand}（确认后加 --apply）`);
+        }
+        if (staleItems.length > 1) {
+          console.log(`    另有 ${staleItems.length - 1} 项过期关系，按最早起点归档即可覆盖`);
+        }
       }
       console.log(`    下一步：${row.next}`);
       if (row.planDrift && !row.planDrift.skipped) {
@@ -363,6 +482,17 @@ export async function main(argv = process.argv.slice(2)) {
     if (report.activeSlug && !wanted && report.slugs.length === 1) {
       console.log(`  未传 --slug 时默认使用：${report.activeSlug}`);
     }
+  }
+  if (report.duplicates.length) {
+    for (const group of report.duplicates.slice(0, 2)) {
+      console.log(`  疑似重复任务：${group.slugs.join('、')}（标题：${group.title}）；确认是否合并到一个 slug`);
+    }
+    if (report.duplicates.length > 2) {
+      console.log(`  疑似重复任务：另有 ${report.duplicates.length - 2} 组`);
+    }
+  }
+  if (report.archived.length) {
+    console.log(`  已归档任务：${report.archived.join('、')}（运行 /devflow:req <slug> 重新开始）`);
   }
   // 未配置路由时只保留一行入口，避免和下方“提示”重复。
   if (report.routing.configured) {
@@ -381,6 +511,8 @@ export async function main(argv = process.argv.slice(2)) {
     if (!report.slugs.length && s.startsWith('未发现进行中的任务')) return false;
     // 路由未配置时已由上面一行说明，不再重复提示。
     if (!report.routing.configured && s.includes('ecosystem.yaml')) return false;
+    // 过期关系已在任务行内连同命令展示，底部不再重复。
+    if (s.includes('下游证据可能过期')) return false;
     return true;
   });
   for (const item of visibleSuggestions) console.log(`  提示：${item}`);

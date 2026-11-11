@@ -84,6 +84,7 @@ test('gen 在 JSON 模式下的日志标签同样为大写', () => {
 const SCRIPT_FILES = [
   'gen-claude-skills.mjs', 'hub-doctor.mjs', 'hub-init.mjs', 'hub-onboard.mjs',
   'hub-route.mjs', 'hub-ship.mjs', 'hub-status.mjs', 'hub-sync.mjs',
+  'hub-change.mjs',
   'hub-upstream.mjs', 'review-triage.mjs', 'stage-check.mjs', 'statusline.mjs',
   'trace.mjs',
 ];

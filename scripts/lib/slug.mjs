@@ -2,11 +2,12 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isRealPathInside } from './common.mjs';
+import { ENTRY_ARTIFACTS } from './artifact-chain.mjs';
 
 export const MISSING = Symbol('missing');
 
 /** 决定一个目录是否算任务入口的产物；hub-status 与 slug 解析共用同一口径。 */
-export const ENTRY_ARTIFACTS = ['req.md', 'plan.md', 'brief.md', 'debug.md'];
+export { ENTRY_ARTIFACTS };
 
 export function isTaskDir(dir) {
   return ENTRY_ARTIFACTS.some((file) => existsSync(join(dir, file)));

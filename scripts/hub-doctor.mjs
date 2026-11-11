@@ -738,7 +738,12 @@ export async function main(argv = process.argv.slice(2)) {
   } else if (!/# >>> devflow/.test(readText(gitignore))) {
     add('warn', '.gitignore 缺少 devflow 片段，重新运行 /devflow:init 可补上', '/devflow:init');
   } else {
-    add('ok', '.gitignore 含 devflow 片段');
+    const ignore = readText(gitignore);
+    if (!/docs\/devflow\/\*\/\.archive\//.test(ignore)) {
+      add('warn', '.gitignore 的 devflow 片段缺少归档忽略规则，重新运行 /devflow:init 可更新', '/devflow:init');
+    } else {
+      add('ok', '.gitignore 含 devflow 片段');
+    }
   }
 
   const loaderFiles = Object.entries(LOADERS);

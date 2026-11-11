@@ -51,6 +51,8 @@
   - `review`：等价于 `review-triage --check`，校验结论、未关闭阻断项与画像一致性。
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
+- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会在过期上游会影响当前阶段输入时追加 warning（轻量流程的 plan/implement 没有更早的上游，因此不提示），不影响退出码；会话启动的 `SessionStart` 钩子同样注入未确认的过期摘要，最多展开 3 个任务，只提示、不自动归档。需要归档重做时见下文「修改已完成阶段与重开（change）」。
+- 确认是 `git checkout`、复制文件等造成的误报时，运行 `devflow status --slug <slug> --ack` 记录当前过期指纹。状态文件只保存 mtime 组合，不移动产物；任一产物再次写入、增删，指纹失效，提示自动恢复。`--ack` 同时抑制 status、statusline、check 与会话启动的过期提示，多任务时必须显式指定 `--slug`。与 `--json` 组合时只输出确认结果（`acked`、`from`、`count`），不输出完整状态报告。
 
 ### 验收追踪（AC ID）
 
@@ -363,7 +365,7 @@ devflow doctor --check-remote
 
 AI **不直接读取个人库、团队库或上游库**；三个库只在 `init` / `sync` 时作为来源被读取。落到项目后，读取时机如下：
 
-1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览与投影漂移摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
+1. **会话启动**：`SessionStart` 钩子 `load-hub.mjs` 注入阶段、子项目、技术栈、项目概览、投影漂移与未确认的下游过期摘要，并触发技能重新加载。这一步不读取模板正文，也不读取 `references/`、`templates/`、`_shared/` 或 `stacks/` 的内容。
 2. **进入阶段**：加载插件入口 `skills/<stage>/SKILL.md`；入口先读项目投影 `.claude/skills/devflow-<stage>/SKILL.md`，再按投影指令读取 `.claude/hub/stages/<stage>/SKILL.md`。
 3. **执行阶段**：`references/`、`templates/` 按需读取，相对路径以对应 `SKILL.md` 所在目录为基准。
 4. **共享规则与子项目例外**：投影只列出 `_shared/` 文件路径，执行阶段按路径读取正文；`overrides/<sub>/<stage>.md` 的读取指令写在投影里。
@@ -449,7 +451,7 @@ node scripts/devflow-gen.mjs
 node scripts/devflow-doctor.mjs
 ```
 
-`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与七个 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
+`doctor` 会校验 `hub.yaml` 语法与阶段名、投影与资源、`testCommand` 用到的工具是否在 `PATH` 中，并检查 `testCommand` 里的 `cd` 目标目录、`./gradlew` 等本地脚本是否存在，以及 `.gitignore` 片段与 loader 是否齐全；但它不会判断命令是否符合项目实际，`testCommand` 仍需由人确认。
 
 ## init 草稿与规则落位
 
@@ -498,7 +500,7 @@ node scripts/devflow-doctor.mjs
 
 ## statusline（可选）
 
-`scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`。在用户或项目 `settings.json` 中配置：
+`scripts/statusline.mjs` 复用 `hub-status` 的只读推导，输出一行 `slug · stage · 待测试/需补审查`；有任务产物可能过期时在阶段后显示 `过期`，多任务时显示 `N 个任务 · 过期`。`--json` 对应字段为 `stale` 与 `staleFrom`。在用户或项目 `settings.json` 中配置：
 
 ```json
 {
@@ -511,6 +513,64 @@ node scripts/devflow-doctor.mjs
 
 优先使用 `devflow statusline`（`bin/devflow` 在 `PATH` 中时）。如果未安装 CLI，可改成 `node "<插件根>/scripts/statusline.mjs"`，但 `<插件根>` 需要换成实际插件目录；插件升级或切换安装方式后该路径可能失效，届时重新配置。脚本只读、不写状态文件；失败时显示 `devflow · 状态不可用`，不影响提示符。
 
+## 修改已完成阶段与重开（change）
+
+阶段由产物存在性推导，直接修改 `req.md` / `plan.md` 不会自动删除下游。`devflow status` 会沿 `req/brief/debug → plan → test → review` 比较相邻产物的修改时间，上游更晚时提示“某产物及下游可能需要重跑”。它只是启发式：`git checkout`、复制文件、批量 `touch` 都可能改变 mtime 造成误报，提示不改变阶段、不阻断流程，也不替代 `devflow check`。
+
+需要真正重做时用 `devflow change`：
+
+```bash
+devflow change --slug <slug> --from plan          # 预览，不移动文件
+devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triage
+```
+
+`--from` 的含义：
+
+| 写法 | 归档 | 保留 |
+| --- | --- | --- |
+| `--from req` | `plan.md`、`test.md`、`review.md`、`review-triage.json` | 起点文档（`req.md` / `brief.md` / `debug.md`） |
+| `--from plan` | `test.md`、`review.md`、`review-triage.json` | `req.md`、`plan.md` |
+| `--from test` | `test.md`、`review.md`、`review-triage.json` | 起点文档与 `plan.md` |
+| `--from review` | `review.md`、`review-triage.json` | 起点文档、`plan.md`、`test.md` |
+
+- `req` / `plan` 是设计文档，默认保留供修改；`test` / `review` 是执行记录，默认归档自身后重新生成。`brief`、`debug` 可作为 `req` 的别名。
+- 过期提示给出的归档起点与 `--from` 一致：`req` / `brief` / `debug` 晚于下游时用 `--from req`；`plan` 晚于下游时用 `--from plan`；`test` 晚于 `review` 时用 `--from review`，只归档旧审查，不会把刚更新的测试记录一起归档。多条过期只按链上最早一条给命令。
+- `--purge` 只对 `req` / `plan` 生效，连该阶段自身一起归档。`--from req --purge` 会把同目录下其他流程残留的入口产物（如完整任务里追加的 `debug.md`、轻量任务的 `brief.md`）一起归档，避免任务被重新识别；之后任务目录只剩 `.archive/`，`devflow status` 会把它列为“已归档任务”；重新开始时运行 `/devflow:req <slug>`。
+- 归档目录是 `docs/devflow/<slug>/.archive/<时间戳>/`，内有 `manifest.json` 记录回退阶段、流程与文件。`.archive` 不参与阶段推断，也不会被 `status` / `trace` / `check` 当成任务产物。
+- 归档 `review.md` 时一并归档 `review-triage.json`，避免留下过期审查快照。`.devflow-state.json` 的最近测试记录不会自动清除，阶段仍以产物为准。
+- `--from test` 归档后 `status` 可能显示 `implement`，这是“缺少测试证据”的产物含义；按 `change` 输出的下一步运行 `/devflow:test` 即可。
+- `clean --docs` 会连同 `.archive` 一起删除；需要长期保留归档时，先复制到项目外。
+- 归档目录默认由 `init` 写入的 `.gitignore` 忽略（`docs/devflow/*/.archive/`）；旧项目重跑 `/devflow:init` 更新规则。需要保留某次归档时用 `git add -f`。
+
+归档只移动流程文档，不改动源码或 git 工作区。实现是否需要调整，取决于新需求/新方案与实际 diff 的差距：旧代码仍满足新方案时直接重跑 test / review；不满足时才回到 implement 修改受影响部分。
+
+查看与恢复归档：
+
+```bash
+devflow change --slug <slug> --list                    # 列出归档、来源阶段与文件
+devflow change --slug <slug> --restore latest          # 预览最新一份的恢复
+devflow change --slug <slug> --restore <归档目录名> --apply  # 执行恢复
+devflow change --slug <slug> --restore latest --apply --force  # 覆盖当前同名产物
+```
+
+- `--list` 只读，`--restore` 默认预览，`--apply` 才移动文件；两者都需要显式 `--slug`，因此已归档任务（只剩 `.archive/`）也能恢复。
+- 恢复只接受 `manifest.json` 白名单中的产物，任何路径、未知文件名或跨任务 manifest 都会被拒绝。
+- 目标位置已有同名文件时默认整体拒绝，不移动任何文件；加 `--force` 才覆盖，并先把当前文件备份到归档目录下的 `replaced-<时间戳>/`，仍可从备份找回。
+- 恢复中途失败会逆序回滚已移动的文件与备份；归档目录和 `manifest.json` 保留，便于再次查看。归档与恢复执行时共用任务锁，`manifest.json` 原子写入，避免并发或中断留下半完成状态。
+- 恢复完成后按输出的 `devflow status --slug <slug>` 重新确认阶段与下一步；恢复旧产物不会自动改变代码。
+
+常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
+
+## 重跑与疑似重复任务
+
+阶段命令（`/devflow:req`、`/devflow:plan`、`/devflow:test`、`/devflow:review`、`/devflow:debug`）重跑时**整份覆盖**同名产物，不新建 `req-2.md`、`plan-2.md` 之类的第二份，也不在文件末尾追加历史记录。版本历史由 `devflow change` 归档承担：需要保留旧内容时先归档（`--from req --purge`、`--from plan --purge`），再重新生成。`review.md` 的增量复审写在同一个文件的「增量复审」小节，不另起文件。
+
+`req` 是唯一会从需求描述重新生成 slug 的入口，最容易产生“同一件事两套产物”。写之前先运行 `devflow status --json`，对照已有任务的 `slugs[].title` 与 `duplicates`；标题相同或高度相似时先确认“更新已有 slug / 新建”，不静默生成第二个。其他阶段只接受已有 slug，不会创建新任务目录。
+
+阶段入口（`implement` / `test` / `review`）开始前也会运行 `devflow status --slug <slug>`；发现下游可能过期时先询问是否归档，未确认则继续并在报告中记录“证据可能过期”。检测只提示，不会自动执行 `change --apply`。
+
+`devflow status` 会按规范化标题（忽略空白、标点、大小写与“（轻量功能）”后缀）找出标题相同的多个 slug，在控制台与 JSON 的 `duplicates` 中提示“疑似重复任务”，并给出合并建议。它只提示、不自动合并；确认后保留一个 slug，另一个先用 `devflow change --slug <slug> --from req --purge --apply` 归档，再按需删除只剩 `.archive/` 的空目录（或运行 `devflow clean --docs --apply` 一并清理）。
+
 ## 清理项目产物（clean）
 
 ```bash
@@ -521,9 +581,9 @@ devflow clean --docs --apply   # 追加删除 docs/devflow
 devflow clean --all --apply    # 删除整个工作区的 devflow 产物
 ```
 
-默认档删除九类 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
+默认档删除全部 loader、`.claude/skills/devflow-*`、投影与同步账本、bases 快照、stack 安装账本与 staging、状态文件、`.devflow.json`，并摘除 `.gitignore` 中的 devflow 标记块。
 
-`--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
+`--hub` 删除项目真源（`hub.yaml`、阶段规则、`overrides/`、`stacks/`），`--docs` 删除 `docs/devflow/` 任务记录；两者都不可再生。`--docs` 也会删除各任务下的 `.archive/` 归档目录，需要保留归档时先复制出去。`.claude/.stack-trash/`、`.claude/.devflow-trash/` 与 `docs/upstream-log.md` 始终保留。
 
 删除项先移入 `.claude/.devflow-trash/<时间戳>/`，中途失败会逆序回滚，`.gitignore` 也会恢复原文。成功后备份目录会出现在 `git status`，确认无需恢复后手动删除。命令只清理当前 hub 根，多根工作区里独立初始化的仓库需要分别进入对应根目录运行；未发现任何 devflow 锚点时成功退出，不会按当前目录猜测路径。
 
