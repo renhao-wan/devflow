@@ -238,6 +238,7 @@ export function buildStatus(root, { wanted = null, drift = true } = {}) {
       : null;
     return {
       slug: item.slug,
+      title: item.title,
       stage,
       flow,
       reviewRequired,

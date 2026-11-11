@@ -59,6 +59,9 @@ test('status 报告标题相同的重复任务并给出合并提示', () => {
 
     const report = json(root);
     assert.deepEqual(report.duplicates, [{ title: '报表导出', slugs: ['export', 'report'] }]);
+    // req/plan 入口依赖 slugs[].title 做重复判断，JSON 必须带上原始标题。
+    assert.equal(report.slugs.find((row) => row.slug === 'report').title, '报表导出');
+    assert.equal(report.slugs.find((row) => row.slug === 'login').title, '登录改造');
     assert.ok(report.suggestions.some((line) => /疑似重复任务.*export.*report/.test(line)));
 
     const text = run(root).stdout;

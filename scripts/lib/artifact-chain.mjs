@@ -120,6 +120,15 @@ export function staleDownstream(chain, mtimes = {}, { tolerance = STALE_TOLERANC
   return stale;
 }
 
+/**
+ * --purge 从链首重开时，任务目录里其他流程的入口产物也应一起归档。
+ * 例如完整任务里追加的 debug.md，不归档会让 status 把任务重新识别成轻量修复。
+ */
+export function purgeRemainder(files = [], keep = []) {
+  if (keep.length) return [];
+  return ARTIFACTS.filter((name) => files.includes(name) && !keep.includes(name));
+}
+
 /** 上游产物对应的最小归档起点；light 流程的 brief/debug 统一回落到 req。 */
 export function changeFromFor(upstream) {
   const file = String(upstream ?? '');

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -255,5 +255,68 @@ test('恢复中途失败时逆序回滚，归档与目标都回到原状', () =>
     assert.equal(existsSync(join(dir, '.archive', name, 'review.md')), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--list 对缺失或损坏的 manifest 单项降级，不阻断其他归档', () => {
+  const { root, dir } = makeTask();
+  try {
+    archive(root);
+    const name = archiveName(root);
+    const archiveDir = join(dir, '.archive', name);
+    rmSync(join(archiveDir, 'manifest.json'));
+
+    const missing = listArchives(root, 'task');
+    assert.equal(missing.archives[0].error, '缺少 manifest.json');
+    assert.throws(() => restore(root, { archive: name, apply: true }), /缺少 manifest\.json/);
+    const listed = cli(root, ['--list', '--json']);
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.match(JSON.parse(listed.stdout).archives[0].error, /缺少 manifest/);
+
+    writeFileSync(join(archiveDir, 'manifest.json'), '{ broken');
+    assert.match(listArchives(root, 'task').archives[0].error, /JSON|Unexpected|Expected/i);
+    assert.throws(() => restore(root, { archive: name, apply: true }), /不可恢复/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--force 在备份阶段失败时回滚，当前文件与归档都保持原状', () => {
+  const { root, dir } = makeTask();
+  try {
+    archive(root);
+    const name = archiveName(root);
+    writeFileSync(join(dir, 'test.md'), '# 当前的新测试\n');
+    let failed = false;
+    const ops = {
+      ...defaultOps,
+      rename(from, to) {
+        if (!failed && String(to).includes('replaced-')) {
+          failed = true;
+          throw new Error('模拟备份失败');
+        }
+        return defaultOps.rename(from, to);
+      },
+    };
+    assert.throws(() => restore(root, { apply: true, force: true, ops }), /模拟备份失败/);
+    assert.equal(readFileSync(join(dir, 'test.md'), 'utf8'), '# 当前的新测试\n');
+    assert.equal(existsSync(join(dir, '.archive', name, 'test.md')), true);
+    assert.equal(readdirSync(join(dir, '.archive', name)).some((item) => item.startsWith('replaced-')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('归档目录经过 junction 指向项目外时拒绝', { skip: process.platform !== 'win32' }, () => {
+  const { root, dir } = makeTask();
+  const outside = mkdtempSync(join(tmpdir(), 'devflow-restore-outside-'));
+  try {
+    symlinkSync(outside, join(dir, '.archive'), 'junction');
+    assert.throws(() => listArchives(root, 'task'), /越界/);
+    assert.throws(() => restore(root, { archive: 'latest', apply: true }), /越界/);
+    assert.deepEqual(readdirSync(outside), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });

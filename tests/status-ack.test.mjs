@@ -185,3 +185,28 @@ test('--ack 只影响指定任务，其他任务仍显示过期', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('状态文件损坏时按未确认处理，产物删除后确认失效', () => {
+  const root = makeRoot();
+  try {
+    const dir = staleTask(root);
+    writeFileSync(join(root, '.claude', '.devflow-state.json'), '{ not json');
+    const broken = json(STATUS, root, ['--slug', 'report']);
+    assert.equal(broken.slugs[0].staleAcked, false);
+    assert.equal(broken.slugs[0].staleDownstream.length, 1);
+
+    // --ack 会重建损坏的状态文件，不应被旧内容卡住。
+    const ack = json(STATUS, root, ['--slug', 'report', '--ack']);
+    assert.equal(ack.acked, true);
+    assert.equal(json(STATUS, root, ['--slug', 'report']).slugs[0].staleAcked, true);
+
+    // 删除下游产物后过期关系不存在，旧确认不能再压掉新状态。
+    rmSync(join(dir, 'test.md'));
+    const removed = json(STATUS, root, ['--slug', 'report']);
+    assert.equal(removed.slugs[0].staleAcked, false);
+    assert.deepEqual(removed.slugs[0].staleDownstream, []);
+    assert.equal(removed.slugs[0].staleCommand, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

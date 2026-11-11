@@ -554,3 +554,23 @@ test('时间顺序正常时 check 不提示过期', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('轻量流程的 plan/implement 没有更早上游，只在 test 阶段提示过期', () => {
+  const { root, dir, slug } = makeTask();
+  try {
+    writeFileSync(join(dir, 'brief.md'), '# 轻量\n\n## 目标\n\n导出按钮可用。\n');
+    writeFileSync(join(dir, 'test.md'), '# 测试报告\n');
+    setTimes(dir, { 'brief.md': 3_000_000, 'test.md': 2_000_000 });
+
+    // plan 在轻量流程里就是 brief，没有更早的链上产物；implement 同理。
+    for (const stage of ['plan', 'implement']) {
+      const result = checkStage(root, slug, stage);
+      assert.equal(result.warnings.some((w) => w.includes('晚于')), false, stage);
+    }
+    const testStage = checkStage(root, slug, 'test');
+    assert.ok(testStage.warnings.some((w) => w.includes('brief.md 晚于 test.md')));
+    assert.ok(testStage.warnings.some((w) => w.includes('--from req')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

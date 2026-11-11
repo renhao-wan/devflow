@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   flowOf, chainOf, normalizeFrom, archivePlanFor, staleDownstream,
-  changeFromFor, staleKey,
+  changeFromFor, staleKey, purgeRemainder,
 } from '../scripts/lib/artifact-chain.mjs';
 
 test('flowOf 按产物识别流程，完整流程优先', () => {
@@ -64,6 +64,17 @@ test('--purge 只改变 req/plan，归档自身及下游', () => {
   const testFile = archivePlanFor('full', 'test', { purge: true });
   assert.deepEqual(testFile.files, ['test.md', 'review.md', 'review-triage.json']);
   assert.deepEqual(testFile.keep, ['req.md', 'plan.md']);
+});
+
+test('purgeRemainder 只在链首 purge 时补齐其他流程的产物', () => {
+  // 完整任务里追加的 debug.md 不在 full 链上，从链首 purge 时必须一起归档。
+  assert.deepEqual(
+    purgeRemainder(['req.md', 'plan.md', 'test.md', 'review.md', 'debug.md'], []),
+    ['req.md', 'plan.md', 'debug.md', 'test.md', 'review.md'],
+  );
+  assert.deepEqual(purgeRemainder(['brief.md', 'test.md', 'debug.md'], []), ['brief.md', 'debug.md', 'test.md']);
+  // 保留上游时（如 --from plan --purge）不改动归档范围。
+  assert.deepEqual(purgeRemainder(['req.md', 'plan.md', 'debug.md'], ['req.md']), []);
 });
 
 test('轻量功能用 brief 作为起点，没有 plan 阶段', () => {

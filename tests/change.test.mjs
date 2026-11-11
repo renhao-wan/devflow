@@ -142,6 +142,30 @@ test('--from req --purge 归档起点及下游，任务目录只剩归档', () =
   }
 });
 
+test('--from req --purge 连同其他流程残留的入口产物一起归档', () => {
+  // 完整任务里追加 debug.md 时，若只归档 full 链，debug.md 会让任务被识别成轻量修复。
+  const { root, dir } = makeTask(['req.md', 'plan.md', 'test.md', 'review.md', 'debug.md']);
+  try {
+    const report = change(root, { from: 'req', purge: true, apply: true });
+    assert.equal(existsSync(join(dir, 'debug.md')), false);
+    assert.deepEqual(listCandidates(root), []);
+    assert.equal(report.unrecognized, true);
+    assert.match(report.files.join(','), /debug\.md/);
+    assert.equal(report.keep.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  const feature = makeTask(['brief.md', 'debug.md', 'test.md']);
+  try {
+    change(feature.root, { from: 'req', purge: true, apply: true });
+    assert.equal(existsSync(join(feature.dir, 'debug.md')), false);
+    assert.deepEqual(listCandidates(feature.root), []);
+  } finally {
+    rmSync(feature.root, { recursive: true, force: true });
+  }
+});
+
 test('--purge 后下一步指向重新生成被归档的阶段', () => {
   const full = makeTask(['req.md', 'plan.md', 'test.md']);
   try {
@@ -283,6 +307,25 @@ test('--json 只向 stdout 输出 JSON，不移动文件', () => {
     assert.equal(report.slug, 'task');
     assert.deepEqual(report.files, ['test.md', 'review.md', 'review-triage.json']);
     assert.equal(existsSync(join(dir, 'test.md')), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('未传 --root 时从子目录向上查找项目根', () => {
+  const { root } = makeTask();
+  try {
+    mkdirSync(join(root, '.claude', 'hub'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hub', 'hub.yaml'), 'version: 1\n');
+    const sub = join(root, 'src');
+    mkdirSync(sub);
+    const result = spawnSync(process.execPath, [
+      SCRIPT, '--slug', 'task', '--from', 'plan', '--json',
+    ], { cwd: sub, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.slug, 'task');
+    assert.equal(report.root, root.split('\\').join('/'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

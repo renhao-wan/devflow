@@ -5,11 +5,12 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, unlinkSync }
 import { join, relative, resolve } from 'node:path';
 import {
   argValue, hasFlag, hasOption, warnUnknownArgs, isMain, posix,
-  isPathInside, isRealPathInside, readText, writeText,
+  isPathInside, isRealPathInside, readText, writeText, writeAtomic,
+  withFileLock, projectRoot,
 } from './lib/common.mjs';
 import { resolveSlug, validSlug, MISSING } from './lib/slug.mjs';
 import {
-  ARTIFACTS, flowOf, archivePlanFor, startFileFor, normalizeFrom,
+  ARTIFACTS, ENTRY_ARTIFACTS, flowOf, archivePlanFor, startFileFor, normalizeFrom, purgeRemainder,
 } from './lib/artifact-chain.mjs';
 
 export const defaultOps = {
@@ -20,6 +21,7 @@ export const defaultOps = {
   unlink: unlinkSync,
   readText,
   writeText,
+  writeAtomic,
 };
 
 const STAMP_LIMIT = 100;
@@ -152,12 +154,25 @@ export function runChange({
     throw new Error(`没有可回退的 ${required || plan.stage}；当前流程为 ${flow}`);
   }
 
-  const existing = plan.files.filter((name) => ops.exists(join(dir, name)));
-  const keep = plan.keep.filter((name) => ops.exists(join(dir, name)));
   const at = now();
   const stamp = formatStamp(at);
   const archiveBase = join(dir, '.archive');
   assertInside(dir, archiveBase, '归档目录');
+  // --purge 从链首重开时把其他流程的残留入口产物也归档，避免任务“复活”；
+  // keep 为空才扩展，--from plan 等仍保留上游产物。
+  const planned = [...new Set([...plan.files, ...purgeRemainder(files, plan.keep)])];
+  const collect = () => {
+    const existing = planned.filter((name) => ops.exists(join(dir, name)));
+    const keep = plan.keep.filter((name) => ops.exists(join(dir, name)));
+    const archived = new Set(existing);
+    const remainingEntries = ENTRY_ARTIFACTS.filter((name) => !archived.has(name) && ops.exists(join(dir, name)));
+    return {
+      existing,
+      keep,
+      // 以归档后的实际剩余入口产物判断，而不是只看 --purge 参数。
+      unrecognized: existing.length > 0 && remainingEntries.length === 0,
+    };
+  };
 
   const report = {
     root: posix(target),
@@ -166,66 +181,85 @@ export function runChange({
     from: plan.stage,
     purge: Boolean(purge),
     mode: apply ? 'apply' : 'preview',
-    files: existing,
-    keep,
+    files: [],
+    keep: [],
     archiveDir: null,
     applied: false,
     noop: false,
     next: nextStep(plan, slug),
-    unrecognized: Boolean(purge && (plan.stage === 'req' || plan.stage === 'plan') && !keep.length),
+    unrecognized: false,
   };
 
-  if (!existing.length) {
-    report.noop = true;
-    report.applied = apply;
-    render(out, report, { apply });
-    return report;
-  }
-
-  if (!apply) {
+  const preview = () => {
+    const state = collect();
+    report.files = state.existing;
+    report.keep = state.keep;
+    report.unrecognized = state.unrecognized;
+    if (!state.existing.length) {
+      report.noop = true;
+      render(out, report, { apply: false });
+      return report;
+    }
     const picked = pickArchiveDir(archiveBase, stamp, ops);
     report.archiveDir = posix(relative(target, picked.dir));
     render(out, report, { apply: false });
     return report;
-  }
+  };
 
-  if (purge && (plan.stage === 'test' || plan.stage === 'review')) {
-    out('[WARN] --purge 对 test/review 无效：默认已归档该阶段自身');
-  }
+  if (!apply) return preview();
 
-  const picked = pickArchiveDir(archiveBase, stamp, ops, { create: true });
-  report.archiveDir = posix(relative(target, picked.dir));
-  const moved = [];
-  const manifestFile = join(picked.dir, 'manifest.json');
-  try {
-    for (const name of existing) {
-      const fromFile = join(dir, name);
-      const toFile = join(picked.dir, name);
-      assertInside(dir, fromFile, '归档源');
-      assertInside(dir, toFile, '归档目标');
-      ops.rename(fromFile, toFile);
-      moved.push({ from: fromFile, to: toFile });
+  // 扫描与移动都放在任务锁内，避免并发 change/restore 把同一批产物拆到不同归档。
+  return withFileLock(join(dir, '.change'), () => {
+    const state = collect();
+    report.files = state.existing;
+    report.keep = state.keep;
+    report.unrecognized = state.unrecognized;
+    if (!state.existing.length) {
+      report.noop = true;
+      report.applied = true;
+      render(out, report, { apply: true });
+      return report;
     }
-    ops.writeText(manifestFile, `${JSON.stringify({
-      version: 1,
-      slug,
-      from: plan.stage,
-      purge: Boolean(purge),
-      flow,
-      createdAt: at.toISOString(),
-      files: existing,
-    }, null, 2)}\n`);
-  } catch (err) {
-    const errors = rollback(moved, picked.dir, manifestFile, ops);
-    if (errors.length) {
-      throw new Error(`${err.message}；回滚未完全成功：${errors.join('；')}；归档目录保留在 ${posix(picked.dir)}`);
-    }
-    throw err;
-  }
 
-  report.applied = true;
-  render(out, report, { apply: true });
-  return report;
+    if (purge && (plan.stage === 'test' || plan.stage === 'review')) {
+      out('[WARN] --purge 对 test/review 无效：默认已归档该阶段自身');
+    }
+
+    const picked = pickArchiveDir(archiveBase, stamp, ops, { create: true });
+    report.archiveDir = posix(relative(target, picked.dir));
+    const moved = [];
+    const manifestFile = join(picked.dir, 'manifest.json');
+    try {
+      for (const name of state.existing) {
+        const fromFile = join(dir, name);
+        const toFile = join(picked.dir, name);
+        assertInside(dir, fromFile, '归档源');
+        assertInside(dir, toFile, '归档目标');
+        ops.rename(fromFile, toFile);
+        moved.push({ from: fromFile, to: toFile });
+      }
+      // 原子写入：先移动后 manifest 中断时，不留下半截 JSON 让归档无法恢复。
+      ops.writeAtomic(manifestFile, `${JSON.stringify({
+        version: 1,
+        slug,
+        from: plan.stage,
+        purge: Boolean(purge),
+        flow,
+        createdAt: at.toISOString(),
+        files: state.existing,
+      }, null, 2)}\n`);
+    } catch (err) {
+      const errors = rollback(moved, picked.dir, manifestFile, ops);
+      if (errors.length) {
+        throw new Error(`${err.message}；回滚未完全成功：${errors.join('；')}；归档目录保留在 ${posix(picked.dir)}`);
+      }
+      throw err;
+    }
+
+    report.applied = true;
+    render(out, report, { apply: true });
+    return report;
+  }, { failClosed: true, timeoutMs: 5000 });
 }
 
 /** 归档目录名格式：YYYYMMDD-HHMMSS-mmm，重名时追加 -N。 */
@@ -350,8 +384,20 @@ function renderArchives(out, report) {
 /**
  * 从归档恢复产物。默认预览；--apply 才移动。
  * 目标已存在时默认整体拒绝，--force 才覆盖，并先把被覆盖的文件备份到归档目录下。
+ * 执行时与 change 共用任务锁，避免并发移动同一批产物。
  */
-export function runRestore({
+export function runRestore(options = {}) {
+  if (!options.apply) return restoreOnce(options);
+  const target = resolve(options.root);
+  // slug 非法、任务不存在或目录越界时交由 restoreOnce 报错，不能先创建锁文件。
+  if (!validSlug(options.slug)) return restoreOnce(options);
+  const dir = join(target, 'docs', 'devflow', options.slug);
+  if (!existsSync(dir)) return restoreOnce(options);
+  if (!isPathInside(target, dir) || !isRealPathInside(target, dir)) return restoreOnce(options);
+  return withFileLock(join(dir, '.change'), () => restoreOnce(options), { failClosed: true, timeoutMs: 5000 });
+}
+
+function restoreOnce({
   root, slug, archive, apply = false, force = false, ops = defaultOps, out = console.log, now = () => new Date(),
 } = {}) {
   const target = resolve(root);
@@ -491,7 +537,7 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error('--apply 与 --dry-run 不能同时使用');
   }
   if (list && restoreRequested) throw new Error('--list 与 --restore 不能同时使用');
-  const root = resolve(argValue(argv, '--root', null) || process.cwd());
+  const root = resolve(argValue(argv, '--root', null) || projectRoot());
 
   if (list || restoreRequested) {
     if (hasOption(argv, '--from')) throw new Error('--list/--restore 不能与 --from 同时使用');

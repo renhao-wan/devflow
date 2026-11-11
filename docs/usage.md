@@ -51,7 +51,7 @@
   - `review`：等价于 `review-triage --check`，校验结论、未关闭阻断项与画像一致性。
   - `debug`：结论单选、根因、复现步骤、回归证据与升级判断。
   退出码 1 表示硬检查未通过，warning 不影响退出码。旧产物没有显式 AC ID 时，覆盖缺口只提示，不阻断迁移。
-- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会追加同样的 warning，但不影响退出码；会话启动的 `SessionStart` 钩子同样注入未确认的过期摘要，最多展开 3 个任务，只提示、不自动归档。需要归档重做时见下文「修改已完成阶段与重开（change）」。
+- 上游产物比下游新时，`devflow status` 会提示“下游可能过期”，并给出可执行的预览命令 `devflow change --slug <slug> --from <阶段>`（确认后自行加 `--apply`）。多条过期关系只推荐链上最早一条，它的归档范围会覆盖后面的过期项。`check --stage plan|implement|test|review` 也会在过期上游会影响当前阶段输入时追加 warning（轻量流程的 plan/implement 没有更早的上游，因此不提示），不影响退出码；会话启动的 `SessionStart` 钩子同样注入未确认的过期摘要，最多展开 3 个任务，只提示、不自动归档。需要归档重做时见下文「修改已完成阶段与重开（change）」。
 - 确认是 `git checkout`、复制文件等造成的误报时，运行 `devflow status --slug <slug> --ack` 记录当前过期指纹。状态文件只保存 mtime 组合，不移动产物；任一产物再次写入、增删，指纹失效，提示自动恢复。`--ack` 同时抑制 status、statusline、check 与会话启动的过期提示，多任务时必须显式指定 `--slug`。与 `--json` 组合时只输出确认结果（`acked`、`from`、`count`），不输出完整状态报告。
 
 ### 验收追踪（AC ID）
@@ -535,7 +535,7 @@ devflow change --slug <slug> --from plan --apply  # 归档 test/review 与 triag
 
 - `req` / `plan` 是设计文档，默认保留供修改；`test` / `review` 是执行记录，默认归档自身后重新生成。`brief`、`debug` 可作为 `req` 的别名。
 - 过期提示给出的归档起点与 `--from` 一致：`req` / `brief` / `debug` 晚于下游时用 `--from req`；`plan` 晚于下游时用 `--from plan`；`test` 晚于 `review` 时用 `--from review`，只归档旧审查，不会把刚更新的测试记录一起归档。多条过期只按链上最早一条给命令。
-- `--purge` 只对 `req` / `plan` 生效，连该阶段自身一起归档。`--from req --purge` 后任务目录只剩 `.archive/`，`devflow status` 会把它列为“已归档任务”；重新开始时运行 `/devflow:req <slug>`。
+- `--purge` 只对 `req` / `plan` 生效，连该阶段自身一起归档。`--from req --purge` 会把同目录下其他流程残留的入口产物（如完整任务里追加的 `debug.md`、轻量任务的 `brief.md`）一起归档，避免任务被重新识别；之后任务目录只剩 `.archive/`，`devflow status` 会把它列为“已归档任务”；重新开始时运行 `/devflow:req <slug>`。
 - 归档目录是 `docs/devflow/<slug>/.archive/<时间戳>/`，内有 `manifest.json` 记录回退阶段、流程与文件。`.archive` 不参与阶段推断，也不会被 `status` / `trace` / `check` 当成任务产物。
 - 归档 `review.md` 时一并归档 `review-triage.json`，避免留下过期审查快照。`.devflow-state.json` 的最近测试记录不会自动清除，阶段仍以产物为准。
 - `--from test` 归档后 `status` 可能显示 `implement`，这是“缺少测试证据”的产物含义；按 `change` 输出的下一步运行 `/devflow:test` 即可。
@@ -556,7 +556,7 @@ devflow change --slug <slug> --restore latest --apply --force  # 覆盖当前同
 - `--list` 只读，`--restore` 默认预览，`--apply` 才移动文件；两者都需要显式 `--slug`，因此已归档任务（只剩 `.archive/`）也能恢复。
 - 恢复只接受 `manifest.json` 白名单中的产物，任何路径、未知文件名或跨任务 manifest 都会被拒绝。
 - 目标位置已有同名文件时默认整体拒绝，不移动任何文件；加 `--force` 才覆盖，并先把当前文件备份到归档目录下的 `replaced-<时间戳>/`，仍可从备份找回。
-- 恢复中途失败会逆序回滚已移动的文件与备份；归档目录和 `manifest.json` 保留，便于再次查看。
+- 恢复中途失败会逆序回滚已移动的文件与备份；归档目录和 `manifest.json` 保留，便于再次查看。归档与恢复执行时共用任务锁，`manifest.json` 原子写入，避免并发或中断留下半完成状态。
 - 恢复完成后按输出的 `devflow status --slug <slug>` 重新确认阶段与下一步；恢复旧产物不会自动改变代码。
 
 常用场景：改完计划用 `--from plan` 清掉旧测试与审查；对审查结论不满意用 `--from review` 重审；想重做测试用 `--from test`；需求整体重来用 `--from req`，彻底清空再加 `--purge`。
