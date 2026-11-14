@@ -6,7 +6,7 @@
 
 | 脚本 | 作用 | 常用参数 |
 | --- | --- | --- |
-| `bin/devflow` | 统一 CLI：`init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` / `check` / `trace` / `stack` / `clean` / `change` | 透传给对应脚本 |
+| `bin/devflow` | 统一 CLI：`help` / `init` / `gen` / `doctor` / `status` / `onboard` / `statusline` / `route` / `sync` / `upstream` / `ship` / `test` / `check` / `trace` / `stack` / `clean` / `change` | 透传给对应脚本；`help` 由 `scripts/lib/cli-help.mjs` 渲染 |
 | `scripts/hub-init.mjs` | 初始化工作区，创建生态索引并检测工具；可生成规则草稿与自动声明单一技术栈 | `--root` `--force` `--no-draft` `--plugin-root` `--source-root` |
 | `scripts/hub-onboard.mjs` | 扫描项目并生成/更新 `.claude/hub/project-overview.md` | `--root` `--print` `--json` |
 | `scripts/gen-claude-skills.mjs` | 生成投影与账本 | `--root` `--check` `--dry-run` `--json` `--force` `--no-plugin` |
@@ -33,13 +33,13 @@
 ```
 .claude-plugin/        # plugin.json + marketplace.json
 bin/devflow            # 统一 CLI，参数透传给 scripts/
-skills/                # 入口技能（req…sync、status、onboard、stack、clean）+ 通用技能
+skills/                # 入口技能（req…sync、status、onboard、stack、clean、help）+ 通用技能
 agents/                # 评审、测试、排障三个子代理
 hooks/                 # 七个钩子脚本、hooks.json 与共用 lib.mjs
 templates/             # init 时复制到项目的阶段模板
 references/            # 评审清单、测试与排障指南
 scripts/               # init / gen / doctor / status / onboard / statusline / route / upstream / ship / sync / mark-test / review-triage / stack / clean / change
-scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态、技术栈映射、规则草稿、阶段列表与产物链
+scripts/lib/           # 共用：路径归一化、YAML 解析、版本与 semver、工具生态、技术栈映射、规则草稿、阶段列表与产物链、CLI 命令表与帮助渲染
 evals/                 # 行为评测用例（claude plugin eval）
 tests/                 # node:test 测试
 .github/               # GitHub Actions 与 PR 模板
