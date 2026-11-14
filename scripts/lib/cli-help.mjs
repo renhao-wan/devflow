@@ -31,6 +31,8 @@ const COMMAND_EXAMPLES = {
   ],
 };
 
+const HELP_DESC = '显示本帮助或单个命令的用法';
+
 export function isCommand(name) {
   return typeof name === 'string' && Object.hasOwn(COMMANDS, name);
 }
@@ -39,7 +41,7 @@ function commandRows() {
   const names = [...Object.keys(COMMANDS), 'help'];
   const width = Math.max(...names.map((name) => name.length));
   return names.map((name) => {
-    const desc = name === 'help' ? '显示本帮助或单个命令的用法' : COMMANDS[name][1];
+    const desc = name === 'help' ? HELP_DESC : COMMANDS[name][1];
     return `  ${name.padEnd(width)}  ${desc}`;
   }).join('\n');
 }
@@ -61,20 +63,21 @@ export function renderHelp() {
     '示例：',
     ...EXAMPLES.map((line) => `  ${line}`),
     '',
-    '文档：README.md、docs/quickstart.md、docs/usage.md',
+    '插件文档：README.md、docs/quickstart.md、docs/usage.md（位于插件安装目录）',
   ].join('\n');
 }
 
 export function renderCommandHelp(name) {
   if (name === 'help') {
     return [
-      'devflow help — 显示本帮助或单个命令的用法',
+      `devflow help — ${HELP_DESC}`,
       '',
       '用法：',
       '  devflow help',
       '  devflow help <命令>',
     ].join('\n');
   }
+  if (!isCommand(name)) throw new Error('未知命令');
   const [, desc, usage] = COMMANDS[name];
   const examples = COMMAND_EXAMPLES[name] || [];
   return [
@@ -84,6 +87,6 @@ export function renderCommandHelp(name) {
     `  devflow ${name}${usage ? ` ${usage}` : ''}`,
     ...(examples.length ? ['', '示例：', ...examples.map((line) => `  ${line}`)] : []),
     '',
-    '详细参数与示例见 docs/usage.md。',
+    '详细参数与示例见插件安装目录下的 docs/usage.md。',
   ].join('\n');
 }

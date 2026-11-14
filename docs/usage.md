@@ -7,10 +7,10 @@
 不确定该用哪个命令时，先看帮助——它只读，不写文件，也不执行任何阶段：
 
 - Claude Code 里用 `/devflow:help` 查看全部命令和“按场景选入口”；`/devflow:help <命令>` 查看单个命令的用法。
-- 终端里用 `devflow help`、`devflow help <命令>`，或在任意命令后加 `--help`（例如 `devflow change --help`）。
+- 终端里通过 `devflow` CLI 使用 `devflow help`、`devflow help <命令>`，或在任意命令后加 `--help` / `-h`（例如 `devflow change --help`）。直接运行 `node scripts/*.mjs --help` 不会经过这层拦截，可能被当成普通参数执行。
 - 未知命令会退出 1 并打印总帮助；一次给多个命令名会直接报错。
 
-命令列表以 `scripts/lib/cli-commands.mjs` 的 `COMMANDS` 为单一真源：脚本文件名、描述与用法都从这里生成，README 的命令表与之对应。帮助只说明入口，不会替你执行阶段；具体参数与示例见下文各节。
+CLI 帮助以 `scripts/lib/cli-commands.mjs` 的 `COMMANDS` 为单一真源：脚本文件名、描述与用法都从这里生成。README 的斜杠命令表覆盖面向用户的入口，需同步维护。帮助只说明入口，不会替你执行阶段；具体参数与示例见下文各节。
 
 ## 先选流程
 

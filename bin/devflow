@@ -8,14 +8,21 @@ import { isCommand, renderCommandHelp, renderHelp } from '../scripts/lib/cli-hel
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === 'help' || command === '--help' || command === '-h') {
-    // `devflow help <命令>` 与 `devflow --help <命令>` 都显示单命令用法。
-    const target = rest[0] || null;
+    // `devflow help <命令>` 与 `devflow --help <命令>` 都显示单命令用法；
+    // 目标位置再出现 help 标志时按“无目标”处理，避免把标志当成命令名。
+    const target = rest[0] && !['--help', '-h'].includes(rest[0]) ? rest[0] : null;
     if (rest.length > 1) {
       console.error('[ERR] 一次只能查看一个命令：devflow help <命令>');
       process.exitCode = 1;
       return;
     }
     if (target) {
+      // 只接受命令名；拒绝路径、空格与 shell 元字符，也不回显原始输入。
+      if (!/^[a-z][a-z0-9-]*$/.test(target)) {
+        console.error('[ERR] 只接受一个命令名，例如：devflow help change');
+        process.exitCode = 1;
+        return;
+      }
       if (!isCommand(target) && target !== 'help') {
         console.error(`[ERR] 未知命令：${target}`);
         console.log(renderHelp());

@@ -61,6 +61,23 @@ test('帮助拒绝未知命令与多个命令名', () => {
   assert.match(many.stderr, /一次只能查看一个命令/);
 });
 
+test('帮助标志不会互相当成未知命令', () => {
+  for (const args of [['help', '--help'], ['--help', '-h']]) {
+    const r = run(args);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /按场景选入口/);
+  }
+});
+
+test('帮助拒绝路径与 shell 元字符，不回显原始输入', () => {
+  for (const target of ['/init', 'D:/tmp/init', 'change;rm', '$(id)']) {
+    const r = run(['help', target]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /只接受一个命令名/);
+    assert.doesNotMatch(r.stderr, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
 test('帮助入口只读，且不会把 --help 透传给子命令', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'devflow-help-readonly-'));
   try {
@@ -78,6 +95,35 @@ test('help 技能通过 CLI 取命令列表，允许模型主动调用', () => {
   const body = read('skills/help/SKILL.md');
   assert.match(body, /bin\/devflow" help/);
   assert.doesNotMatch(body, /disable-model-invocation/);
+});
+
+test('help 技能先校验参数，不把原始输入直接拼进 shell', () => {
+  const body = read('skills/help/SKILL.md');
+  assert.doesNotMatch(body, /\$ARGUMENTS/);
+  assert.match(body, /\^\[a-z\]\[a-z0-9-\]\*\$/);
+});
+
+test('help 技能的回退场景与 SCENARIOS 一致', () => {
+  const body = read('skills/help/SKILL.md');
+  for (const [, entry] of SCENARIOS) {
+    assert.ok(body.includes(entry), `help 技能回退表缺少 ${entry}`);
+  }
+});
+
+test('COMMANDS 的每条命令都有用法说明，且不暴露内部 --root', () => {
+  for (const [name, [, , usage]] of Object.entries(COMMANDS)) {
+    assert.ok(usage && usage.trim(), `${name} 缺少 usage`);
+    assert.ok(!usage.includes('--root'), `${name} 的用法仍包含内部参数 --root`);
+  }
+});
+
+test('upstream 与 ship 的帮助包含用户可见参数', () => {
+  const upstream = run(['help', 'upstream']).stdout;
+  assert.ok(upstream.includes('--personal-library <path>'));
+  assert.ok(upstream.includes('--team-library <path>'));
+  const ship = run(['help', 'ship']).stdout;
+  assert.ok(ship.includes('--plugin-root <dir>'));
+  assert.ok(ship.includes('--allow-fork'));
 });
 
 test('README 与 quickstart 提供 /devflow:help 入口', () => {

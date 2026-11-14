@@ -186,7 +186,7 @@ devflow test --command "npm test" --exit-code 0 --duration-ms 1200
 devflow upstream --revert <id>
 ```
 
-等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令，`devflow help <命令>` 或 `devflow <命令> --help` 查看单个命令的用法。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
+等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令，`devflow help <命令>`、`devflow --help <命令>` 或 `devflow <命令> --help` 查看单个命令的用法。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
 
 验收标准用验收 ID（`AC-1`、`AC-2`…）串联需求、计划、测试与审查：`plan.md` / `brief.md` 的任务拆分表填写「验收项」列，`test.md` 的「验收覆盖」表按 ID 记录证据，`review.md` 的「验收对照」按 ID 给结论。`devflow trace --slug <slug>` 默认只读输出矩阵与缺口；加 `--check` 时存在未覆盖、未映射或阻断的验收项才退出 1。旧产物没有 AC ID 时按出现顺序推导并给出 warning，不打断已有项目。
 
