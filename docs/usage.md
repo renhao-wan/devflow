@@ -2,6 +2,16 @@
 
 面向已经安装 devflow 的使用者，说明阶段细节、项目配置与工作区结构。安装与首个流程见根目录 [README](../README.md) 和 [quickstart.md](quickstart.md)。
 
+## 帮助与入口
+
+不确定该用哪个命令时，先看帮助——它只读，不写文件，也不执行任何阶段：
+
+- Claude Code 里用 `/devflow:help` 查看全部命令和“按场景选入口”；`/devflow:help <命令>` 查看单个命令的用法。
+- 终端里用 `devflow help`、`devflow help <命令>`，或在任意命令后加 `--help`（例如 `devflow change --help`）。
+- 未知命令会退出 1 并打印总帮助；一次给多个命令名会直接报错。
+
+命令列表以 `scripts/lib/cli-commands.mjs` 的 `COMMANDS` 为单一真源：脚本文件名、描述与用法都从这里生成，README 的命令表与之对应。帮助只说明入口，不会替你执行阶段；具体参数与示例见下文各节。
+
 ## 先选流程
 
 先按任务规模选入口，再读对应阶段规则：

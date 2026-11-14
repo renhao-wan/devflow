@@ -948,7 +948,7 @@ test('静态 fixture 可通过 stack lint', () => {
 });
 
 test('CLI 帮助包含 stack 安装示例', () => {
-  const help = spawnSync(NODE, [join(PLUGIN_ROOT, 'bin', 'devflow'), 'help'], { encoding: 'utf8' });
+  const help = spawnSync(NODE, [join(PLUGIN_ROOT, 'bin', 'devflow'), 'help', 'stack'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   for (const example of [
     'devflow stack add java-spring --repo',

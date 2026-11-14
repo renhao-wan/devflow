@@ -3,78 +3,42 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { COMMANDS } from '../scripts/lib/cli-commands.mjs';
-
-const HELP = `devflow CLI
-
-用法：
-  devflow <command> [options]
-
-命令：
-${Object.entries(COMMANDS).map(([name, [, desc]]) => `  ${name.padEnd(9)} ${desc}`).join('\n')}
-  help       显示本帮助
-
-示例：
-  devflow init
-  devflow gen
-  devflow doctor --json
-  devflow status --slug add-login --ack
-  devflow route --stage plan
-  devflow route --detect
-  devflow sync --dry-run
-  devflow stack add java-spring --repo <url>
-  devflow stack list
-  devflow stack update --all
-  devflow stack restore
-  devflow stack status --json
-  devflow stack remove java-spring --keep
-  devflow upstream --stage review
-  devflow upstream --stage review --apply
-  devflow upstream --stack java-spring
-  devflow upstream --stack java-spring --to personal --apply
-  devflow upstream --shared --to upstream --pr --apply
-  devflow upstream --revert 20261102120000-1234
-  devflow ship --stage review --dry-run
-  devflow ship --stack java-spring --dry-run
-  devflow triage --slug add-login --write
-  devflow triage --slug fix-auth --focus security --agents 2
-  devflow triage --slug add-login --check
-  devflow triage --slug add-login --since v1.2.0
-  devflow triage --escalate
-  devflow check --stage req --slug add-login
-  devflow check --stage debug --json
-  devflow trace --slug add-login
-  devflow trace --slug add-login --check
-  devflow trace --slug add-login --json
-  devflow test --gaps
-  devflow test --changed
-  devflow test --command "npm test" --exit-code 0 --duration-ms 1200
-  devflow change --slug add-login --from plan
-  devflow change --slug add-login --from req --purge --apply
-  devflow change --slug add-login --list
-  devflow change --slug add-login --restore latest --apply
-
-所有参数原样传给对应脚本；也可继续使用 node scripts/devflow-*.mjs。`;
+import { isCommand, renderCommandHelp, renderHelp } from '../scripts/lib/cli-help.mjs';
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === 'help' || command === '--help' || command === '-h') {
-    console.log(HELP);
+    // `devflow help <命令>` 与 `devflow --help <命令>` 都显示单命令用法。
+    const target = rest[0] || null;
+    if (rest.length > 1) {
+      console.error('[ERR] 一次只能查看一个命令：devflow help <命令>');
+      process.exitCode = 1;
+      return;
+    }
+    if (target) {
+      if (!isCommand(target) && target !== 'help') {
+        console.error(`[ERR] 未知命令：${target}`);
+        console.log(renderHelp());
+        process.exitCode = 1;
+        return;
+      }
+      console.log(renderCommandHelp(target));
+      return;
+    }
+    console.log(renderHelp());
     return;
   }
   const entry = COMMANDS[command];
   if (!entry) {
     console.error(`[ERR] 未知命令：${command}`);
-    console.log(HELP);
+    console.log(renderHelp());
     process.exitCode = 1;
     return;
   }
   // 子命令后的 --help 必须在这里拦下：各脚本未统一实现该参数，
   // 直接透传可能被当成普通参数执行（例如 test --help 被记录成一次通过）。
   if (rest.includes('--help') || rest.includes('-h')) {
-    console.log(`devflow ${command} — ${entry[1]}`);
-    console.log('');
-    console.log(`用法：devflow ${command} [options]`);
-    console.log('参数说明见 docs/usage.md。');
+    console.log(renderCommandHelp(command));
     return;
   }
   const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));

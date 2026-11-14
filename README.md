@@ -52,7 +52,7 @@ devflow 的价值来自留下可追溯的需求、计划、测试与审查记录
 
 ## 快速开始
 
-最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。按任务规模选一条：
+最短路径（安装 → 初始化 → 第一个任务）见 [docs/quickstart.md](docs/quickstart.md)。不确定用哪个命令时，先运行 `/devflow:help`。按任务规模选一条：
 
 - **小功能或快速验证（推荐第一次这样试）**：`/devflow:init` → `/devflow:req --light <需求>` → `/devflow:implement` → `/devflow:test` → `/devflow:review`。轻量流程用 `brief.md` 合并需求与计划，只压缩文档，不减测试与审查；一次任务通常产出三份文件（`brief.md`、测试记录、审查结论）。
 - **需要方案评审、合规留痕或多人接手**：走下面的完整六阶段，产物约五份文档。
@@ -116,6 +116,7 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 
 | 命令 | 作用 |
 | --- | --- |
+| `/devflow:help [命令]` | 查看全部命令与按场景选择的入口；带命令名时显示该命令的用法 |
 | `/devflow:init [--force] [--draft] [--no-draft] [--source-root <插件源码仓库>] [--personal-library <path>] [--team-library <path>]` | 初始化工作区 hub，探测子项目、测试命令与单一技术栈，并生成规则草稿；`--draft` 由技能智能补全草稿，`--no-draft` 跳过草稿；库路径会记录到 `.devflow.json` |
 | `/devflow:req <需求> [--light]` | 需求澄清，产出 `req.md`；`--light` 时合并为 `brief.md` |
 | `/devflow:plan <slug>` | 方案设计，产出 `plan.md` |
@@ -140,6 +141,8 @@ debug.md    # 现象、根因、修复、回归证据（轻量修复只需这一
 插件同时提供统一 CLI（`bin/devflow`，安装后命令名为 `devflow`）：
 
 ```bash
+devflow help
+devflow help change
 devflow init
 devflow gen
 devflow doctor --json
@@ -183,7 +186,7 @@ devflow test --command "npm test" --exit-code 0 --duration-ms 1200
 devflow upstream --revert <id>
 ```
 
-等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
+等价于 `node scripts/<script>.mjs`；参数原样透传，`devflow help` 查看全部命令，`devflow help <命令>` 或 `devflow <命令> --help` 查看单个命令的用法。阶段入口会自动执行 `devflow route --stage <stage>`，手动运行主要用于排查与脚本集成。
 
 验收标准用验收 ID（`AC-1`、`AC-2`…）串联需求、计划、测试与审查：`plan.md` / `brief.md` 的任务拆分表填写「验收项」列，`test.md` 的「验收覆盖」表按 ID 记录证据，`review.md` 的「验收对照」按 ID 给结论。`devflow trace --slug <slug>` 默认只读输出矩阵与缺口；加 `--check` 时存在未覆盖、未映射或阻断的验收项才退出 1。旧产物没有 AC ID 时按出现顺序推导并给出 warning，不打断已有项目。
 
